@@ -1,0 +1,47 @@
+# The directory Mix will write compiled artifacts to.
+/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+/cover/
+
+# The directory Mix downloads your dependencies sources to.
+/deps/
+
+# Where third-party dependencies like ExDoc output generated docs.
+/doc/
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+*.ez
+
+# Ignore package tarball (built via "mix hex.build").
+frontier_os-*.tar
+
+# Temporary files, for example, from tests.
+/tmp/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Elixir Language Server
+.elixir_ls/
+
+# Expert LSP runtime logs
+.expert/
+
+# Since we are building assets from assets/,
+# we ignore priv/static/assets. You may want to
+# comment this depending on your deployment strategy.
+/priv/static/assets/
+/priv/static/cache_manifest.json
+/priv/static/uploads/
+
+# Docker environment (contains secrets)
+.env
