@@ -13,6 +13,7 @@ defmodule FrontierOS.ConnCase do
     quote do
       import Plug.Conn
       import Phoenix.ConnTest
+      import Phoenix.LiveViewTest
       import FrontierOS.ConnCase
 
       @endpoint FrontierOSWeb.Endpoint

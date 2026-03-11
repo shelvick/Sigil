@@ -49,24 +49,53 @@ defmodule FrontierOS.MixProject do
       # Crypto (for Sui integration)
       {:blake2, "~> 1.0"},
 
+      # HTML rendering
+      {:phoenix_html, "~> 4.0"},
+
+      # Internationalization
+      {:gettext, "~> 1.0"},
+
       # Observability
-      {:telemetry_metrics, "~> 0.6"},
+      {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
 
-      # Development and test
+      # Asset build tools
+      {:esbuild, "~> 0.9", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
+      {:heroicons,
+       github: "tailwindlabs/heroicons",
+       tag: "v2.1.5",
+       sparse: "optimized",
+       app: false,
+       compile: false,
+       depth: 1},
+
+      # Development
+      {:phoenix_live_reload, "~> 1.2", only: :dev},
+      {:phoenix_live_dashboard, "~> 0.8"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.0", only: [:dev, :test], runtime: false},
-      {:hammox, "~> 0.7", only: :test}
+
+      # Test
+      {:hammox, "~> 0.7", only: :test},
+      {:floki, "~> 0.38.0", only: :test}
     ]
   end
 
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup"],
+      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
+      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
+      "assets.build": ["tailwind frontier_os", "esbuild frontier_os"],
+      "assets.deploy": [
+        "tailwind frontier_os --minify",
+        "esbuild frontier_os --minify",
+        "phx.digest"
+      ]
     ]
   end
 end

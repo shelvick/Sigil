@@ -2,8 +2,15 @@ defmodule FrontierOSWeb do
   @moduledoc """
   The entrypoint for defining your web interface.
 
-  Provides helper macros for controllers, routers, and components
-  used throughout the FrontierOS web layer.
+  Provides helper macros for controllers, routers, LiveViews,
+  LiveComponents, and HTML components used throughout the
+  FrontierOS web layer.
+
+  This can be used in your application as:
+
+      use FrontierOSWeb, :controller
+      use FrontierOSWeb, :live_view
+      use FrontierOSWeb, :html
   """
 
   @doc """
@@ -20,11 +27,11 @@ defmodule FrontierOSWeb do
     quote do
       use Phoenix.Controller,
         formats: [:html, :json],
-        layouts: [html: false]
+        layouts: [html: FrontierOSWeb.Layouts]
 
       import Plug.Conn
 
-      unquote(verified_routes())
+      unquote(html_helpers())
     end
   end
 
@@ -38,6 +45,60 @@ defmodule FrontierOSWeb do
 
       import Plug.Conn
       import Phoenix.Controller
+      import Phoenix.LiveView.Router
+
+      unquote(verified_routes())
+    end
+  end
+
+  @doc """
+  Defines LiveView helpers for FrontierOSWeb LiveViews.
+  """
+  @spec live_view() :: Macro.t()
+  def live_view do
+    quote do
+      use Phoenix.LiveView, layout: {FrontierOSWeb.Layouts, :app}
+
+      unquote(html_helpers())
+    end
+  end
+
+  @doc """
+  Defines LiveComponent helpers for FrontierOSWeb LiveComponents.
+  """
+  @spec live_component() :: Macro.t()
+  def live_component do
+    quote do
+      use Phoenix.LiveComponent
+
+      unquote(html_helpers())
+    end
+  end
+
+  @doc """
+  Defines HTML component helpers for FrontierOSWeb components.
+  """
+  @spec html() :: Macro.t()
+  def html do
+    quote do
+      use Phoenix.Component
+
+      import Phoenix.Controller,
+        only: [get_csrf_token: 0, view_module: 1, view_template: 1]
+
+      unquote(html_helpers())
+    end
+  end
+
+  defp html_helpers do
+    quote do
+      import Phoenix.HTML
+
+      use Gettext, backend: FrontierOSWeb.Gettext
+
+      import FrontierOSWeb.CoreComponents
+
+      alias Phoenix.LiveView.JS
 
       unquote(verified_routes())
     end
@@ -51,7 +112,8 @@ defmodule FrontierOSWeb do
     quote do
       use Phoenix.VerifiedRoutes,
         endpoint: FrontierOSWeb.Endpoint,
-        router: FrontierOSWeb.Router
+        router: FrontierOSWeb.Router,
+        statics: FrontierOSWeb.static_paths()
     end
   end
 
