@@ -7,10 +7,7 @@
         included: ["lib/", "test/"],
         excluded: [~r"/_build/", ~r"/deps/"]
       },
-      requires: [
-        "/home/user/my-cc-credo/lib/credo/check/**/*.ex",
-        ".credo/checks/**/*.ex"
-      ],
+      requires: [".credo/checks/**/*.ex"],
       # Don't fail on refactoring opportunities
       strict: false,
       color: true,
@@ -76,11 +73,8 @@
         {Credo.Check.Warning.UnusedTupleOperation, priority: :high},
 
         # Custom checks aligned with CLAUDE.md principles
-        # Use pattern matching
         {Credo.Check.Refactor.CaseTrivialMatches, priority: :high},
-        # Prefer pattern matching
         {Credo.Check.Refactor.MatchInCondition, priority: :high},
-        # Proper with usage
         {Credo.Check.Readability.WithSingleClause, priority: :normal},
 
         # Custom Concurrency Checks (High Priority - Critical for async: true tests)
