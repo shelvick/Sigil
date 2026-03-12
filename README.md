@@ -18,4 +18,4 @@ iex -S mix phx.server   # http://localhost:4001
 
 ## License
 
-All rights reserved during hackathon development.
+[MIT](LICENSE)

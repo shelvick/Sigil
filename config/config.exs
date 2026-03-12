@@ -3,6 +3,8 @@ import Config
 config :frontier_os,
   ecto_repos: [FrontierOS.Repo]
 
+config :frontier_os, :sui_client, FrontierOS.Sui.Client.HTTP
+
 config :frontier_os, FrontierOSWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
