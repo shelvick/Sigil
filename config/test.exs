@@ -15,4 +15,6 @@ config :frontier_os, FrontierOSWeb.Endpoint,
     "test_secret_key_base_that_is_at_least_64_bytes_long_for_phoenix_to_accept_it_ok",
   server: false
 
+config :frontier_os, :sui_client, FrontierOS.Sui.ClientMock
+
 config :logger, level: :warning

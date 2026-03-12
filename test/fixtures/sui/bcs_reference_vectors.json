@@ -1,0 +1,32 @@
+[
+  {
+    "label": "bool false",
+    "encoder": "encode_bool",
+    "value": false,
+    "expected_hex": "00"
+  },
+  {
+    "label": "u16 little endian",
+    "encoder": "encode_u16",
+    "value": 4660,
+    "expected_hex": "3412"
+  },
+  {
+    "label": "uleb128 multi byte",
+    "encoder": "encode_uleb128",
+    "value": 624485,
+    "expected_hex": "e58e26"
+  },
+  {
+    "label": "string utf8",
+    "encoder": "encode_string",
+    "value": "abc",
+    "expected_hex": "03616263"
+  },
+  {
+    "label": "vector u8",
+    "encoder": "encode_vector_u8",
+    "value": [1, 2, 3],
+    "expected_hex": "03010203"
+  }
+]
