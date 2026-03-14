@@ -5,6 +5,7 @@
 - `FrontierOS.Sui.BCS` — Pure BCS encoder/decoder for Sui transaction serialization
 - `FrontierOS.Sui.Signer` — Ed25519 signing, verification, Sui address derivation
 - `FrontierOS.Sui.Client` — Behaviour contract for Sui GraphQL access (3 callbacks)
+- `FrontierOS.Sui.Client.HTTP` — Req-backed HTTP implementation of Client behaviour (see `client/AGENTS.md`)
 - `FrontierOS.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
 - `FrontierOS.Sui.TransactionBuilder.PTB` — BCS encoding for all PTB struct types
 - `FrontierOS.Sui.Types` — Namespace for Sui type structs
@@ -73,7 +74,7 @@
 - All modules are pure functions (no state, no side effects)
 - Error handling via FunctionClauseError (guards/pattern matching) and ArgumentError (validation)
 - Client uses behaviour + Hammox mock for DI (`config :frontier_os, :sui_client`)
-- TransactionBuilder uses `Application.fetch_env!` for client DI (runtime, not compile_env)
+- TransactionBuilder uses `@sui_client Application.compile_env!` for client DI (compile-time module attribute)
 - PTB uses `@type_tag_indices` map for TypeTag primitive BCS variant lookups (non-sequential indices)
 - Multi-clause public functions use `@doc false` on subsequent clauses (Credo compliance)
 - Types split across files when combined size exceeds 500 lines
@@ -84,10 +85,3 @@
 - `Blake2` — Blake2b-256 hashing (Signer address derivation, TransactionBuilder digest)
 - `Hammox` — Behaviour mock for Client (test only)
 
-## Specs
-
-- SVC_BCS: `noderr/specs/SVC_BCS.md`
-- SVC_Signer: `noderr/specs/SVC_Signer.md`
-- SVC_SuiClient: `noderr/specs/SVC_SuiClient.md`
-- SVC_TransactionBuilder: `noderr/specs/SVC_TransactionBuilder.md`
-- UTIL_SuiTypes: `noderr/specs/UTIL_SuiTypes.md`

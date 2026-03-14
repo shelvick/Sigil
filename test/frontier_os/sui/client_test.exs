@@ -23,8 +23,10 @@ defmodule FrontierOS.Sui.ClientTest do
     assert :error_reason in type_names
     assert :object_map in type_names
     assert :tx_effects in type_names
+    assert :objects_page in type_names
     assert :object_filter_key in type_names
     assert :object_filter in type_names
+    assert :request_opt in type_names
     assert :request_opts in type_names
   end
 
@@ -34,6 +36,17 @@ defmodule FrontierOS.Sui.ClientTest do
     assert FrontierOS.Sui.Client in behaviours
   end
 
+  test "get_objects accepts request options and objects_page returns" do
+    page = %{data: [%{"id" => "0x1"}], has_next_page: false, end_cursor: nil}
+    opts = [url: "http://example.test/graphql", req_options: [plug: {Req.Test, :sui_stub}]]
+
+    expect(FrontierOS.Sui.ClientMock, :get_objects, fn [type: "0x2::gate::Gate"], ^opts ->
+      {:ok, page}
+    end)
+
+    assert FrontierOS.Sui.ClientMock.get_objects([type: "0x2::gate::Gate"], opts) == {:ok, page}
+  end
+
   test "Hammox enforces return types on mock expectations" do
     expect(FrontierOS.Sui.ClientMock, :get_object, fn "0x123", [] ->
       {:ok, %{id: 123}}
@@ -41,6 +54,18 @@ defmodule FrontierOS.Sui.ClientTest do
 
     assert_raise Hammox.TypeMatchError, fn ->
       FrontierOS.Sui.ClientMock.get_object("0x123", [])
+    end
+  end
+
+  test "Hammox enforces get_objects page return type" do
+    opts = [url: "http://example.test/graphql", req_options: [plug: {Req.Test, :sui_stub}]]
+
+    expect(FrontierOS.Sui.ClientMock, :get_objects, fn [type: "0x2::gate::Gate"], ^opts ->
+      {:ok, [%{"id" => "0x1"}]}
+    end)
+
+    assert_raise Hammox.TypeMatchError, fn ->
+      FrontierOS.Sui.ClientMock.get_objects([type: "0x2::gate::Gate"], opts)
     end
   end
 

@@ -41,9 +41,3 @@
 - `Req` — HTTP client (WorldClient.HTTP)
 - `Hammox` — Behaviour mock for WorldClient (test only)
 - Erlang `:dets` — Disk-based term storage
-
-## Specs
-
-- UTIL_StaticData: `noderr/specs/UTIL_StaticData.md`
-- UTIL_WorldApiTypes: `noderr/specs/UTIL_WorldApiTypes.md`
-- MIX_PopulateStaticData: `noderr/specs/MIX_PopulateStaticData.md`
