@@ -17,6 +17,7 @@ config :frontier_os, FrontierOSWeb.Endpoint,
 
 config :frontier_os, :sui_client, FrontierOS.Sui.ClientMock
 config :frontier_os, :world_client, FrontierOS.StaticData.WorldClientMock
+config :frontier_os, :world_package_id, "0xtest_world"
 config :frontier_os, :start_static_data, false
 config :frontier_os, :world_client_retry_delay, 0
 config :frontier_os, :sui_client_retry_delay, 0
