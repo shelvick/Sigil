@@ -114,7 +114,9 @@ defmodule FrontierOS.Sui.TransactionBuilder.PTB do
         {<<_::binary-size(32)>> = object_id, version, <<_::binary-size(32)>> = digest}
       )
       when is_integer(version) and version >= 0 do
-    BCS.encode_address(object_id) <> BCS.encode_u64(version) <> digest
+    BCS.encode_address(object_id) <>
+      BCS.encode_u64(version) <>
+      BCS.encode_uleb128(byte_size(digest)) <> digest
   end
 
   @doc "Encodes gas data for a transaction."

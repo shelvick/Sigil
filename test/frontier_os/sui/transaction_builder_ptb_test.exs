@@ -47,12 +47,12 @@ defmodule FrontierOS.Sui.TransactionBuilder.PTBTest do
   end
 
   describe "core struct encoding" do
-    test "encodes ObjectRef as fixed 72-byte tuple" do
+    test "encodes ObjectRef as 73-byte tuple (digest is length-prefixed)" do
       object_ref = sample_object_ref()
       encoded = PTB.encode_object_ref(object_ref)
 
       assert encoded == expected_object_ref(object_ref)
-      assert byte_size(encoded) == 72
+      assert byte_size(encoded) == 73
     end
 
     test "encodes GasData with correct field order" do
@@ -245,7 +245,7 @@ defmodule FrontierOS.Sui.TransactionBuilder.PTBTest do
     do: <<0x03>> <> BCS.encode_u16(result_index) <> BCS.encode_u16(nested_index)
 
   defp expected_object_ref({object_id, version, digest}) do
-    object_id <> BCS.encode_u64(version) <> digest
+    object_id <> BCS.encode_u64(version) <> BCS.encode_uleb128(byte_size(digest)) <> digest
   end
 
   defp encode_vector(values, encoder) do

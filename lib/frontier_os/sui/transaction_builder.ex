@@ -7,6 +7,7 @@ defmodule FrontierOS.Sui.TransactionBuilder do
   alias FrontierOS.Sui.Signer
   alias FrontierOS.Sui.TransactionBuilder.PTB
 
+  @sui_client Application.compile_env!(:frontier_os, :sui_client)
   @intent_prefix <<0, 0, 0>>
 
   @typedoc "Keyword options used to build transaction data."
@@ -72,7 +73,7 @@ defmodule FrontierOS.Sui.TransactionBuilder do
       |> Signer.sign(private_key)
       |> Signer.encode_signature(public_key)
 
-    client_module().execute_transaction(Base.encode64(tx_bytes), [Base.encode64(signature)], [])
+    @sui_client.execute_transaction(Base.encode64(tx_bytes), [Base.encode64(signature)], [])
   end
 
   defp fetch_required!(opts, key) do
@@ -94,9 +95,5 @@ defmodule FrontierOS.Sui.TransactionBuilder do
       gas_payment when is_list(gas_payment) and gas_payment != [] -> gas_payment
       _ -> raise ArgumentError, "at least one gas payment coin is required"
     end
-  end
-
-  defp client_module do
-    Application.fetch_env!(:frontier_os, :sui_client)
   end
 end

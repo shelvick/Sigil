@@ -34,10 +34,11 @@ defmodule FrontierOS.Sui.Signer do
     {public_key, private_key}
   end
 
-  @doc "Signs the Sui intent-prefixed payload with Ed25519."
+  @doc "Signs the Blake2b-256 digest of the Sui intent-prefixed payload with Ed25519."
   @spec sign(binary(), private_key()) :: signature()
   def sign(data, <<_::binary-size(32)>> = private_key) when is_binary(data) do
-    :crypto.sign(:eddsa, :sha512, intent_message(data), [private_key, :ed25519])
+    digest = Blake2.hash2b(intent_message(data), 32)
+    :crypto.sign(:eddsa, :sha512, digest, [private_key, :ed25519])
   end
 
   @doc "Encodes a signature using Sui's scheme-byte format."
@@ -46,11 +47,12 @@ defmodule FrontierOS.Sui.Signer do
     <<@scheme_flag>> <> signature <> public_key
   end
 
-  @doc "Verifies an Ed25519 signature against the Sui intent-prefixed payload."
+  @doc "Verifies an Ed25519 signature against the Blake2b-256 digest of the Sui intent-prefixed payload."
   @spec verify(binary(), signature(), public_key()) :: boolean()
   def verify(data, <<_::binary-size(64)>> = signature, <<_::binary-size(32)>> = public_key)
       when is_binary(data) do
-    :crypto.verify(:eddsa, :sha512, intent_message(data), signature, [public_key, :ed25519])
+    digest = Blake2.hash2b(intent_message(data), 32)
+    :crypto.verify(:eddsa, :sha512, digest, signature, [public_key, :ed25519])
   end
 
   @doc "Derives a raw 32-byte Sui address from a public key."

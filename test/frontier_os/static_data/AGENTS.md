@@ -4,8 +4,8 @@
 
 | File | Module | Tests | Covers |
 |------|--------|-------|--------|
-| `world_api_types_test.exs` | `WorldApiTypesTest` | 14 | R1-R14: Struct parsing (SolarSystem, ItemType, Constellation), WorldClient.HTTP pagination/errors, mock compliance |
-| `static_data_test.exs` | `StaticDataTest` | 18 | R1-R18: Read API, DETS loading, auto-fetch, test isolation, pending_callers, tables lifecycle |
+| `world_api_types_test.exs` | `WorldApiTypesTest` | 14 | Struct parsing (SolarSystem, ItemType, Constellation), WorldClient.HTTP pagination/errors, mock compliance |
+| `static_data_test.exs` | `StaticDataTest` | 18 | Read API, DETS loading, auto-fetch, test isolation, pending_callers, tables lifecycle |
 
 ## Patterns
 
