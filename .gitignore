@@ -42,6 +42,7 @@ frontier_os-*.tar
 /priv/static/assets/
 /priv/static/cache_manifest.json
 /priv/static/uploads/
+/priv/static_data/*.dets
 
 # Docker environment (contains secrets)
 .env

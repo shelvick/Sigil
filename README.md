@@ -13,7 +13,8 @@ Tribe coordination tool for [EVE Frontier](https://evefrontier.com). Built for t
 ```bash
 mix deps.get
 mix ecto.setup
-iex -S mix phx.server   # http://localhost:4001
+mix frontier_os.populate_static_data   # fetch World API static data
+iex -S mix phx.server                  # http://localhost:4001
 ```
 
 ## License
