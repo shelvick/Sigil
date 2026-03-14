@@ -5,6 +5,7 @@ config :frontier_os,
 
 config :frontier_os, :sui_client, FrontierOS.Sui.Client.HTTP
 config :frontier_os, :world_client, FrontierOS.StaticData.WorldClient.HTTP
+config :frontier_os, :world_package_id, "0xworld"
 config :frontier_os, :start_static_data, true
 
 config :frontier_os, FrontierOSWeb.Endpoint,
