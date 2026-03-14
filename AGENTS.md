@@ -13,7 +13,7 @@ Monolithic Phoenix app with OTP supervision tree, domain-driven contexts, and de
 - **Sui Integration** (`lib/frontier_os/sui/`): GraphQL client, BCS encoder, Ed25519 signer, transaction builder — pure Elixir interface to Sui blockchain
 - **Static Data** (`lib/frontier_os/static_data/`): DETS-backed World API reference data (types, systems, constellations)
 - **Data Layer** (`lib/frontier_os/`): ETS cache for blockchain state, Ecto repo (deferred to alert persistence)
-- **Domain Contexts** (planned): Accounts, Assemblies, Diplomacy, Alerts
+- **Domain Contexts** (`lib/frontier_os/`): Accounts (wallet session + character lookup), Assemblies (assembly discovery + cached query); planned: Diplomacy, Alerts
 - **OTP Monitors** (planned): GenServer-per-assembly polling, DynamicSupervisor, alert engine
 - **LiveView UI** (planned): Dashboard, assembly details, diplomacy editor, alert feed
 - **Move Contracts** (planned): StandingsTable, frontier_gate, frontier_turret
