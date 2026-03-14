@@ -17,6 +17,13 @@ defmodule FrontierOS.Sui.Client do
   @typedoc "Raw transaction effects payload returned from Sui."
   @type tx_effects :: %{String.t() => term()}
 
+  @typedoc "Single objects query page returned from Sui."
+  @type objects_page :: %{
+          data: [object_map()],
+          has_next_page: boolean(),
+          end_cursor: String.t() | nil
+        }
+
   @typedoc "Supported object query filter entries."
   @type object_filter_key ::
           {:type, String.t()}
@@ -27,8 +34,11 @@ defmodule FrontierOS.Sui.Client do
   @typedoc "Supported object query filters."
   @type object_filter :: [object_filter_key()]
 
+  @typedoc "Single client request option."
+  @type request_opt :: {:url, String.t()} | {:req_options, keyword()}
+
   @typedoc "Client request options."
-  @type request_opts :: [{:url, String.t()}]
+  @type request_opts :: [request_opt()]
 
   @doc "Fetches a single object by id."
   @callback get_object(String.t(), request_opts()) ::
@@ -36,7 +46,7 @@ defmodule FrontierOS.Sui.Client do
 
   @doc "Fetches objects matching the supplied filters."
   @callback get_objects(object_filter(), request_opts()) ::
-              {:ok, [object_map()]} | {:error, error_reason()}
+              {:ok, objects_page()} | {:error, error_reason()}
 
   @doc "Submits a signed transaction to Sui."
   @callback execute_transaction(String.t(), [String.t()], request_opts()) ::

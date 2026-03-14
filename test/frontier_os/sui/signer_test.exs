@@ -26,15 +26,17 @@ defmodule FrontierOS.Sui.SignerTest do
     assert Signer.verify("packet-2", signature, derived_public_key)
   end
 
-  test "sign prepends intent bytes before signing" do
+  test "sign hashes intent-prefixed payload with Blake2b before Ed25519 signing" do
     {public_key, private_key} = Signer.generate_keypair()
     payload = <<1, 2, 3, 4>>
 
+    digest = Blake2.hash2b(@intent_prefix <> payload, 32)
+
     assert Signer.sign(payload, private_key) ==
-             :crypto.sign(:eddsa, :sha512, @intent_prefix <> payload, [private_key, :ed25519])
+             :crypto.sign(:eddsa, :sha512, digest, [private_key, :ed25519])
 
     refute Signer.sign(payload, private_key) ==
-             :crypto.sign(:eddsa, :sha512, payload, [private_key, :ed25519])
+             :crypto.sign(:eddsa, :sha512, @intent_prefix <> payload, [private_key, :ed25519])
 
     assert Signer.verify(payload, Signer.sign(payload, private_key), public_key)
   end

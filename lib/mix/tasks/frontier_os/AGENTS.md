@@ -19,7 +19,3 @@
 - `DetsFile.write_rows!/2` delegation for DETS operations
 - Partial failure: continues with remaining types, prints retry hint
 - `Application.ensure_all_started(:req)` (not full app start)
-
-## Specs
-
-- MIX_PopulateStaticData: `noderr/specs/MIX_PopulateStaticData.md`
