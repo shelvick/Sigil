@@ -27,6 +27,12 @@ defmodule FrontierOS.Sui.TypesTest do
     online_status = Types.AssemblyStatus.from_json(%{"status" => "ONLINE"})
     assert is_struct(online_status, FrontierOS.Sui.Types.AssemblyStatus)
     assert online_status.status == :online
+
+    variant_online = Types.AssemblyStatus.from_json(%{"status" => %{"@variant" => "ONLINE"}})
+    assert variant_online.status == :online
+
+    variant_offline = Types.AssemblyStatus.from_json(%{"status" => %{"@variant" => "OFFLINE"}})
+    assert variant_offline.status == :offline
   end
 
   test "parses Gate with nested structs and optional fields" do
@@ -168,14 +174,12 @@ defmodule FrontierOS.Sui.TypesTest do
     end
   end
 
-  test "Location.from_json/1 rejects non-32-byte location_hash" do
-    assert_raise ArgumentError, ~r/location_hash must be 32 bytes/, fn ->
-      Types.Location.from_json(%{"location_hash" => [1, 2, 3]})
-    end
+  test "Location.from_json/1 accepts variable-length location hashes" do
+    loc_32 = Types.Location.from_json(%{"location_hash" => :binary.copy(<<7>>, 32)})
+    assert byte_size(loc_32.location_hash) == 32
 
-    assert_raise ArgumentError, ~r/location_hash must be 32 bytes/, fn ->
-      Types.Location.from_json(%{"location_hash" => <<0::264>>})
-    end
+    loc_44 = Types.Location.from_json(%{"location_hash" => :binary.copy(<<7>>, 44)})
+    assert byte_size(loc_44.location_hash) == 44
   end
 
   defp gate_json(overrides \\ %{}) do

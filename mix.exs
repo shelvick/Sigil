@@ -1,6 +1,7 @@
 defmodule FrontierOS.MixProject do
   use Mix.Project
 
+  @spec project() :: keyword()
   def project do
     [
       app: :frontier_os,
@@ -10,6 +11,7 @@ defmodule FrontierOS.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      listeners: [Phoenix.CodeReloader],
       dialyzer: [
         ignore_warnings: ".dialyzer_ignore.exs",
         plt_add_apps: [:ex_unit, :mix]
@@ -17,6 +19,7 @@ defmodule FrontierOS.MixProject do
     ]
   end
 
+  @spec application() :: keyword()
   def application do
     [
       mod: {FrontierOS.Application, []},
@@ -79,7 +82,8 @@ defmodule FrontierOS.MixProject do
 
       # Test
       {:hammox, "~> 0.7", only: :test},
-      {:floki, "~> 0.38.0", only: :test}
+      {:floki, "~> 0.38.0", only: :test},
+      {:lazy_html, ">= 0.1.0", only: :test}
     ]
   end
 

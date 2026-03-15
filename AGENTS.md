@@ -4,7 +4,7 @@
 
 Tribe coordination tool for EVE Frontier. Manages diplomacy, infrastructure, and alerts with on-chain enforcement via Sui Move smart contracts.
 
-**Stack:** Elixir 1.18.3 / Phoenix 1.7 / LiveView 1.0 / PostgreSQL 17.8 / Sui Move (testnet)
+**Stack:** Elixir 1.18.3 / Phoenix 1.8 / LiveView 1.0 / PostgreSQL 17.8 / Sui Move (testnet)
 
 ## Architecture
 
@@ -14,8 +14,8 @@ Monolithic Phoenix app with OTP supervision tree, domain-driven contexts, and de
 - **Static Data** (`lib/frontier_os/static_data/`): DETS-backed World API reference data (types, systems, constellations)
 - **Data Layer** (`lib/frontier_os/`): ETS cache for blockchain state, Ecto repo (deferred to alert persistence)
 - **Domain Contexts** (`lib/frontier_os/`): Accounts (wallet session + character lookup), Assemblies (assembly discovery + cached query); planned: Diplomacy, Alerts
-- **OTP Monitors** (planned): GenServer-per-assembly polling, DynamicSupervisor, alert engine
-- **LiveView UI** (planned): Dashboard, assembly details, diplomacy editor, alert feed
+- **OTP Monitors** (`lib/frontier_os/game_state/`): On-demand linked StatePoller for assembly refresh; planned: DynamicSupervisor, alert engine
+- **LiveView UI** (`lib/frontier_os_web/`): Dashboard (wallet form + assembly manifest), assembly detail views (5 types), EVE Frontier themed shell; planned: diplomacy editor, alert feed
 - **Move Contracts** (planned): StandingsTable, frontier_gate, frontier_turret
 
 ## Key Directories
@@ -28,7 +28,8 @@ Monolithic Phoenix app with OTP supervision tree, domain-driven contexts, and de
 | `lib/frontier_os/sui/transaction_builder/` | PTB BCS encoding internals |
 | `lib/frontier_os/static_data/` | DETS-backed static data store + World API client |
 | `lib/frontier_os/` | Application core (OTP app, Repo, EtsCache, Endpoint, Router) |
-| `lib/frontier_os_web/` | Phoenix web layer (layouts, error views, telemetry) |
+| `lib/frontier_os/game_state/` | On-demand linked StatePoller GenServer |
+| `lib/frontier_os_web/` | Phoenix web layer: router, session, layouts, LiveViews, shared helpers |
 | `lib/mix/tasks/frontier_os/` | Mix tasks (populate_static_data) |
 | `test/` | Tests mirroring lib/ structure |
 

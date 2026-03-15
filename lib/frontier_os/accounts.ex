@@ -8,7 +8,6 @@ defmodule FrontierOS.Accounts do
   alias FrontierOS.Sui.Types.Character
 
   @sui_client Application.compile_env!(:frontier_os, :sui_client)
-  @world_package_id Application.compile_env!(:frontier_os, :world_package_id)
   @accounts_topic "accounts"
 
   defmodule Account do
@@ -115,7 +114,14 @@ defmodule FrontierOS.Accounts do
 
   @spec character_type_string() :: String.t()
   defp character_type_string do
-    "#{@world_package_id}::character::Character"
+    "#{world_package_id()}::character::Character"
+  end
+
+  @spec world_package_id() :: String.t()
+  defp world_package_id do
+    world = Application.fetch_env!(:frontier_os, :eve_world)
+    worlds = Application.fetch_env!(:frontier_os, :eve_worlds)
+    Map.fetch!(worlds, world)
   end
 
   @spec tribe_id([Character.t()]) :: non_neg_integer() | nil

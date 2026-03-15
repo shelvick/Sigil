@@ -8,7 +8,6 @@ defmodule FrontierOS.Assemblies do
   alias FrontierOS.Sui.Types.{Assembly, Gate, NetworkNode, StorageUnit, Turret}
 
   @sui_client Application.compile_env!(:frontier_os, :sui_client)
-  @world_package_id Application.compile_env!(:frontier_os, :world_package_id)
 
   @typedoc "ETS tables required by the assemblies context."
   @type tables() :: %{assemblies: Cache.table_id()}
@@ -40,6 +39,9 @@ defmodule FrontierOS.Assemblies do
             {:ok, assembly} ->
               cache_assembly(opts, owner, assembly)
               [assembly | acc]
+
+            :skip ->
+              acc
 
             {:error, _reason} ->
               acc
@@ -87,16 +89,24 @@ defmodule FrontierOS.Assemblies do
 
     case Cache.get(table, assembly_id) do
       {owner, _cached_assembly} ->
-        with {:ok, assembly} <- fetch_assembly(assembly_id, req_options) do
-          cache_assembly(opts, owner, assembly)
+        case fetch_assembly(assembly_id, req_options) do
+          {:ok, assembly} ->
+            cache_assembly(opts, owner, assembly)
 
-          broadcast(
-            Keyword.get(opts, :pubsub, FrontierOS.PubSub),
-            assembly_topic(assembly_id),
-            {:assembly_updated, assembly}
-          )
+            broadcast(
+              Keyword.get(opts, :pubsub, FrontierOS.PubSub),
+              assembly_topic(assembly_id),
+              {:assembly_updated, assembly}
+            )
 
-          {:ok, assembly}
+            {:ok, assembly}
+
+          :skip ->
+            Cache.delete(table, assembly_id)
+            {:error, :not_found}
+
+          {:error, _reason} = error ->
+            error
         end
 
       nil ->
@@ -105,24 +115,27 @@ defmodule FrontierOS.Assemblies do
   end
 
   @spec fetch_assembly(String.t(), Client.request_opts()) ::
-          {:ok, assembly()} | {:error, Client.error_reason()}
+          {:ok, assembly()} | :skip | {:error, Client.error_reason()}
   defp fetch_assembly(assembly_id, req_options) do
     with {:ok, json} <- @sui_client.get_object(assembly_id, req_options) do
-      {:ok, parse_assembly(json)}
+      parse_assembly(json)
     end
   end
 
-  @spec parse_assembly(map()) :: assembly()
-  defp parse_assembly(%{"linked_gate_id" => _value} = json), do: Gate.from_json(json)
+  @spec parse_assembly(map()) :: {:ok, assembly()} | :skip
+  defp parse_assembly(%{"character_address" => _} = _json), do: :skip
+
+  defp parse_assembly(%{"linked_gate_id" => _value} = json), do: {:ok, Gate.from_json(json)}
 
   defp parse_assembly(%{"fuel" => _fuel, "energy_source" => _energy_source} = json),
-    do: NetworkNode.from_json(json)
+    do: {:ok, NetworkNode.from_json(json)}
 
   defp parse_assembly(%{"inventory_keys" => _inventory_keys} = json),
-    do: StorageUnit.from_json(json)
+    do: {:ok, StorageUnit.from_json(json)}
 
-  defp parse_assembly(%{"extension" => _extension} = json), do: Turret.from_json(json)
-  defp parse_assembly(json) when is_map(json), do: Assembly.from_json(json)
+  defp parse_assembly(%{"extension" => _extension} = json), do: {:ok, Turret.from_json(json)}
+  defp parse_assembly(%{"type_id" => _} = json), do: {:ok, Assembly.from_json(json)}
+  defp parse_assembly(_json), do: :skip
 
   @spec cache_assembly(options(), String.t(), assembly()) :: :ok
   defp cache_assembly(opts, owner, assembly) do
@@ -141,7 +154,14 @@ defmodule FrontierOS.Assemblies do
 
   @spec owner_cap_type_string() :: String.t()
   defp owner_cap_type_string do
-    "#{@world_package_id}::access_control::OwnerCap"
+    "#{world_package_id()}::access::OwnerCap"
+  end
+
+  @spec world_package_id() :: String.t()
+  defp world_package_id do
+    world = Application.fetch_env!(:frontier_os, :eve_world)
+    worlds = Application.fetch_env!(:frontier_os, :eve_worlds)
+    Map.fetch!(worlds, world)
   end
 
   @spec owner_topic(String.t()) :: String.t()
