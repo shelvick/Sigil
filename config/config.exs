@@ -5,7 +5,15 @@ config :frontier_os,
 
 config :frontier_os, :sui_client, FrontierOS.Sui.Client.HTTP
 config :frontier_os, :world_client, FrontierOS.StaticData.WorldClient.HTTP
-config :frontier_os, :world_package_id, "0xworld"
+
+config :frontier_os, :eve_worlds, %{
+  "stillness" => "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c",
+  "utopia" => "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
+  "internal" => "0x353988e063b4683580e3603dbe9e91fefd8f6a06263a646d43fd3a2f3ef6b8c1"
+}
+
+config :frontier_os, :eve_world, "stillness"
+
 config :frontier_os, :start_static_data, true
 
 config :frontier_os, FrontierOSWeb.Endpoint,
@@ -18,8 +26,8 @@ config :frontier_os, FrontierOSWeb.Endpoint,
   pubsub_server: FrontierOS.PubSub,
   live_view: [signing_salt: "8kFm3xQr"]
 
-# Configure asset builders only when those dev-only deps are present.
-if Code.ensure_loaded?(Esbuild) do
+# Configure esbuild and tailwind (dev-only deps, skip in test)
+if config_env() != :test do
   config :esbuild,
     version: "0.17.11",
     frontier_os: [
@@ -28,9 +36,7 @@ if Code.ensure_loaded?(Esbuild) do
       cd: Path.expand("../assets", __DIR__),
       env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
     ]
-end
 
-if Code.ensure_loaded?(Tailwind) do
   config :tailwind,
     version: "3.4.3",
     frontier_os: [

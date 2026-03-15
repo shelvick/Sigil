@@ -1,3 +1,42 @@
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
+
+:root {
+  --space-950: #0A0A0A;
+  --space-900: #120B06;
+  --space-800: #1A1A1A;
+  --space-700: #262626;
+  --space-600: #373737;
+  --space-500: #737373;
+  --cream: #FFFFD6;
+  --foreground: #FAFAFA;
+  --quantum-400: #FFB829;
+  --quantum-500: #E8863A;
+  --quantum-600: #C74A06;
+  --success: #22C55E;
+  --warning: #F59E0B;
+}
+
+html {
+  background:
+    radial-gradient(circle at top, rgba(255, 184, 41, 0.12), transparent 45%),
+    linear-gradient(180deg, var(--space-900), var(--space-950));
+  color: var(--cream);
+  scrollbar-color: var(--quantum-400) var(--space-800);
+}
+
+body {
+  min-height: 100vh;
+  background: transparent;
+}
+
+::-webkit-scrollbar {
+  width: 0.8rem;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--quantum-400), var(--quantum-600));
+  border-radius: 9999px;
+  border: 2px solid var(--space-900);
+}

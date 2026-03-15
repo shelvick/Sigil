@@ -25,7 +25,13 @@ defmodule FrontierOSWeb.Router do
   scope "/", FrontierOSWeb do
     pipe_through :browser
 
-    live "/", LandingLive
+    post "/session", SessionController, :create
+    delete "/session", SessionController, :delete
+
+    live_session :wallet_session, on_mount: FrontierOSWeb.WalletSession do
+      live "/", DashboardLive
+      live "/assembly/:id", AssemblyDetailLive
+    end
   end
 
   scope "/api", FrontierOSWeb do

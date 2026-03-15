@@ -9,10 +9,9 @@ config :frontier_os, FrontierOS.Repo,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
 
-# Port 4000 is RESERVED for a critical live service — NEVER use it.
-# FrontierOS dev server runs on port 4001.
+# Default port 4000; override with PORT env var (e.g., PORT=4001 iex -S mix phx.server)
 config :frontier_os, FrontierOSWeb.Endpoint,
-  http: [ip: {127, 0, 0, 1}, port: 4001],
+  http: [ip: {127, 0, 0, 1}, port: String.to_integer(System.get_env("PORT") || "4000")],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,

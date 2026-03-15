@@ -29,7 +29,8 @@ defmodule FrontierOS.Sui.Types.Parser do
   def uid!(value) when is_binary(value), do: value
 
   @doc "Parses an assembly status enum into its atom form."
-  @spec status!(String.t()) :: :null | :offline | :online
+  @spec status!(String.t() | map()) :: :null | :offline | :online
+  def status!(%{"@variant" => variant}), do: status!(variant)
   def status!("NULL"), do: :null
   def status!("OFFLINE"), do: :offline
   def status!("ONLINE"), do: :online

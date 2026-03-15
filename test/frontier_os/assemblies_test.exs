@@ -431,8 +431,120 @@ defmodule FrontierOS.AssembliesTest do
     verify!()
   end
 
+  test "discover_for_owner skips Character objects from OwnerCap query", %{
+    tables: tables,
+    pubsub: pubsub
+  } do
+    owner = "0xskip_test_owner"
+    owner_cap_type = owner_cap_type()
+    character_id = "0xcharacter_obj"
+    gate_id = "0xgate_obj"
+
+    expect(FrontierOS.Sui.ClientMock, :get_objects, fn [type: type, owner: ^owner], []
+                                                       when type == owner_cap_type ->
+      {:ok,
+       %{
+         data: [
+           %{"authorized_object_id" => character_id},
+           %{"authorized_object_id" => gate_id}
+         ],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    expect(FrontierOS.Sui.ClientMock, :get_object, 2, fn
+      ^character_id, [] ->
+        {:ok,
+         %{
+           "id" => character_id,
+           "key" => %{"item_id" => "1", "tenant" => "test"},
+           "character_address" => "0xcharaddr",
+           "tribe_id" => 100,
+           "metadata" => %{
+             "assembly_id" => character_id,
+             "name" => "TestChar",
+             "description" => "",
+             "url" => ""
+           },
+           "owner_cap_id" => "0xcap"
+         }}
+
+      ^gate_id, [] ->
+        {:ok, gate_json(%{"id" => uid(gate_id)})}
+    end)
+
+    assert {:ok, assemblies} =
+             Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+
+    assert length(assemblies) == 1
+    assert [%Types.Gate{id: ^gate_id}] = assemblies
+  end
+
+  test "discover_for_owner skips unknown non-assembly objects", %{
+    tables: tables,
+    pubsub: pubsub
+  } do
+    owner = "0xunknown_skip_owner"
+    owner_cap_type = owner_cap_type()
+    unknown_id = "0xunknown_obj"
+
+    expect(FrontierOS.Sui.ClientMock, :get_objects, fn [type: type, owner: ^owner], []
+                                                       when type == owner_cap_type ->
+      {:ok,
+       %{
+         data: [%{"authorized_object_id" => unknown_id}],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    expect(FrontierOS.Sui.ClientMock, :get_object, fn ^unknown_id, [] ->
+      {:ok, %{"id" => unknown_id, "some_field" => "unrecognized"}}
+    end)
+
+    assert {:ok, []} =
+             Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+  end
+
+  test "sync_assembly deletes stale cache when object is no longer an assembly", %{
+    tables: tables,
+    pubsub: pubsub
+  } do
+    assembly_id = "0xstale_assembly"
+    owner = "0xstale_owner"
+
+    Cache.put(
+      tables.assemblies,
+      assembly_id,
+      {owner,
+       %Types.Assembly{
+         id: assembly_id,
+         key: %Types.TenantItemId{item_id: 1, tenant: "test"},
+         owner_cap_id: "0xcap",
+         type_id: 100,
+         status: %Types.AssemblyStatus{status: :online},
+         location: %Types.Location{location_hash: <<0::256>>},
+         energy_source_id: nil,
+         metadata: nil
+       }}
+    )
+
+    assert {:ok, _} = Assemblies.get_assembly(assembly_id, tables: tables)
+
+    expect(FrontierOS.Sui.ClientMock, :get_object, fn ^assembly_id, [] ->
+      {:ok, %{"id" => assembly_id, "character_address" => "0xchar"}}
+    end)
+
+    assert {:error, :not_found} =
+             Assemblies.sync_assembly(assembly_id, tables: tables, pubsub: pubsub)
+
+    assert {:error, :not_found} =
+             Assemblies.get_assembly(assembly_id, tables: tables)
+  end
+
   defp owner_cap_type do
-    "#{@world_package_id}::access_control::OwnerCap"
+    "#{@world_package_id}::access::OwnerCap"
   end
 
   defp unique_pubsub_name do

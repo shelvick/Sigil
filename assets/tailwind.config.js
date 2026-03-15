@@ -14,9 +14,32 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        brand: "#00b4d8",
+        space: {
+          950: "#0A0A0A",
+          900: "#120B06",
+          800: "#1A1A1A",
+          700: "#262626",
+          600: "#373737",
+          500: "#737373"
+        },
+        quantum: {
+          300: "#FFD580",
+          400: "#FFB829",
+          500: "#E8863A",
+          600: "#C74A06",
+          700: "#381B0C",
+          800: "#5C3421"
+        },
+        cream: "#FFFFD6",
+        foreground: "#FAFAFA",
+        success: "#22C55E",
+        warning: "#F59E0B"
+      },
+      fontFamily: {
+        sans: ["Space Grotesk", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["Sometype Mono", "ui-monospace", "SFMono-Regular", "monospace"]
       }
-    },
+    }
   },
   plugins: [
     require("@tailwindcss/forms"),

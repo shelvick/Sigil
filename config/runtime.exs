@@ -1,5 +1,11 @@
 import Config
 
+if config_env() != :test do
+  if eve_world = System.get_env("EVE_WORLD") do
+    config :frontier_os, :eve_world, eve_world
+  end
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
@@ -20,7 +26,7 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "frontier-os.fly.dev"
-  port = String.to_integer(System.get_env("PORT") || "4001")
+  port = String.to_integer(System.get_env("PORT") || "4000")
 
   config :frontier_os, FrontierOSWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],

@@ -9,6 +9,7 @@
 - `FrontierOS.Accounts.Account` (inline in `accounts.ex`) — Struct: address, characters, tribe_id
 - `FrontierOS.Assemblies` (`assemblies.ex`) — Assembly discovery + cached query over ETS
 - `FrontierOS.StaticData` (`static_data.ex`) — DETS-backed GenServer for World API reference data
+- `FrontierOS.GameState.Poller` (`game_state/poller.ex`) — Linked GenServer: periodic assembly sync via injectable sync_fun, Process.send_after scheduling, update_assembly_ids/2
 
 ## Key Functions
 

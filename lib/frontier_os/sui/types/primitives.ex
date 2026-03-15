@@ -59,13 +59,7 @@ defmodule FrontierOS.Sui.Types.Location do
   @doc "Builds a location struct from GraphQL JSON."
   @spec from_json(map()) :: t()
   def from_json(json) when is_map(json) do
-    hash = json |> Map.fetch!("location_hash") |> Parser.bytes!()
-
-    unless byte_size(hash) == 32 do
-      raise ArgumentError, "location_hash must be 32 bytes, got: #{byte_size(hash)}"
-    end
-
-    %__MODULE__{location_hash: hash}
+    %__MODULE__{location_hash: json |> Map.fetch!("location_hash") |> Parser.bytes!()}
   end
 end
 
