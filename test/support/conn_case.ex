@@ -1,4 +1,4 @@
-defmodule FrontierOS.ConnCase do
+defmodule Sigil.ConnCase do
   @moduledoc """
   Test case template for tests requiring a connection.
 
@@ -14,16 +14,16 @@ defmodule FrontierOS.ConnCase do
       import Plug.Conn
       import Phoenix.ConnTest
       import Phoenix.LiveViewTest
-      import FrontierOS.ConnCase
+      import Sigil.ConnCase
 
-      @endpoint FrontierOSWeb.Endpoint
+      @endpoint SigilWeb.Endpoint
     end
   end
 
   setup tags do
     pid =
       Ecto.Adapters.SQL.Sandbox.start_owner!(
-        FrontierOS.Repo,
+        Sigil.Repo,
         shared: not tags[:async]
       )
 

@@ -19,9 +19,9 @@ defmodule Mix.Tasks.Sui.VerifyE2e do
 
   use Mix.Task
 
-  alias FrontierOS.Sui.Client
-  alias FrontierOS.Sui.Signer
-  alias FrontierOS.Sui.TransactionBuilder
+  alias Sigil.Sui.Client
+  alias Sigil.Sui.Signer
+  alias Sigil.Sui.TransactionBuilder
 
   @shortdoc "Manual E2E verification of Sui integration"
 

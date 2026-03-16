@@ -4,10 +4,10 @@
 /// Uses the typed-witness extension pattern: gate owners call
 /// `gate::authorize_extension<FrontierGateAuth>()` to register this extension,
 /// then travelers call `request_permit()` to obtain a JumpPermit.
-module frontier_os::frontier_gate;
+module sigil::frontier_gate;
 
 use sui::clock::Clock;
-use frontier_os::standings_table::{Self, StandingsTable};
+use sigil::standings_table::{Self, StandingsTable};
 use world::{character::Character, gate::{Self, Gate}};
 
 // === Errors ===

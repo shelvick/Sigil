@@ -1,8 +1,8 @@
 #[test_only]
-module frontier_os::standings_table_tests;
+module sigil::standings_table_tests;
 
 use sui::test_scenario;
-use frontier_os::standings_table;
+use sigil::standings_table;
 
 const OWNER: address = @0xA;
 const STRANGER: address = @0xB;

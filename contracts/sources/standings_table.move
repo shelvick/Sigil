@@ -1,4 +1,4 @@
-module frontier_os::standings_table;
+module sigil::standings_table;
 
 use sui::table::{Self, Table};
 

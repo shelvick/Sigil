@@ -1,4 +1,4 @@
-# FrontierOS
+# Sigil
 
 Tribe coordination tool for [EVE Frontier](https://evefrontier.com). Built for the March 2026 hackathon.
 
@@ -13,7 +13,7 @@ Tribe coordination tool for [EVE Frontier](https://evefrontier.com). Built for t
 ```bash
 mix deps.get
 mix ecto.setup
-mix frontier_os.populate_static_data   # fetch World API static data
+mix sigil.populate_static_data   # fetch World API static data
 iex -S mix phx.server                  # http://localhost:4001
 ```
 
