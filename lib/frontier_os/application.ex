@@ -8,7 +8,7 @@ defmodule FrontierOS.Application do
 
   use Application
 
-  @cache_tables [:assemblies, :characters, :standings, :accounts, :tribes]
+  @cache_tables [:assemblies, :characters, :standings, :accounts, :tribes, :nonces]
 
   @doc false
   @impl true

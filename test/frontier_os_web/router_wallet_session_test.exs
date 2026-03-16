@@ -11,10 +11,12 @@ defmodule FrontierOSWeb.RouterWalletSessionTest do
   alias FrontierOS.{Accounts.Account, Cache}
   alias FrontierOS.Sui.Types.Assembly
 
+  @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
+
   setup :verify_on_exit!
 
   setup do
-    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies]})
+    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies, :nonces]})
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
@@ -226,19 +228,31 @@ defmodule FrontierOSWeb.RouterWalletSessionTest do
   end
 
   describe "session controller" do
-    @tag :acceptance
-    test "posting a wallet address starts a session and redirects home", %{
+    test "valid wallet verification redirects user to dashboard", %{
       conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
       wallet_address: wallet_address
     } do
+      nonce = "session-success-nonce"
+      seed_nonce(cache_tables, nonce, wallet_address)
+
+      expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _bytes,
+                                                                      @zklogin_sig,
+                                                                      "PERSONAL_MESSAGE",
+                                                                      ^wallet_address,
+                                                                      [] ->
+        {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
+      end)
+
       expect(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
         {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
       end)
 
       conn =
         conn
-        |> init_test_session(%{})
-        |> post("/session", %{"wallet_address" => wallet_address})
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
 
       assert conn.status == 302
       assert redirected_to(conn) == "/"
@@ -247,20 +261,246 @@ defmodule FrontierOSWeb.RouterWalletSessionTest do
       refute get_session(conn, :wallet_address) == nil
     end
 
-    @tag :acceptance
-    test "POST /session with invalid address shows an error", %{conn: conn} do
+    test "missing params shows invalid request error message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      stub(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+      end)
+
       conn =
         conn
-        |> init_test_session(%{})
-        |> post("/session", %{"wallet_address" => "not-a-wallet"})
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", %{"wallet_address" => wallet_address, "nonce" => "missing-bytes"})
 
       assert conn.status == 302
       assert redirected_to(conn) == "/"
-      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Invalid wallet address"
-      refute get_session(conn, :wallet_address) == "not-a-wallet"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Invalid authentication request"
+      refute get_session(conn, :wallet_address) == wallet_address
     end
 
-    @tag :acceptance
+    test "unknown nonce shows authentication expired message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      stub(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, "unknown-nonce"))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Authentication expired"
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
+    test "expired nonce shows authentication expired message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "expired-session-nonce"
+
+      seed_nonce(cache_tables, nonce, wallet_address,
+        created_at: System.monotonic_time(:millisecond) - 300_001
+      )
+
+      stub(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Authentication expired"
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
+    test "address mismatch shows authentication failed message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "mismatch-session-nonce"
+      seed_nonce(cache_tables, nonce, alternate_wallet_address())
+
+      stub(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~
+               "Authentication failed — address mismatch"
+
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
+    test "tampered message bytes shows authentication failed message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "tampered-bytes-session-nonce"
+      seed_nonce(cache_tables, nonce, wallet_address)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", %{
+          "wallet_address" => wallet_address,
+          "bytes" => Base.encode64("Approve transaction: transfer 100 SUI"),
+          "signature" => zklogin_signature(),
+          "nonce" => nonce
+        })
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~
+               "Authentication failed — message tampered"
+
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
+    test "chain registration failure shows friendly error to user", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "registration-failure-session-nonce"
+      seed_nonce(cache_tables, nonce, wallet_address)
+
+      expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _, _, _, _, [] ->
+        {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
+      end)
+
+      # zkLogin auth succeeds, then get_objects fails during registration.
+      expect(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
+        {:error, {:graphql_errors, [%{"message" => "internal error"}]}}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+
+      flash = Phoenix.Flash.get(conn.assigns.flash, :error)
+      assert flash =~ "chain query failed"
+      refute flash =~ "graphql_errors"
+      refute flash =~ "inspect"
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
+    test "in-game context redirects user to assembly detail after auth", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "assembly-redirect-session-nonce"
+
+      seed_nonce(cache_tables, nonce, wallet_address,
+        item_id: "0xassembly-route",
+        tenant: "stillness"
+      )
+
+      expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _, _, _, _, [] ->
+        {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
+      end)
+
+      expect(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/assembly/0xassembly-route"
+      assert get_session(conn, :wallet_address) == wallet_address
+      refute Phoenix.Flash.get(conn.assigns.flash, :error)
+    end
+
+    test "invalid signature shows wallet verification error message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "invalid-sig-session-nonce"
+      seed_nonce(cache_tables, nonce, wallet_address)
+
+      expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _, _, _, _, [] ->
+        {:ok, %{"verifyZkLoginSignature" => %{"success" => false}}}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~
+               "Wallet signature could not be verified"
+
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
+    test "Sui endpoint timeout shows friendly timeout message", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      nonce = "timeout-session-nonce"
+      seed_nonce(cache_tables, nonce, wallet_address)
+
+      expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _, _, _, _, [] ->
+        {:error, :timeout}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> post("/session", signed_auth_params(wallet_address, nonce))
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "timeout reaching the chain service"
+      refute get_session(conn, :wallet_address) == wallet_address
+    end
+
     test "DELETE /session clears the session and redirects home", %{
       conn: conn,
       wallet_address: wallet_address
@@ -276,52 +516,11 @@ defmodule FrontierOSWeb.RouterWalletSessionTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == nil
     end
 
-    @tag :acceptance
-    test "POST /session flashes a friendly timeout message", %{
-      conn: conn,
-      wallet_address: wallet_address
-    } do
-      expect(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
-        {:error, :timeout}
-      end)
-
-      conn =
-        conn
-        |> init_test_session(%{})
-        |> post("/session", %{"wallet_address" => wallet_address})
-
-      assert conn.status == 302
-      assert redirected_to(conn) == "/"
-
-      flash = Phoenix.Flash.get(conn.assigns.flash, :error)
-      assert flash =~ "timeout reaching the chain service"
-      refute flash =~ "inspect"
-      refute get_session(conn, :wallet_address) == wallet_address
-    end
-
-    @tag :acceptance
-    test "POST /session flashes a friendly message for graphql errors", %{
-      conn: conn,
-      wallet_address: wallet_address
-    } do
-      expect(FrontierOS.Sui.ClientMock, :get_objects, fn _filters, _opts ->
-        {:error, {:graphql_errors, [%{"message" => "internal error"}]}}
-      end)
-
-      conn =
-        conn
-        |> init_test_session(%{})
-        |> post("/session", %{"wallet_address" => wallet_address})
-
-      assert conn.status == 302
-      assert redirected_to(conn) == "/"
-
-      flash = Phoenix.Flash.get(conn.assigns.flash, :error)
-      assert flash =~ "chain query failed"
-      refute flash =~ "graphql_errors"
-      refute flash =~ "inspect"
-      refute get_session(conn, :wallet_address) == wallet_address
-    end
+    # Note: The nil cache tables fallback path (resolve_cache_tables returning nil)
+    # cannot be directly tested because the application supervisor starts a real
+    # Cache process in the test environment. The path is: resolve_cache_tables/1
+    # returns nil → with %{} = tables <- nil fails → nil -> clause returns
+    # friendly_error(:cache_unavailable). This is a boot-time edge case.
   end
 
   defp socket_fixture do
@@ -341,6 +540,37 @@ defmodule FrontierOSWeb.RouterWalletSessionTest do
 
     "0x" <> suffix
   end
+
+  defp alternate_wallet_address do
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  end
+
+  defp signed_auth_params(wallet_address, nonce) do
+    message = challenge_message(nonce)
+
+    %{
+      "wallet_address" => wallet_address,
+      "bytes" => Base.encode64(message),
+      "signature" => zklogin_signature(),
+      "nonce" => nonce
+    }
+  end
+
+  # Base64-encoded bytes starting with zkLogin scheme byte (0x05)
+  defp zklogin_signature, do: Base.encode64(<<0x05, 0::size(320)>>)
+
+  defp seed_nonce(cache_tables, nonce, wallet_address, opts \\ []) do
+    Cache.put(cache_tables.nonces, nonce, %{
+      address: wallet_address,
+      created_at: Keyword.get(opts, :created_at, System.monotonic_time(:millisecond)),
+      expected_message:
+        Keyword.get_lazy(opts, :expected_message, fn -> challenge_message(nonce) end),
+      item_id: Keyword.get(opts, :item_id),
+      tenant: Keyword.get(opts, :tenant)
+    })
+  end
+
+  defp challenge_message(nonce), do: "Sign in to FrontierOS: #{nonce}"
 
   defp assembly_json do
     %{
