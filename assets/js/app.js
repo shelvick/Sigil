@@ -5,7 +5,11 @@ import topbar from "../vendor/topbar"
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
-let Hooks = {}
+import WalletConnect from "./hooks/wallet_hook"
+
+let Hooks = {
+  WalletConnect: WalletConnect
+}
 
 let liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,

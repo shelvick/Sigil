@@ -400,6 +400,116 @@ defmodule FrontierOS.Sui.ClientHTTPTest do
     end
   end
 
+  describe "verify_zklogin_signature/5" do
+    test "verify_zklogin_signature returns success true for valid signature" do
+      stub_name = stub_name(:verify_zklogin_signature_success)
+
+      Req.Test.expect(stub_name, fn conn ->
+        payload = graphql_payload(conn)
+
+        assert payload["query"] =~ "query VerifyZkLoginSignature"
+
+        assert payload["variables"] == %{
+                 "author" => "0xabc",
+                 "bytes" => "message-bytes",
+                 "intentScope" => "PERSONAL_MESSAGE",
+                 "signature" => "signature-bytes"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "verifyZkLoginSignature" => %{"success" => true}
+          }
+        })
+      end)
+
+      assert {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}} =
+               ClientHTTP.verify_zklogin_signature(
+                 "message-bytes",
+                 "signature-bytes",
+                 "PERSONAL_MESSAGE",
+                 "0xabc",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "verify_zklogin_signature returns success false for invalid signature" do
+      stub_name = stub_name(:verify_zklogin_signature_failure)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "author" => "0xabc",
+                 "bytes" => "message-bytes",
+                 "intentScope" => "PERSONAL_MESSAGE",
+                 "signature" => "signature-bytes"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "verifyZkLoginSignature" => %{"success" => false}
+          }
+        })
+      end)
+
+      assert {:ok, %{"verifyZkLoginSignature" => %{"success" => false}}} =
+               ClientHTTP.verify_zklogin_signature(
+                 "message-bytes",
+                 "signature-bytes",
+                 "PERSONAL_MESSAGE",
+                 "0xabc",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "verify_zklogin_signature returns graphql_errors on endpoint error" do
+      stub_name = stub_name(:verify_zklogin_signature_graphql_errors)
+      errors = [%{"message" => "verification unavailable"}]
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "author" => "0xabc",
+                 "bytes" => "message-bytes",
+                 "intentScope" => "PERSONAL_MESSAGE",
+                 "signature" => "signature-bytes"
+               }
+
+        Req.Test.json(conn, %{"errors" => errors})
+      end)
+
+      assert {:error, {:graphql_errors, ^errors}} =
+               ClientHTTP.verify_zklogin_signature(
+                 "message-bytes",
+                 "signature-bytes",
+                 "PERSONAL_MESSAGE",
+                 "0xabc",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "verify_zklogin_signature returns timeout on transport timeout" do
+      stub_name = stub_name(:verify_zklogin_signature_timeout)
+
+      Req.Test.stub(stub_name, fn conn ->
+        Req.Test.transport_error(conn, :timeout)
+      end)
+
+      assert {:error, :timeout} =
+               ClientHTTP.verify_zklogin_signature(
+                 "message-bytes",
+                 "signature-bytes",
+                 "PERSONAL_MESSAGE",
+                 "0xabc",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+    end
+  end
+
   describe "configuration and behaviour" do
     test "URL override via opts is used for requests" do
       stub_name = stub_name(:url_override)

@@ -48,7 +48,22 @@ defmodule FrontierOS.Sui.Client do
   @callback get_objects(object_filter(), request_opts()) ::
               {:ok, objects_page()} | {:error, error_reason()}
 
+  @typedoc "Intent scope used for zkLogin signature verification."
+  @type zklogin_intent_scope :: String.t()
+
+  @typedoc "Raw zkLogin verification payload returned from Sui."
+  @type zklogin_result :: %{String.t() => term()}
+
   @doc "Submits a signed transaction to Sui."
   @callback execute_transaction(String.t(), [String.t()], request_opts()) ::
               {:ok, tx_effects()} | {:error, error_reason()}
+
+  @doc "Verifies a zkLogin signature for the supplied author and intent scope."
+  @callback verify_zklogin_signature(
+              String.t(),
+              String.t(),
+              zklogin_intent_scope(),
+              String.t(),
+              request_opts()
+            ) :: {:ok, zklogin_result()} | {:error, error_reason()}
 end

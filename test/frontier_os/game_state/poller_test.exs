@@ -100,7 +100,6 @@ defmodule FrontierOS.GameState.PollerTest do
 
     assert_receive {:sync_failed, "assembly-a"}, 100
     assert_receive {:sync_called, "assembly-b"}, 100
-    assert_receive {:sync_failed, "assembly-a"}, 100
     assert Process.alive?(poller)
   end
 

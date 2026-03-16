@@ -4,8 +4,9 @@
 
 - `FrontierOS.Sui.BCS` — Pure BCS encoder/decoder for Sui transaction serialization
 - `FrontierOS.Sui.Signer` — Ed25519 signing, verification, Sui address derivation
-- `FrontierOS.Sui.Client` — Behaviour contract for Sui GraphQL access (3 callbacks)
+- `FrontierOS.Sui.Client` — Behaviour contract for Sui GraphQL access (4 callbacks: get_object, get_objects, execute_transaction, verify_zklogin_signature)
 - `FrontierOS.Sui.Client.HTTP` — Req-backed HTTP implementation of Client behaviour (see `client/AGENTS.md`)
+- `FrontierOS.Sui.ZkLoginVerifier` — Challenge nonce lifecycle + zkLogin signature verification. Pure function module over injected ETS + Sui client
 - `FrontierOS.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
 - `FrontierOS.Sui.TransactionBuilder.PTB` — BCS encoding for all PTB struct types
 - `FrontierOS.Sui.Types` — Namespace for Sui type structs
@@ -44,6 +45,11 @@
 - `get_object/2`: Fetch single object by id
 - `get_objects/2`: Fetch objects by filter (type, owner, cursor, limit)
 - `execute_transaction/3`: Submit signed tx (tx_bytes + signatures)
+- `verify_zklogin_signature/5`: Verify zkLogin signature via Sui GraphQL (bytes, sig, scope, author, opts)
+
+### ZkLoginVerifier (zklogin_verifier.ex)
+- `generate_nonce/2`: address × opts → {:ok, %{nonce, message}} — stores nonce+expected_message in ETS
+- `verify_and_consume/2`: params × opts → {:ok, %{address, item_id, tenant}} — atomic take, bytes validation, Sui verification
 
 ### TransactionBuilder (transaction_builder.ex)
 - `build!/1`: Keyword opts → BCS-serialized TransactionData binary (raises on invalid)

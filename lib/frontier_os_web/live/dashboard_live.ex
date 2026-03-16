@@ -5,12 +5,11 @@ defmodule FrontierOSWeb.DashboardLive do
 
   use FrontierOSWeb, :live_view
 
-  import FrontierOSWeb.AssemblyHelpers
+  import FrontierOSWeb.DashboardLive.Components
 
-  alias FrontierOS.Accounts.Account
   alias FrontierOS.Assemblies
   alias FrontierOS.GameState.Poller
-  alias FrontierOS.Sui.Types.NetworkNode
+  alias FrontierOS.Sui.ZkLoginVerifier
 
   @owner_topic_prefix "assemblies:"
   @assembly_topic_prefix "assembly:"
@@ -20,10 +19,10 @@ defmodule FrontierOSWeb.DashboardLive do
   """
   @impl true
   @spec mount(map(), map(), Phoenix.LiveView.Socket.t()) :: {:ok, Phoenix.LiveView.Socket.t()}
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     socket =
       socket
-      |> assign_base_state()
+      |> assign_base_state(params)
       |> maybe_load_assemblies()
       |> maybe_subscribe()
       |> maybe_start_poller()
@@ -54,6 +53,102 @@ defmodule FrontierOSWeb.DashboardLive do
     {:noreply, assign(socket, assemblies: replace_assembly(socket.assigns.assemblies, assembly))}
   end
 
+  @doc false
+  @impl true
+  @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def handle_event("wallet_detected", _params, %{assigns: %{wallet_state: state}} = socket)
+      when state in [:connecting, :signing] do
+    {:noreply, socket}
+  end
+
+  def handle_event("wallet_detected", %{"wallets" => []}, socket) do
+    {:noreply,
+     assign(socket,
+       wallets: [],
+       wallet_state: :idle,
+       wallet_name: nil,
+       wallet_error: nil
+     )}
+  end
+
+  def handle_event("wallet_detected", %{"wallets" => [wallet]}, socket) when is_map(wallet) do
+    {:noreply,
+     socket
+     |> assign(
+       wallets: [wallet],
+       wallet_state: :connecting,
+       wallet_name: wallet_name(wallet),
+       wallet_error: nil
+     )
+     |> push_event("connect_wallet", %{"index" => 0})}
+  end
+
+  def handle_event("wallet_detected", %{"wallets" => wallets}, socket) when is_list(wallets) do
+    {:noreply,
+     assign(socket,
+       wallets: wallets,
+       wallet_state: :idle,
+       wallet_name: nil,
+       wallet_error: nil
+     )}
+  end
+
+  @doc false
+  def handle_event("select_wallet", %{"index" => index}, socket) do
+    case Integer.parse(index) do
+      {parsed_index, ""} ->
+        {:noreply,
+         socket
+         |> assign(wallet_state: :connecting, wallet_error: nil)
+         |> push_event("connect_wallet", %{"index" => parsed_index})}
+
+      _other ->
+        {:noreply, assign(socket, wallet_state: :error, wallet_error: "Unable to select wallet")}
+    end
+  end
+
+  @doc false
+  def handle_event("wallet_connected", %{"address" => address, "name" => name}, socket) do
+    case generate_wallet_challenge(socket, address) do
+      {:ok, socket, challenge} ->
+        {:noreply,
+         socket
+         |> assign(
+           wallet_state: :signing,
+           wallet_address: address,
+           wallet_name: name,
+           wallet_error: nil
+         )
+         |> push_event("request_sign", challenge)}
+
+      {:error, socket, reason} ->
+        {:noreply,
+         assign(socket, wallet_state: :error, wallet_error: wallet_error_message(reason))}
+    end
+  end
+
+  @doc false
+  def handle_event("wallet_error", %{"reason" => reason}, socket) when is_binary(reason) do
+    socket =
+      socket
+      |> put_flash(:error, reason)
+      |> assign(wallet_state: :error, wallet_error: reason)
+
+    {:noreply, socket}
+  end
+
+  @doc false
+  def handle_event("wallet_retry", _params, socket) do
+    {:noreply,
+     assign(socket,
+       wallet_state: :idle,
+       wallet_address: nil,
+       wallet_name: nil,
+       wallet_error: nil
+     )}
+  end
+
   @doc """
   Renders the themed wallet form or the authenticated assembly overview.
   """
@@ -76,166 +171,43 @@ defmodule FrontierOSWeb.DashboardLive do
         </div>
 
         <%= if @current_account do %>
-          <div class="grid gap-8">
-            <div class="grid gap-4 lg:grid-cols-[2fr_1fr]">
-              <div class="rounded-3xl border border-space-600/80 bg-space-800/80 p-6">
-                <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Wallet linked</p>
-                <h2 class="mt-4 text-2xl font-semibold text-cream"><%= truncate_id(@current_account.address) %></h2>
-                <p class="mt-2 break-all font-mono text-sm text-foreground"><%= @current_account.address %></p>
-
-                <dl class="mt-6 grid gap-4 sm:grid-cols-3">
-                  <div>
-                    <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Character</dt>
-                    <dd class="mt-2 text-sm text-cream"><%= primary_character_name(@current_account) %></dd>
-                  </div>
-                  <div>
-                    <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Tribe</dt>
-                    <dd class="mt-2 text-sm text-cream"><%= tribe_label(@current_account) %></dd>
-                  </div>
-                  <div>
-                    <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Crew count</dt>
-                    <dd class="mt-2 text-sm text-cream"><%= length(@current_account.characters) %> online</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div class="rounded-3xl border border-space-600/80 bg-space-800/60 p-6">
-                <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Session controls</p>
-                <p class="mt-4 text-sm leading-6 text-space-500">
-                  Discovery stays synced while this command deck remains linked to the uplink.
-                </p>
-                <.link
-                  href={~p"/session"}
-                  method="delete"
-                  class="mt-6 inline-flex rounded-full bg-quantum-600 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-400"
-                >
-                  Disconnect Wallet
-                </.link>
-              </div>
-            </div>
-
-            <div class="rounded-3xl border border-space-600/80 bg-space-800/70 p-6">
-              <div class="flex items-center justify-between gap-4">
-                <div>
-                  <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Assembly manifest</p>
-                  <h2 class="mt-3 text-2xl font-semibold text-cream">Operational Assets</h2>
-                </div>
-                <span class="rounded-full border border-space-600/80 bg-space-900/70 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-                  <%= length(@assemblies) %> tracked
-                </span>
-              </div>
-
-              <%= if @assemblies == [] do %>
-                <div class="mt-6 rounded-2xl border border-space-600/80 bg-space-900/70 p-5">
-                  <p class="text-sm text-cream">
-                    <%= if @discovery_error, do: "Assembly discovery is temporarily unavailable", else: "No assemblies found" %>
-                  </p>
-                  <p class="mt-2 text-sm text-space-500">
-                    <%= if @discovery_error,
-                      do: "Retry discovery by refreshing the command deck.",
-                      else: "Link another wallet or check again after more assets come online." %>
-                  </p>
-                </div>
-              <% else %>
-                <div class="mt-6 overflow-x-auto">
-                  <table class="min-w-full border-separate border-spacing-y-3">
-                    <thead>
-                      <tr class="font-mono text-xs uppercase tracking-[0.25em] text-space-500">
-                        <th class="px-4 py-2 text-left">Type</th>
-                        <th class="px-4 py-2 text-left">Name</th>
-                        <th class="px-4 py-2 text-left">Status</th>
-                        <th class="px-4 py-2 text-left">Fuel</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <%= for assembly <- @assemblies do %>
-                        <tr class="cursor-pointer rounded-2xl bg-space-900/70 text-sm text-foreground transition hover:bg-space-800/80" phx-click={JS.navigate(~p"/assembly/#{assembly.id}")}>
-                          <td class="rounded-l-2xl px-4 py-4 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
-                            <%= assembly_type_label(assembly) %>
-                          </td>
-                          <td class="px-4 py-4">
-                            <.link navigate={~p"/assembly/#{assembly.id}"} class="font-semibold text-cream hover:text-quantum-300">
-                              <%= assembly_name(assembly) %>
-                            </.link>
-                          </td>
-                          <td class="px-4 py-4">
-                            <span class={status_badge_classes(assembly)}>
-                              <%= assembly_status(assembly) %>
-                            </span>
-                          </td>
-                          <td class="rounded-r-2xl px-4 py-4">
-                            <%= if match?(%NetworkNode{}, assembly) do %>
-                              <div class="space-y-2">
-                                <div class="flex items-center justify-between gap-3 font-mono text-xs uppercase tracking-[0.15em] text-space-500">
-                                  <span><%= fuel_label(assembly.fuel) %></span>
-                                  <span><%= fuel_percent_label(assembly.fuel) %></span>
-                                </div>
-                                <div class="h-2 rounded-full bg-space-700">
-                                  <div class="h-full rounded-full bg-quantum-400" style={"width: #{fuel_percent(assembly.fuel)}%"}></div>
-                                </div>
-                              </div>
-                            <% else %>
-                              <span class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">-</span>
-                            <% end %>
-                          </td>
-                        </tr>
-                      <% end %>
-                    </tbody>
-                  </table>
-                </div>
-              <% end %>
-            </div>
-          </div>
+          <.authenticated_view
+            current_account={@current_account}
+            assemblies={@assemblies}
+            discovery_error={@discovery_error}
+          />
         <% else %>
-          <div class="grid gap-8 lg:grid-cols-[1.4fr_0.9fr]">
-            <div class="space-y-6">
-              <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">EVE Frontier-ready interface</p>
-              <h2 class="max-w-2xl text-4xl font-semibold leading-tight text-cream sm:text-6xl">
-                Connect Your Wallet
-              </h2>
-              <p class="max-w-2xl text-base leading-7 text-space-500 sm:text-lg">
-                Link a commander wallet to unlock tribe assemblies, live status telemetry, and shared frontier operations.
-              </p>
-            </div>
-
-            <form action={~p"/session"} method="post" class="rounded-3xl border border-space-600/80 bg-space-800/80 p-6">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <label for="wallet_address" class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">
-                Wallet Address
-              </label>
-              <input
-                id="wallet_address"
-                name="wallet_address"
-                type="text"
-                placeholder="0x..."
-                class="mt-4 w-full rounded-2xl border border-space-600 bg-space-950 px-4 py-3 font-mono text-sm text-cream placeholder:text-space-500 focus:border-quantum-400 focus:ring-0"
-              />
-              <button
-                type="submit"
-                class="mt-6 inline-flex w-full items-center justify-center rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
-              >
-                Enter Frontier
-              </button>
-            </form>
-          </div>
+          <.wallet_connect_view
+            wallets={@wallets}
+            wallet_state={@wallet_state}
+            wallet_name={@wallet_name}
+            wallet_error={@wallet_error}
+          />
         <% end %>
       </div>
     </section>
     """
   end
 
-  @spec assign_base_state(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  defp assign_base_state(%{assigns: %{current_account: nil}} = socket) do
+  @spec assign_base_state(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  defp assign_base_state(%{assigns: %{current_account: nil}} = socket, params) do
     assign(socket,
       page_title: "Connect Wallet",
       assemblies: [],
       loading: false,
       poller: nil,
-      discovery_error: false
+      discovery_error: false,
+      wallet_state: :idle,
+      wallet_address: nil,
+      wallet_name: nil,
+      wallet_error: nil,
+      wallets: [],
+      item_id: Map.get(params, "itemId"),
+      tenant: Map.get(params, "tenant")
     )
   end
 
-  defp assign_base_state(socket) do
+  defp assign_base_state(socket, _params) do
     assign(socket,
       page_title: "Dashboard",
       assemblies: [],
@@ -345,19 +317,34 @@ defmodule FrontierOSWeb.DashboardLive do
     end)
   end
 
-  @spec primary_character_name(Account.t()) :: String.t()
-  defp primary_character_name(%Account{characters: [%{metadata: %{name: name}} | _rest]})
-       when is_binary(name),
-       do: name
+  @spec generate_wallet_challenge(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:ok, Phoenix.LiveView.Socket.t(), %{required(String.t()) => String.t()}}
+          | {:error, Phoenix.LiveView.Socket.t(), atom()}
+  defp generate_wallet_challenge(%{assigns: %{cache_tables: tables}} = socket, address)
+       when is_map(tables) do
+    case ZkLoginVerifier.generate_nonce(address,
+           tables: tables,
+           item_id: socket.assigns[:item_id],
+           tenant: socket.assigns[:tenant]
+         ) do
+      {:ok, %{nonce: nonce, message: message}} ->
+        {:ok, socket, %{"nonce" => nonce, "message" => message}}
 
-  defp primary_character_name(%Account{characters: []}), do: "No characters synced"
-  defp primary_character_name(%Account{}), do: "Commander profile"
+      {:error, reason} ->
+        {:error, socket, reason}
+    end
+  end
 
-  @spec tribe_label(Account.t()) :: String.t()
-  defp tribe_label(%Account{tribe_id: tribe_id}) when is_integer(tribe_id),
-    do: Integer.to_string(tribe_id)
+  defp generate_wallet_challenge(socket, _address), do: {:error, socket, :cache_unavailable}
 
-  defp tribe_label(%Account{}), do: "Unaligned"
+  @spec wallet_error_message(:cache_unavailable | :invalid_address) :: String.t()
+  defp wallet_error_message(:cache_unavailable), do: "Service starting up. Please try again."
+  defp wallet_error_message(:invalid_address), do: "Invalid wallet address"
+
+  @spec wallet_name(map()) :: String.t()
+  defp wallet_name(%{"name" => name}) when is_binary(name), do: name
+  defp wallet_name(%{name: name}) when is_binary(name), do: name
+  defp wallet_name(_wallet), do: "Unknown Wallet"
 
   @spec owner_topic(String.t()) :: String.t()
   defp owner_topic(address), do: @owner_topic_prefix <> address

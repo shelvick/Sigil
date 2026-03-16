@@ -77,6 +77,17 @@ defmodule FrontierOS.Cache do
   end
 
   @doc """
+  Atomically removes and returns a value by key from an ETS table.
+  """
+  @spec take(table_id(), term()) :: term() | nil
+  def take(table, key) do
+    case :ets.take(table, key) do
+      [{^key, value}] -> value
+      [] -> nil
+    end
+  end
+
+  @doc """
   Returns all values stored in an ETS table.
   """
   @spec all(table_id()) :: [term()]

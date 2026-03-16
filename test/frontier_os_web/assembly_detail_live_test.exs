@@ -11,10 +11,12 @@ defmodule FrontierOSWeb.AssemblyDetailLiveTest do
   alias FrontierOS.Accounts.Account
   alias FrontierOS.Sui.Types.{Character, Gate, NetworkNode, StorageUnit, Turret}
 
+  @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
+
   setup :verify_on_exit!
 
   setup do
-    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies]})
+    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies, :nonces]})
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
@@ -459,7 +461,7 @@ defmodule FrontierOSWeb.AssemblyDetailLiveTest do
   end
 
   @tag :acceptance
-  test "full flow: authenticated user views gate detail", %{
+  test "wallet verification → navigate to gate detail", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -471,6 +473,14 @@ defmodule FrontierOSWeb.AssemblyDetailLiveTest do
 
     Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
 
+    expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _bytes,
+                                                                    @zklogin_sig,
+                                                                    "PERSONAL_MESSAGE",
+                                                                    ^wallet_address,
+                                                                    [] ->
+      {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
+    end)
+
     expect(FrontierOS.Sui.ClientMock, :get_objects, fn filters, [] ->
       case filters do
         [type: type, owner: ^wallet_address] when type == character_type ->
@@ -478,10 +488,32 @@ defmodule FrontierOSWeb.AssemblyDetailLiveTest do
       end
     end)
 
+    # Generate nonce through the real LiveView flow
+    {:ok, view, _html} =
+      live(
+        init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}),
+        "/"
+      )
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => nonce})
+
+    message = "Sign in to FrontierOS: #{nonce}"
+    bytes = Base.encode64(message)
+
+    # POST to /session with real nonce from server
     conn =
       conn
       |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
-      |> post("/session", %{"wallet_address" => wallet_address})
+      |> post("/session", %{
+        "wallet_address" => wallet_address,
+        "bytes" => bytes,
+        "signature" => zklogin_signature(),
+        "nonce" => nonce
+      })
 
     assert redirected_to(conn) == "/"
 
@@ -666,6 +698,9 @@ defmodule FrontierOSWeb.AssemblyDetailLiveTest do
   defp location_hash do
     :binary.copy(<<7>>, 32)
   end
+
+  # Base64-encoded bytes starting with zkLogin scheme byte (0x05)
+  defp zklogin_signature, do: Base.encode64(<<0x05, 0::size(320)>>)
 
   defp uid(id), do: %{"id" => id}
 end
