@@ -1,10 +1,10 @@
-defmodule FrontierOS.MixProject do
+defmodule Sigil.MixProject do
   use Mix.Project
 
   @spec project() :: keyword()
   def project do
     [
-      app: :frontier_os,
+      app: :sigil,
       version: "0.1.0",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -22,7 +22,7 @@ defmodule FrontierOS.MixProject do
   @spec application() :: keyword()
   def application do
     [
-      mod: {FrontierOS.Application, []},
+      mod: {Sigil.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
@@ -94,10 +94,10 @@ defmodule FrontierOS.MixProject do
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["tailwind frontier_os", "esbuild frontier_os"],
+      "assets.build": ["tailwind sigil", "esbuild sigil"],
       "assets.deploy": [
-        "tailwind frontier_os --minify",
-        "esbuild frontier_os --minify",
+        "tailwind sigil --minify",
+        "esbuild sigil --minify",
         "phx.digest"
       ]
     ]

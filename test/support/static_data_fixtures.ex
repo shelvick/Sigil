@@ -1,10 +1,10 @@
-defmodule FrontierOS.StaticDataTestFixtures do
+defmodule Sigil.StaticDataTestFixtures do
   @moduledoc false
 
-  alias FrontierOS.StaticData.Constellation
-  alias FrontierOS.StaticData.DetsFile
-  alias FrontierOS.StaticData.ItemType
-  alias FrontierOS.StaticData.SolarSystem
+  alias Sigil.StaticData.Constellation
+  alias Sigil.StaticData.DetsFile
+  alias Sigil.StaticData.ItemType
+  alias Sigil.StaticData.SolarSystem
 
   @type static_data() :: %{
           solar_systems: [SolarSystem.t()],
@@ -16,7 +16,7 @@ defmodule FrontierOS.StaticDataTestFixtures do
   def temp_dir(prefix) do
     Path.join([
       System.tmp_dir!(),
-      "frontier_os_tests",
+      "sigil_tests",
       prefix <> "_" <> Integer.to_string(System.unique_integer([:positive]))
     ])
   end
@@ -40,9 +40,9 @@ defmodule FrontierOS.StaticDataTestFixtures do
       """
       import Config
 
-      config :frontier_os, :start_static_data, #{inspect(start_static_data)}
-      config :frontier_os, :static_data_dir, #{inspect(static_data_dir)}
-      config :frontier_os, :world_client, #{inspect(world_client)}
+      config :sigil, :start_static_data, #{inspect(start_static_data)}
+      config :sigil, :static_data_dir, #{inspect(static_data_dir)}
+      config :sigil, :world_client, #{inspect(world_client)}
       """
     )
 
@@ -58,8 +58,8 @@ defmodule FrontierOS.StaticDataTestFixtures do
       """
       import Config
 
-      config :frontier_os, :static_data_dir, #{inspect(output_dir)}
-      config :frontier_os, :world_client, FrontierOS.StaticData.WorldClientMock
+      config :sigil, :static_data_dir, #{inspect(output_dir)}
+      config :sigil, :world_client, Sigil.StaticData.WorldClientMock
       """
     )
 
@@ -218,7 +218,7 @@ defmodule FrontierOS.StaticDataTestFixtures do
   end
 
   defp write_rows!(path, rows) do
-    {:ok, dets_ref} = FrontierOS.StaticData.DetsFile.open_file(path)
+    {:ok, dets_ref} = Sigil.StaticData.DetsFile.open_file(path)
 
     :ok =
       rows

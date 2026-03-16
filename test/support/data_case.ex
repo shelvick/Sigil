@@ -1,4 +1,4 @@
-defmodule FrontierOS.DataCase do
+defmodule Sigil.DataCase do
   @moduledoc """
   Test case template for tests requiring database access.
 
@@ -11,19 +11,19 @@ defmodule FrontierOS.DataCase do
 
   using do
     quote do
-      alias FrontierOS.Repo
+      alias Sigil.Repo
 
       import Ecto
       import Ecto.Changeset
       import Ecto.Query
-      import FrontierOS.DataCase
+      import Sigil.DataCase
     end
   end
 
   setup tags do
     pid =
       Ecto.Adapters.SQL.Sandbox.start_owner!(
-        FrontierOS.Repo,
+        Sigil.Repo,
         shared: not tags[:async]
       )
 

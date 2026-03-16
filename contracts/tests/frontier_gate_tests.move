@@ -1,9 +1,9 @@
 #[test_only]
-module frontier_os::frontier_gate_tests;
+module sigil::frontier_gate_tests;
 
 use std::{bcs, string::utf8};
 use sui::{clock, test_scenario as ts};
-use frontier_os::{frontier_gate, standings_table};
+use sigil::{frontier_gate, standings_table};
 use world::{
     access::{AdminACL, OwnerCap, ServerAddressRegistry},
     character::{Self, Character},

@@ -2,7 +2,7 @@ import Config
 
 if config_env() != :test do
   if eve_world = System.get_env("EVE_WORLD") do
-    config :frontier_os, :eve_world, eve_world
+    config :sigil, :eve_world, eve_world
   end
 end
 
@@ -14,7 +14,7 @@ if config_env() == :prod do
       For example: ecto://USER:PASS@HOST/DATABASE
       """
 
-  config :frontier_os, FrontierOS.Repo,
+  config :sigil, Sigil.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
 
@@ -25,10 +25,10 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "frontier-os.fly.dev"
+  host = System.get_env("PHX_HOST") || "sigil.fly.dev"
   port = String.to_integer(System.get_env("PORT") || "4000")
 
-  config :frontier_os, FrontierOSWeb.Endpoint,
+  config :sigil, SigilWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
     secret_key_base: secret_key_base

@@ -8,8 +8,8 @@ const path = require("path")
 module.exports = {
   content: [
     "./js/**/*.js",
-    "../lib/frontier_os_web.ex",
-    "../lib/frontier_os_web/**/*.*ex"
+    "../lib/sigil_web.ex",
+    "../lib/sigil_web/**/*.*ex"
   ],
   theme: {
     extend: {

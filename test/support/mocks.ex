@@ -1,2 +1,2 @@
-Hammox.defmock(FrontierOS.Sui.ClientMock, for: FrontierOS.Sui.Client)
-Hammox.defmock(FrontierOS.StaticData.WorldClientMock, for: FrontierOS.StaticData.WorldClient)
+Hammox.defmock(Sigil.Sui.ClientMock, for: Sigil.Sui.Client)
+Hammox.defmock(Sigil.StaticData.WorldClientMock, for: Sigil.StaticData.WorldClient)
