@@ -29,6 +29,15 @@ defmodule FrontierOS.CacheTest do
       assert Cache.get(tid, :character_1) == nil
     end
 
+    test "take/2 returns and removes the stored entry" do
+      tid = cache_table!(:entries)
+
+      assert :ok = Cache.put(tid, :nonce_1, %{address: "0xabc"})
+      assert %{address: "0xabc"} = Cache.take(tid, :nonce_1)
+      assert Cache.get(tid, :nonce_1) == nil
+      assert Cache.take(tid, :missing_nonce) == nil
+    end
+
     test "put/3 overwrites existing value" do
       tid = cache_table!(:entries)
 

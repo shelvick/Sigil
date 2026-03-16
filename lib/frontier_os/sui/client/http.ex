@@ -72,6 +72,24 @@ defmodule FrontierOS.Sui.Client.HTTP do
   }
   """
 
+  @verify_zklogin_query """
+  query VerifyZkLoginSignature(
+    $bytes: Base64!
+    $signature: Base64!
+    $intentScope: ZkLoginIntentScope!
+    $author: SuiAddress!
+  ) {
+    verifyZkLoginSignature(
+      bytes: $bytes
+      signature: $signature
+      intentScope: $intentScope
+      author: $author
+    ) {
+      success
+    }
+  }
+  """
+
   @doc "Fetches a single Sui object by address."
   @impl Client
   @spec get_object(String.t(), Client.request_opts()) ::
@@ -165,6 +183,30 @@ defmodule FrontierOS.Sui.Client.HTTP do
           {:error, :invalid_response}
       end
     end
+  end
+
+  @doc "Verifies a zkLogin signature against the Sui GraphQL API."
+  @impl Client
+  @spec verify_zklogin_signature(
+          String.t(),
+          String.t(),
+          Client.zklogin_intent_scope(),
+          String.t(),
+          Client.request_opts()
+        ) :: {:ok, Client.zklogin_result()} | {:error, Client.error_reason()}
+  def verify_zklogin_signature(bytes, signature, intent_scope, author, opts \\ [])
+      when is_binary(bytes) and is_binary(signature) and is_binary(intent_scope) and
+             is_binary(author) and is_list(opts) do
+    graphql_request(
+      @verify_zklogin_query,
+      %{
+        "bytes" => bytes,
+        "signature" => signature,
+        "intentScope" => intent_scope,
+        "author" => author
+      },
+      opts
+    )
   end
 
   @spec graphql_request(String.t(), map(), keyword()) ::

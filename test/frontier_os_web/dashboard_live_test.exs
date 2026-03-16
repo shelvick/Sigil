@@ -12,11 +12,12 @@ defmodule FrontierOSWeb.DashboardLiveTest do
   alias FrontierOS.Sui.Types.{Character, Gate, NetworkNode, Turret}
 
   @world_package_id "0xtest_world"
+  @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
 
   setup :verify_on_exit!
 
   setup do
-    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies]})
+    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies, :nonces]})
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
@@ -27,19 +28,158 @@ defmodule FrontierOSWeb.DashboardLiveTest do
      wallet_address: unique_wallet_address()}
   end
 
-  test "renders wallet entry form when not authenticated", %{conn: conn} do
+  test "renders wallet connect button when not authenticated", %{conn: conn} do
     assert {:ok, _view, html} = live(conn, "/")
 
     assert html =~ "Connect Your Wallet"
-    assert html =~ "Wallet Address"
+    assert html =~ "Connect Wallet"
+    assert html =~ ~s(id="wallet-connect")
+    assert html =~ ~s(phx-hook="WalletConnect")
+    refute html =~ "Wallet Address"
+    refute html =~ ~s(<form action="/session" method="post")
     refute html =~ "Operational Assets"
   end
 
-  test "wallet form action is POST /session", %{conn: conn} do
+  test "shows install wallet message when no wallets detected", %{conn: conn} do
     assert {:ok, _view, html} = live(conn, "/")
 
-    assert html =~ ~s(<form action="/session" method="post")
-    assert html =~ ~s(name="_csrf_token")
+    assert html =~ "No Sui wallet detected. Install EVE Vault to continue."
+    refute html =~ "Disconnect Wallet"
+    refute html =~ "Operational Assets"
+  end
+
+  test "wallet hook mount triggers wallet_detected event", %{conn: conn} do
+    {:ok, view, initial_html} = live(conn, "/")
+
+    assert initial_html =~ "Connect Your Wallet"
+
+    html = render_hook(view, "wallet_detected", %{"wallets" => []})
+
+    assert html =~ "No Sui wallet detected. Install EVE Vault to continue."
+    refute html =~ "Disconnect Wallet"
+    refute html =~ "Operational Assets"
+  end
+
+  test "single detected wallet auto-connects", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    html = render_hook(view, "wallet_detected", %{"wallets" => [wallet_payload("Eve Vault")]})
+
+    assert_push_event(view, "connect_wallet", %{"index" => 0})
+    assert html =~ "Connecting to wallet..."
+    assert html =~ "Eve Vault"
+  end
+
+  test "multiple detected wallets render picker and allow selection", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    html =
+      render_hook(view, "wallet_detected", %{
+        "wallets" => [wallet_payload("Eve Vault"), wallet_payload("Sui Wallet")]
+      })
+
+    assert html =~ "Available wallets"
+    assert html =~ "Eve Vault"
+    assert html =~ "Sui Wallet"
+    assert html =~ "Connect"
+    assert html =~ "https://example.test/Eve-Vault.png"
+    assert html =~ "https://example.test/Sui-Wallet.png"
+
+    selected_html =
+      view
+      |> element(~s(button[phx-click="select_wallet"][phx-value-index="1"]))
+      |> render_click()
+
+    assert_push_event(view, "connect_wallet", %{"index" => 1})
+    assert selected_html =~ "Connecting to wallet..."
+  end
+
+  test "wallet_connected generates nonce and pushes request_sign", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {:ok, view, _html} =
+      live(init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}), "/")
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => _, "message" => _})
+
+    assert [%{address: ^wallet_address, item_id: nil, tenant: nil}] =
+             Cache.all(cache_tables.nonces)
+  end
+
+  test "mount captures itemId and tenant from URL params", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {:ok, view, html} =
+      live(
+        init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}),
+        "/?itemId=0xassembly-123&tenant=stillness"
+      )
+
+    assert html =~ "Connect Your Wallet"
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => _, "message" => _})
+
+    assert [%{address: ^wallet_address, item_id: "0xassembly-123", tenant: "stillness"}] =
+             Cache.all(cache_tables.nonces)
+  end
+
+  test "wallet_error shows flash error and retry button", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_error", %{"reason" => "Signing request timed out"})
+
+    html = render(view)
+
+    # Flash error is rendered (via put_flash, shown in flash_group)
+    assert has_element?(view, "[role=alert]", "Signing request timed out")
+    # Inline error state with retry
+    assert html =~ "Try Again"
+    refute html =~ "Wallet Address"
+  end
+
+  test "late wallet_detected does not interrupt active signing flow", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {:ok, view, _html} =
+      live(init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}), "/")
+
+    # Connect a wallet first to enter signing state
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => _})
+
+    # Now simulate a late wallet_detected event (new wallet registering after timeout)
+    html =
+      view
+      |> element("#wallet-connect")
+      |> render_hook("wallet_detected", %{
+        "wallets" => [wallet_payload("Eve Vault"), wallet_payload("Suiet")]
+      })
+
+    # Should still show signing state, not reset to wallet picker
+    assert html =~ "approve the signing request"
+    refute html =~ "Available wallets"
   end
 
   test "renders assembly list when authenticated", %{
@@ -307,8 +447,33 @@ defmodule FrontierOSWeb.DashboardLiveTest do
     assert html =~ wallet_address
   end
 
+  test "wallet connect event prepares signed auth request for dashboard login", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {:ok, view, initial_html} =
+      live(init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}), "/")
+
+    assert initial_html =~ "Connect Your Wallet"
+    refute initial_html =~ "Operational Assets"
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => nonce, "message" => _message})
+    assert byte_size(nonce) > 0
+
+    assert [%{address: ^wallet_address, item_id: nil, tenant: nil}] =
+             Cache.all(cache_tables.nonces)
+
+    refute initial_html =~ "Invalid authentication request"
+  end
+
   @tag :acceptance
-  test "full flow: submit wallet address, see assemblies on dashboard", %{
+  test "wallet verification → session → dashboard with assemblies", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -320,6 +485,14 @@ defmodule FrontierOSWeb.DashboardLiveTest do
     owner_cap_type = owner_cap_type()
     gate_id = gate.id
     node_id = node.id
+
+    expect(FrontierOS.Sui.ClientMock, :verify_zklogin_signature, fn _bytes,
+                                                                    @zklogin_sig,
+                                                                    "PERSONAL_MESSAGE",
+                                                                    ^wallet_address,
+                                                                    [] ->
+      {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
+    end)
 
     expect(FrontierOS.Sui.ClientMock, :get_objects, 2, fn filters, [] ->
       case filters do
@@ -343,14 +516,35 @@ defmodule FrontierOSWeb.DashboardLiveTest do
       end
     end)
 
+    {:ok, view, initial_html} =
+      live(
+        init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}),
+        "/"
+      )
+
+    assert initial_html =~ "Connect Your Wallet"
+    refute initial_html =~ "Operational Assets"
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => nonce, "message" => message})
+    assert message == "Sign in to FrontierOS: #{nonce}"
+
     conn =
       conn
       |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
-      |> post("/session", %{"wallet_address" => wallet_address})
+      |> post("/session", %{
+        "wallet_address" => wallet_address,
+        "bytes" => Base.encode64(message),
+        "signature" => zklogin_signature(),
+        "nonce" => nonce
+      })
 
     assert redirected_to(conn) == "/"
 
-    assert {:ok, _view, html} = live(recycle(conn), "/")
+    assert {:ok, _dashboard_view, html} = live(recycle(conn), "/")
 
     assert html =~ wallet_address
     assert html =~ truncate_id(wallet_address)
@@ -362,6 +556,7 @@ defmodule FrontierOSWeb.DashboardLiveTest do
     assert html =~ "50 / 5000"
     assert html =~ "/assembly/#{gate.id}"
     refute html =~ "Connect Your Wallet"
+    refute html =~ "Invalid authentication request"
     refute html =~ "No assemblies found"
   end
 
@@ -449,6 +644,13 @@ defmodule FrontierOSWeb.DashboardLiveTest do
   end
 
   defp truncate_id(id), do: id
+
+  # Base64-encoded bytes starting with zkLogin scheme byte (0x05)
+  defp zklogin_signature, do: Base.encode64(<<0x05, 0::size(320)>>)
+
+  defp wallet_payload(name) do
+    %{"name" => name, "icon" => "https://example.test/#{String.replace(name, " ", "-")}.png"}
+  end
 
   defp character_type do
     "#{@world_package_id}::character::Character"

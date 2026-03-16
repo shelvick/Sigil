@@ -5,6 +5,7 @@ defmodule FrontierOS.ApplicationTest do
 
   use ExUnit.Case, async: true
 
+  alias FrontierOS.Cache
   alias FrontierOS.StaticDataTestFixtures, as: Fixtures
 
   test "application starts all required children" do
@@ -43,6 +44,19 @@ defmodule FrontierOS.ApplicationTest do
 
     assert index_of(child_ids_in_start_order, inspect(FrontierOS.Cache)) <
              index_of(child_ids_in_start_order, inspect(FrontierOSWeb.Endpoint))
+  end
+
+  test "application cache includes nonce table" do
+    {_id, cache_pid, _kind, _modules} =
+      Supervisor.which_children(FrontierOS.Supervisor)
+      |> Enum.find(fn
+        {FrontierOS.Cache, pid, _kind, _modules} -> is_pid(pid)
+        _other -> false
+      end)
+
+    tables = Cache.tables(cache_pid)
+
+    assert :nonces in Map.keys(tables)
   end
 
   defp configured_application_snapshot!(opts) do

@@ -9,8 +9,9 @@
 - `FrontierOSWeb.CacheResolver` (`cache_resolver.ex`) — Shared supervisor lookup for Cache tables (used by WalletSession + SessionController)
 - `FrontierOSWeb.AssemblyHelpers` (`assembly_helpers.ex`) — Shared display helpers: type labels, names, status badges (success/warning/default), fuel gauges, ID truncation
 - `FrontierOSWeb.Layouts` (`components/layouts.ex`) — Root + app layout templates, `truncate_wallet/1`
-- `FrontierOSWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session: wallet registration via Accounts context, friendly error messages
-- `FrontierOSWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: wallet form (unauth), assembly manifest table (auth), PubSub subscriptions, linked StatePoller
+- `FrontierOSWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session: zkLogin-verified wallet auth, nonce-bound assembly context, friendly error messages
+- `FrontierOSWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: wallet connect via JS hook (unauth), assembly manifest table (auth), PubSub subscriptions, linked StatePoller
+- `FrontierOSWeb.DashboardLive.Components` (`live/dashboard_live/components.ex`) — Extracted template components: authenticated_view, assembly_manifest, wallet_connect_view, wallet_state_panel
 - `FrontierOSWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering (Gate/Turret/StorageUnit/NetworkNode/Assembly), fuel/energy/connection panels, PubSub updates
 - `FrontierOSWeb.HealthController` (`controllers/health_controller.ex`) — GET /api/health → `{"status":"ok"}`
 - `FrontierOSWeb.ErrorHTML` (`controllers/error_html.ex`) — Error page rendering
@@ -33,13 +34,23 @@
 - `truncate_id/1`: "0xabcd1234...ef78" truncation for hex IDs
 
 ### SessionController (controllers/session_controller.ex)
-- `create/2`: Validate address → register_wallet → put_session → redirect
+- `create/2`: auth_params → verify_wallet (ZkLoginVerifier) → register_wallet → put_session → redirect (post_auth_path)
 - `delete/2`: clear_session + drop → redirect
+- `friendly_error/1`: Maps error atoms/tuples to user-facing messages
 
 ### DashboardLive (live/dashboard_live.ex)
-- `mount/3`: assign_base_state → maybe_load_assemblies → maybe_subscribe → maybe_start_poller
+- `mount/3`: assign_base_state (captures ?itemId=&tenant=) → maybe_load_assemblies → maybe_subscribe → maybe_start_poller
+- `handle_event("wallet_detected")`: Store wallets, auto-connect if single, ignore during active auth
+- `handle_event("wallet_connected")`: Generate nonce via ZkLoginVerifier, push request_sign to JS hook
+- `handle_event("wallet_error")`: Flash error + set error state with retry
 - `handle_info({:assemblies_discovered, list})`: Replace assembly list, subscribe to new topics, update poller
 - `handle_info({:assembly_updated, assembly})`: Replace single assembly in list
+
+### DashboardLive.Components (live/dashboard_live/components.ex)
+- `authenticated_view/1`: Wallet info panel + session controls + assembly manifest
+- `assembly_manifest/1`: Assembly table with type/name/status/fuel columns
+- `wallet_connect_view/1`: Wallet connect prompt + button + state panel
+- `wallet_state_panel/1`: Multi-clause component for idle/connecting/signing/error states
 
 ### AssemblyDetailLive (live/assembly_detail_live.ex)
 - `mount/3`: fetch_assembly from cache → assign → subscribe → start poller (or redirect if not found)
@@ -57,6 +68,11 @@
 
 - `FrontierOS.Accounts` — wallet registration + account lookup
 - `FrontierOS.Assemblies` — assembly discovery, listing, sync
-- `FrontierOS.Cache` — ETS table resolution
+- `FrontierOS.Cache` — ETS table resolution (including :nonces for auth)
+- `FrontierOS.Sui.ZkLoginVerifier` — challenge nonce generation + zkLogin verification
 - `FrontierOS.GameState.Poller` — linked assembly polling
 - `Phoenix.PubSub` — real-time updates
+
+## JS Hooks
+
+- `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, signPersonalMessage, hidden form POST. Registered in `assets/js/app.js`.
