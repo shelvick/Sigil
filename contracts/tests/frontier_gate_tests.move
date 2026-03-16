@@ -15,12 +15,16 @@ use world::{
 };
 
 const HOSTILE: u8 = 0;
-const NEUTRAL: u8 = 1;
-const FRIENDLY: u8 = 2;
+const UNFRIENDLY: u8 = 1;
+const NEUTRAL: u8 = 2;
+const FRIENDLY: u8 = 3;
+const ALLIED: u8 = 4;
 
 const FRIENDLY_TRIBE: u32 = 42;
 const HOSTILE_TRIBE: u32 = 7;
+const UNFRIENDLY_TRIBE: u32 = 9;
 const NEUTRAL_TRIBE: u32 = 11;
+const ALLIED_TRIBE: u32 = 88;
 const UNKNOWN_TRIBE: u32 = 999;
 
 const GATE_TYPE_ID: u64 = 8888;
@@ -248,6 +252,24 @@ fun set_standing(ts: &mut ts::Scenario, tribe_id: u32, standing: u8) {
     };
 }
 
+fun set_default_standing(ts: &mut ts::Scenario, standing: u8) {
+    ts::next_tx(ts, user_a());
+    {
+        let mut table = ts::take_shared<standings_table::StandingsTable>(ts);
+        standings_table::set_default_standing(&mut table, standing, ts.ctx());
+        ts::return_shared(table);
+    };
+}
+
+fun set_pilot_standing(ts: &mut ts::Scenario, standing: u8) {
+    ts::next_tx(ts, user_a());
+    {
+        let mut table = ts::take_shared<standings_table::StandingsTable>(ts);
+        standings_table::set_pilot_standing(&mut table, user_a(), standing, ts.ctx());
+        ts::return_shared(table);
+    };
+}
+
 fun setup_permit_scenario(ts: &mut ts::Scenario, tribe_id: u32, character_item_id: u32): (ID, ID, ID) {
     setup(ts);
 
@@ -263,12 +285,7 @@ fun setup_permit_scenario(ts: &mut ts::Scenario, tribe_id: u32, character_item_i
     (character_id, source_gate_id, destination_gate_id)
 }
 
-fun request_permit_and_consume(
-    ts: &mut ts::Scenario,
-    character_id: ID,
-    source_gate_id: ID,
-    destination_gate_id: ID,
-) {
+fun request_permit(ts: &mut ts::Scenario, character_id: ID, source_gate_id: ID, destination_gate_id: ID) {
     ts::next_tx(ts, user_a());
     {
         let clock = clock::create_for_testing(ts.ctx());
@@ -292,6 +309,15 @@ fun request_permit_and_consume(
         ts::return_shared(table);
         clock.destroy_for_testing();
     };
+}
+
+fun request_permit_and_consume(
+    ts: &mut ts::Scenario,
+    character_id: ID,
+    source_gate_id: ID,
+    destination_gate_id: ID,
+) {
+    request_permit(ts, character_id, source_gate_id, destination_gate_id);
 
     ts::next_tx(ts, user_a());
     {
@@ -335,30 +361,22 @@ fun test_hostile_denied() {
     );
 
     set_standing(&mut ts, HOSTILE_TRIBE, HOSTILE);
+    request_permit(&mut ts, character_id, source_gate_id, destination_gate_id);
 
-    ts::next_tx(&mut ts, user_a());
-    {
-        let clock = clock::create_for_testing(ts.ctx());
-        let table = ts::take_shared<standings_table::StandingsTable>(&ts);
-        let source_gate = ts::take_shared_by_id<Gate>(&ts, source_gate_id);
-        let destination_gate = ts::take_shared_by_id<Gate>(&ts, destination_gate_id);
-        let character = ts::take_shared_by_id<Character>(&ts, character_id);
+    ts::end(ts);
+}
 
-        frontier_gate::request_permit(
-            &table,
-            &source_gate,
-            &destination_gate,
-            &character,
-            &clock,
-            ts.ctx(),
-        );
+#[test]
+fun test_unfriendly_gets_permit() {
+    let mut ts = ts::begin(governor());
+    let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
+        &mut ts,
+        UNFRIENDLY_TRIBE,
+        103,
+    );
 
-        ts::return_shared(character);
-        ts::return_shared(source_gate);
-        ts::return_shared(destination_gate);
-        ts::return_shared(table);
-        clock.destroy_for_testing();
-    };
+    set_standing(&mut ts, UNFRIENDLY_TRIBE, UNFRIENDLY);
+    request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
 }
@@ -369,7 +387,7 @@ fun test_neutral_gets_permit() {
     let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
         &mut ts,
         NEUTRAL_TRIBE,
-        103,
+        104,
     );
 
     set_standing(&mut ts, NEUTRAL_TRIBE, NEUTRAL);
@@ -379,14 +397,77 @@ fun test_neutral_gets_permit() {
 }
 
 #[test]
-fun test_unknown_tribe_defaults_neutral() {
+fun test_allied_gets_permit() {
+    let mut ts = ts::begin(governor());
+    let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
+        &mut ts,
+        ALLIED_TRIBE,
+        105,
+    );
+
+    set_standing(&mut ts, ALLIED_TRIBE, ALLIED);
+    request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
+
+    ts::end(ts);
+}
+
+#[test]
+fun test_pilot_override_allows_hostile_tribe_member() {
+    let mut ts = ts::begin(governor());
+    let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
+        &mut ts,
+        HOSTILE_TRIBE,
+        106,
+    );
+
+    set_standing(&mut ts, HOSTILE_TRIBE, HOSTILE);
+    set_pilot_standing(&mut ts, FRIENDLY);
+    request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
+
+    ts::end(ts);
+}
+
+#[test, expected_failure(abort_code = frontier_gate::EAccessDenied)]
+fun test_pilot_override_denies_friendly_tribe_member() {
+    let mut ts = ts::begin(governor());
+    let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
+        &mut ts,
+        FRIENDLY_TRIBE,
+        107,
+    );
+
+    set_standing(&mut ts, FRIENDLY_TRIBE, FRIENDLY);
+    set_pilot_standing(&mut ts, HOSTILE);
+    request_permit(&mut ts, character_id, source_gate_id, destination_gate_id);
+
+    ts::end(ts);
+}
+
+#[test, expected_failure(abort_code = frontier_gate::EAccessDenied)]
+fun test_nbsi_denies_unknown() {
     let mut ts = ts::begin(governor());
     let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
         &mut ts,
         UNKNOWN_TRIBE,
-        104,
+        108,
     );
 
+    set_default_standing(&mut ts, HOSTILE);
+    request_permit(&mut ts, character_id, source_gate_id, destination_gate_id);
+
+    ts::end(ts);
+}
+
+#[test]
+fun test_nrds_allows_unknown() {
+    let mut ts = ts::begin(governor());
+    let (character_id, source_gate_id, destination_gate_id) = setup_permit_scenario(
+        &mut ts,
+        UNKNOWN_TRIBE,
+        109,
+    );
+
+    set_default_standing(&mut ts, NEUTRAL);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);

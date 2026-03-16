@@ -1,5 +1,5 @@
 /// Gate extension that reads a StandingsTable to issue or deny JumpPermits.
-/// Friendly and neutral tribes receive permits; hostile tribes are denied.
+/// Non-hostile pilots receive permits; hostile pilots are denied.
 ///
 /// Uses the typed-witness extension pattern: gate owners call
 /// `gate::authorize_extension<FrontierGateAuth>()` to register this extension,
@@ -32,9 +32,9 @@ public struct FrontierGateAuth has drop {}
 
 /// Request a jump permit for the given gate pair.
 ///
-/// Reads the traveler's tribe_id from their Character, looks up the standing
-/// in the StandingsTable, and either issues a JumpPermit (friendly/neutral)
-/// or aborts (hostile).
+/// Reads the traveler's tribe_id from their Character, looks up the effective
+/// standing (pilot -> tribe -> default) in the StandingsTable, and either
+/// issues a JumpPermit (non-hostile) or aborts (hostile).
 public fun request_permit(
     table: &StandingsTable,
     source_gate: &Gate,
@@ -44,7 +44,7 @@ public fun request_permit(
     ctx: &mut TxContext,
 ) {
     let tribe_id = character.tribe();
-    let standing = standings_table::get_standing(table, tribe_id);
+    let standing = standings_table::get_effective_standing(table, tribe_id, ctx.sender());
 
     assert!(standing != HOSTILE, EAccessDenied);
 
