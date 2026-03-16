@@ -8,6 +8,9 @@
 - `FrontierOS.Accounts` (`accounts.ex`) — Wallet session + character lookup over ETS
 - `FrontierOS.Accounts.Account` (inline in `accounts.ex`) — Struct: address, characters, tribe_id
 - `FrontierOS.Assemblies` (`assemblies.ex`) — Assembly discovery + cached query over ETS
+- `FrontierOS.Tribes` (`tribes.ex`) — Tribe member discovery + aggregation over ETS
+- `FrontierOS.Tribes.Tribe` (inline in `tribes.ex`) — Struct: tribe_id, members, discovered_at
+- `FrontierOS.Tribes.TribeMember` (inline in `tribes.ex`) — Struct: character_id, character_name, character_address, tribe_id, connected, wallet_address
 - `FrontierOS.StaticData` (`static_data.ex`) — DETS-backed GenServer for World API reference data
 - `FrontierOS.GameState.Poller` (`game_state/poller.ex`) — Linked GenServer: periodic assembly sync via injectable sync_fun, Process.send_after scheduling, update_assembly_ids/2
 
@@ -24,6 +27,12 @@
 - `get_assembly/2`: id × opts → {:ok, assembly()} | {:error, :not_found} — ETS read
 - `sync_assembly/2`: id × opts → {:ok, assembly()} | {:error, reason} — refresh cached assembly
 
+### Tribes (tribes.ex)
+- `discover_members/2`: tribe_id × opts → {:ok, Tribe.t()} | {:error, reason} — paginate chain Characters, filter by tribe_id, cross-ref accounts, cache, broadcast
+- `list_members/2`: tribe_id × opts → [TribeMember.t()] — ETS read, [] if undiscovered
+- `get_tribe/2`: tribe_id × opts → Tribe.t() | nil — ETS read
+- `list_tribe_assemblies/2`: tribe_id × opts → [{TribeMember.t(), [assembly()]}] — cross-ref assemblies ETS for connected members
+
 ### Cache (cache.ex)
 - `start_link/1`: opts with tables keyword → {:ok, pid}
 - `tables/1`: pid → %{table_name => tid}
@@ -34,9 +43,9 @@
 - Domain contexts are pure function modules (not GenServers) operating over injected ETS tables
 - DI via `@sui_client Application.compile_env!(:frontier_os, :sui_client)`
 - Options keyword list: `tables:` (required), `pubsub:` (optional), `req_options:` (optional)
-- PubSub topics: `"accounts"`, `"assemblies:#{owner}"`, `"assembly:#{id}"`
+- PubSub topics: `"accounts"`, `"assemblies:#{owner}"`, `"assembly:#{id}"`, `"tribes"`
 - Type dispatch in Assemblies via multi-clause `parse_assembly/1` with field-presence pattern matching
-- Cache values: accounts `{address, Account.t()}`, assemblies `{id, {owner, assembly()}}`
+- Cache values: accounts `{address, Account.t()}`, assemblies `{id, {owner, assembly()}}`, tribes `{tribe_id, Tribe.t()}`
 
 ## Dependencies
 
