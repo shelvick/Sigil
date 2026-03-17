@@ -7,9 +7,22 @@ config :sigil, :sui_client, Sigil.Sui.Client.HTTP
 config :sigil, :world_client, Sigil.StaticData.WorldClient.HTTP
 
 config :sigil, :eve_worlds, %{
-  "stillness" => "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c",
-  "utopia" => "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
-  "internal" => "0x353988e063b4683580e3603dbe9e91fefd8f6a06263a646d43fd3a2f3ef6b8c1"
+  "stillness" => %{
+    package_id: "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c",
+    graphql_url: "https://graphql.testnet.sui.io/graphql"
+  },
+  "utopia" => %{
+    package_id: "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
+    graphql_url: "https://graphql.testnet.sui.io/graphql"
+  },
+  "internal" => %{
+    package_id: "0x353988e063b4683580e3603dbe9e91fefd8f6a06263a646d43fd3a2f3ef6b8c1",
+    graphql_url: "https://graphql.testnet.sui.io/graphql"
+  },
+  "localnet" => %{
+    package_id: "0xd9171e06e79f88956c0750f442e38dd1148052d8932ac67abd8747ab66619a5f",
+    graphql_url: "http://localhost:9125/graphql"
+  }
 }
 
 config :sigil, :eve_world, "stillness"

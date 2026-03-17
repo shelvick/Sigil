@@ -220,9 +220,17 @@ defmodule SigilWeb.DashboardLive do
   @spec maybe_load_assemblies(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_load_assemblies(%{assigns: %{current_account: nil}} = socket), do: socket
 
-  defp maybe_load_assemblies(%{assigns: %{current_account: %{address: address}}} = socket) do
+  defp maybe_load_assemblies(%{assigns: %{current_account: account}} = socket) do
+    address = account.address
+    character_ids = Enum.map(account.characters, & &1.id)
+
     if connected?(socket) do
-      case discover_assemblies(address, socket.assigns[:cache_tables], socket.assigns[:pubsub]) do
+      case discover_assemblies(
+             address,
+             character_ids,
+             socket.assigns[:cache_tables],
+             socket.assigns[:pubsub]
+           ) do
         {:ok, assemblies} ->
           assign(socket, assemblies: assemblies, discovery_error: false)
 
@@ -283,13 +291,18 @@ defmodule SigilWeb.DashboardLive do
 
   defp maybe_update_poller(socket, _assemblies), do: socket
 
-  @spec discover_assemblies(String.t(), map() | nil, atom() | module()) ::
+  @spec discover_assemblies(String.t(), [String.t()], map() | nil, atom() | module()) ::
           {:ok, [Assemblies.assembly()]} | {:error, term()}
-  defp discover_assemblies(address, cache_tables, pubsub) when is_map(cache_tables) do
-    Assemblies.discover_for_owner(address, tables: cache_tables, pubsub: pubsub)
+  defp discover_assemblies(address, character_ids, cache_tables, pubsub)
+       when is_map(cache_tables) do
+    Assemblies.discover_for_owner(address,
+      tables: cache_tables,
+      pubsub: pubsub,
+      character_ids: character_ids
+    )
   end
 
-  defp discover_assemblies(_address, _cache_tables, _pubsub), do: {:ok, []}
+  defp discover_assemblies(_address, _character_ids, _cache_tables, _pubsub), do: {:ok, []}
 
   @spec list_assemblies(String.t(), map() | nil) :: [Assemblies.assembly()]
   defp list_assemblies(address, cache_tables) when is_map(cache_tables) do

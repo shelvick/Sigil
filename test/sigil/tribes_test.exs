@@ -53,26 +53,21 @@ defmodule Sigil.TribesTest do
       verify!()
     end
 
-    test "marks members as connected when registered on Sigil", %{
+    test "marks members as connected when registered", %{
       tables: tables,
       pubsub: pubsub,
       character_type: character_type
     } do
       address = connected_wallet_address()
-      connected_character = character_json()
+      connected_character = character_json(%{"character_address" => address})
 
-      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn filters, [] ->
-        case {Keyword.get(filters, :type), Keyword.get(filters, :owner)} do
-          {^character_type, ^address} ->
-            {:ok, character_page([connected_character])}
+      all_characters = [
+        connected_character,
+        character_json(%{"id" => uid("0xcharacter-2")})
+      ]
 
-          {^character_type, nil} ->
-            {:ok,
-             character_page([
-               connected_character,
-               character_json(%{"id" => uid("0xcharacter-2")})
-             ])}
-        end
+      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn [type: ^character_type], [] ->
+        {:ok, character_page(all_characters)}
       end)
 
       assert {:ok, _account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
@@ -356,27 +351,26 @@ defmodule Sigil.TribesTest do
   test "full tribe flow - register, discover, list, assemblies", %{
     tables: tables,
     pubsub: pubsub,
-    character_type: character_type,
-    owner_cap_type: owner_cap_type
+    character_type: character_type
   } do
     address = connected_wallet_address()
     assembly_id = "0xtribe-assembly"
-    connected_character = character_json()
+    connected_character = character_json(%{"character_address" => address})
     chain_only_character = character_json(%{"id" => uid("0xcharacter-chain-only")})
 
     outsider_character =
       character_json(%{"id" => uid("0xcharacter-outsider"), "tribe_id" => "999"})
 
+    owner_cap_type = owner_cap_type()
+    all_characters = [connected_character, chain_only_character, outsider_character]
+
     expect(Sigil.Sui.ClientMock, :get_objects, 3, fn filters, [] ->
       case {Keyword.get(filters, :type), Keyword.get(filters, :owner)} do
-        {^character_type, ^address} ->
-          {:ok, character_page([connected_character])}
+        {^character_type, nil} ->
+          {:ok, character_page(all_characters)}
 
         {^owner_cap_type, ^address} ->
           {:ok, owner_caps_page([owner_cap_json(assembly_id)])}
-
-        {^character_type, nil} ->
-          {:ok, character_page([connected_character, chain_only_character, outsider_character])}
       end
     end)
 
@@ -387,7 +381,11 @@ defmodule Sigil.TribesTest do
     assert {:ok, _account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
 
     assert {:ok, [%Types.Assembly{id: ^assembly_id}]} =
-             Assemblies.discover_for_owner(address, tables: tables, pubsub: pubsub)
+             Assemblies.discover_for_owner(address,
+               tables: tables,
+               pubsub: pubsub,
+               character_ids: [address]
+             )
 
     assert {:ok, tribe} = Tribes.discover_members(@tribe_id, tables: tables, pubsub: pubsub)
 

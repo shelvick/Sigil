@@ -35,7 +35,13 @@ defmodule Sigil.AssembliesTest do
         {:ok, owner_caps_page([])}
       end)
 
-      assert {:ok, []} = Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+      assert {:ok, []} =
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
+
       verify!()
     end
 
@@ -62,7 +68,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, assemblies} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert Enum.map(assemblies, & &1.id) |> Enum.sort() == [gate_id, turret_id]
       assert_receive {:assembly_fetched, ^gate_id}
@@ -87,7 +97,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [%Types.Gate{id: ^gate_id} = gate]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert gate.linked_gate_id == "0xlinked"
       verify!()
@@ -110,7 +124,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [%Types.Turret{id: ^turret_id} = turret]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert turret.extension == "0x2::frontier::TurretExtension"
       verify!()
@@ -133,7 +151,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [%Types.Assembly{} = assembly]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert Cache.get(tables.assemblies, assembly_id) == {owner, assembly}
       verify!()
@@ -157,7 +179,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [assembly]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert_receive {:assemblies_discovered, [^assembly]}
       verify!()
@@ -175,7 +201,11 @@ defmodule Sigil.AssembliesTest do
         {:error, :timeout}
       end)
 
-      assert Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub) ==
+      assert Assemblies.discover_for_owner(owner,
+               tables: tables,
+               pubsub: pubsub,
+               character_ids: [owner]
+             ) ==
                {:error, :timeout}
 
       assert Cache.match(tables.assemblies, {:_, {owner, :_}}) == []
@@ -194,7 +224,13 @@ defmodule Sigil.AssembliesTest do
         {:ok, owner_caps_page([])}
       end)
 
-      assert {:ok, []} = Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+      assert {:ok, []} =
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
+
       verify!()
     end
 
@@ -215,7 +251,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [%Types.NetworkNode{id: ^assembly_id} = network_node]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert network_node.fuel.quantity == 50
       verify!()
@@ -238,7 +278,11 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [%Types.StorageUnit{id: ^assembly_id} = storage_unit]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert storage_unit.inventory_keys == ["0xinv-1", "0xinv-2"]
       verify!()
@@ -265,10 +309,53 @@ defmodule Sigil.AssembliesTest do
       end)
 
       assert {:ok, [%Types.Gate{id: ^good_id} = gate]} =
-               Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [owner]
+               )
 
       assert Cache.get(tables.assemblies, good_id) == {owner, gate}
       assert Cache.get(tables.assemblies, bad_id) == nil
+      verify!()
+    end
+
+    test "discover_for_owner/2 aggregates OwnerCaps across multiple characters", %{
+      tables: tables,
+      pubsub: pubsub,
+      owner_cap_type: owner_cap_type
+    } do
+      owner = owner_address()
+      char_a = "0xcharacter-a"
+      char_b = "0xcharacter-b"
+      gate_id = "0xgate-multi"
+      node_id = "0xnode-multi"
+
+      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn
+        [type: ^owner_cap_type, owner: ^char_a], [] ->
+          {:ok, owner_caps_page([owner_cap_json(gate_id)])}
+
+        [type: ^owner_cap_type, owner: ^char_b], [] ->
+          {:ok, owner_caps_page([owner_cap_json(node_id)])}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_object, 2, fn
+        ^gate_id, [] -> {:ok, gate_json(%{"id" => uid(gate_id)})}
+        ^node_id, [] -> {:ok, network_node_json(%{"id" => uid(node_id)})}
+      end)
+
+      assert {:ok, assemblies} =
+               Assemblies.discover_for_owner(owner,
+                 tables: tables,
+                 pubsub: pubsub,
+                 character_ids: [char_a, char_b]
+               )
+
+      assert length(assemblies) == 2
+      ids = Enum.map(assemblies, & &1.id) |> Enum.sort()
+      assert ids == Enum.sort([gate_id, node_id])
+      assert Cache.get(tables.assemblies, gate_id) != nil
+      assert Cache.get(tables.assemblies, node_id) != nil
       verify!()
     end
   end
@@ -398,7 +485,11 @@ defmodule Sigil.AssembliesTest do
     end)
 
     assert {:ok, discovered} =
-             Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+             Assemblies.discover_for_owner(owner,
+               tables: tables,
+               pubsub: pubsub,
+               character_ids: [owner]
+             )
 
     listed = Assemblies.list_for_owner(owner, tables: tables)
     expected_ids = Enum.sort([gate_id, generic_id, node_id])
@@ -463,7 +554,11 @@ defmodule Sigil.AssembliesTest do
     end)
 
     assert {:ok, assemblies} =
-             Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+             Assemblies.discover_for_owner(owner,
+               tables: tables,
+               pubsub: pubsub,
+               character_ids: [owner]
+             )
 
     assert length(assemblies) == 1
     assert [%Types.Gate{id: ^gate_id}] = assemblies
@@ -492,7 +587,11 @@ defmodule Sigil.AssembliesTest do
     end)
 
     assert {:ok, []} =
-             Assemblies.discover_for_owner(owner, tables: tables, pubsub: pubsub)
+             Assemblies.discover_for_owner(owner,
+               tables: tables,
+               pubsub: pubsub,
+               character_ids: [owner]
+             )
   end
 
   test "sync_assembly deletes stale cache when object is no longer an assembly", %{

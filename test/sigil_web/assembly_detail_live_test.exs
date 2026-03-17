@@ -468,7 +468,6 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     wallet_address: wallet_address
   } do
     gate = Gate.from_json(gate_json(%{"id" => uid("0xacceptance-gate-detail")}))
-    character = character_json()
     character_type = character_type()
 
     Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
@@ -481,11 +480,13 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
     end)
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn filters, [] ->
-      case filters do
-        [type: type, owner: ^wallet_address] when type == character_type ->
-          {:ok, %{data: [character], has_next_page: false, end_cursor: nil}}
-      end
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
+      {:ok,
+       %{
+         data: [character_json(%{"character_address" => wallet_address})],
+         has_next_page: false,
+         end_cursor: nil
+       }}
     end)
 
     # Generate nonce through the real LiveView flow
@@ -527,10 +528,11 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     refute html =~ "Connect Your Wallet"
   end
 
-  defp expect_empty_dashboard_discovery(wallet_address) do
+  defp expect_empty_dashboard_discovery(_wallet_address) do
     owner_cap_type = owner_cap_type()
+    character_id = "0xcharacter-detail"
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^wallet_address], []
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^character_id], []
                                                   when type == owner_cap_type ->
       {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
     end)
@@ -542,6 +544,10 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       "cache_tables" => cache_tables,
       "pubsub" => pubsub
     })
+  end
+
+  defp character_type do
+    "0xtest_world::character::Character"
   end
 
   defp owner_cap_type do
@@ -570,24 +576,23 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     "0x" <> suffix
   end
 
-  defp character_type do
-    "0xtest_world::character::Character"
-  end
-
-  defp character_json do
-    %{
-      "id" => uid("0xcharacter-detail"),
-      "key" => %{"item_id" => "1", "tenant" => "0xcharacter-tenant"},
-      "tribe_id" => "314",
-      "character_address" => "0xcharacter-address",
-      "metadata" => %{
-        "assembly_id" => "0xcharacter-metadata",
-        "name" => "Captain Frontier",
-        "description" => "Primary command character",
-        "url" => "https://example.test/characters/frontier"
+  defp character_json(overrides \\ %{}) do
+    Map.merge(
+      %{
+        "id" => uid("0xcharacter-detail"),
+        "key" => %{"item_id" => "1", "tenant" => "0xcharacter-tenant"},
+        "tribe_id" => "314",
+        "character_address" => "0xcharacter-address",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-metadata",
+          "name" => "Captain Frontier",
+          "description" => "Primary command character",
+          "url" => "https://example.test/characters/frontier"
+        },
+        "owner_cap_id" => uid("0xcharacter-owner")
       },
-      "owner_cap_id" => uid("0xcharacter-owner")
-    }
+      overrides
+    )
   end
 
   defp gate_json(overrides \\ %{}) do

@@ -229,6 +229,7 @@ defmodule Sigil.Tribes do
   defp world_package_id do
     world = Application.fetch_env!(:sigil, :eve_world)
     worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    Map.fetch!(worlds, world)
+    %{package_id: package_id} = Map.fetch!(worlds, world)
+    package_id
   end
 end

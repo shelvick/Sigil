@@ -18,7 +18,11 @@ config :sigil, SigilWeb.Endpoint,
 config :sigil, :sui_client, Sigil.Sui.ClientMock
 config :sigil, :world_client, Sigil.StaticData.WorldClientMock
 config :sigil, :eve_world, "test"
-config :sigil, :eve_worlds, %{"test" => "0xtest_world"}
+
+config :sigil, :eve_worlds, %{
+  "test" => %{package_id: "0xtest_world", graphql_url: "http://test.invalid/graphql"}
+}
+
 config :sigil, :start_static_data, false
 config :sigil, :world_client_retry_delay, 0
 config :sigil, :sui_client_retry_delay, 0
