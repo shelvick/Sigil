@@ -495,11 +495,16 @@ defmodule SigilWeb.DashboardLiveTest do
     end)
 
     expect(Sigil.Sui.ClientMock, :get_objects, 2, fn filters, [] ->
-      case filters do
-        [type: type, owner: ^wallet_address] when type == character_type ->
-          {:ok, %{data: [character_json()], has_next_page: false, end_cursor: nil}}
+      case Keyword.get(filters, :type) do
+        ^character_type ->
+          {:ok,
+           %{
+             data: [character_json(%{"character_address" => wallet_address})],
+             has_next_page: false,
+             end_cursor: nil
+           }}
 
-        [type: type, owner: ^wallet_address] when type == owner_cap_type ->
+        ^owner_cap_type ->
           {:ok,
            %{
              data: [owner_cap_json(gate_id), owner_cap_json(node_id)],
@@ -509,11 +514,9 @@ defmodule SigilWeb.DashboardLiveTest do
       end
     end)
 
-    expect(Sigil.Sui.ClientMock, :get_object, 2, fn assembly_id, [] ->
-      case assembly_id do
-        ^gate_id -> {:ok, gate_json(%{"id" => uid(gate_id)})}
-        ^node_id -> {:ok, network_node_json(%{"id" => uid(node_id)})}
-      end
+    expect(Sigil.Sui.ClientMock, :get_object, 2, fn
+      ^gate_id, [] -> {:ok, gate_json(%{"id" => uid(gate_id)})}
+      ^node_id, [] -> {:ok, network_node_json(%{"id" => uid(node_id)})}
     end)
 
     {:ok, view, initial_html} =
@@ -560,10 +563,11 @@ defmodule SigilWeb.DashboardLiveTest do
     refute html =~ "No assemblies found"
   end
 
-  defp expect_dashboard_discovery(wallet_address, assemblies) do
+  defp expect_dashboard_discovery(_wallet_address, assemblies) do
     owner_cap_type = owner_cap_type()
+    character_id = "0xcharacter-dashboard"
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^wallet_address], []
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^character_id], []
                                                   when type == owner_cap_type ->
       {:ok,
        %{
@@ -579,19 +583,21 @@ defmodule SigilWeb.DashboardLiveTest do
     end)
   end
 
-  defp expect_empty_dashboard_discovery(wallet_address) do
+  defp expect_empty_dashboard_discovery(_wallet_address) do
     owner_cap_type = owner_cap_type()
+    character_id = "0xcharacter-dashboard"
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^wallet_address], []
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^character_id], []
                                                   when type == owner_cap_type ->
       {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
     end)
   end
 
-  defp expect_dashboard_discovery_failure(wallet_address) do
+  defp expect_dashboard_discovery_failure(_wallet_address) do
     owner_cap_type = owner_cap_type()
+    character_id = "0xcharacter-dashboard"
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^wallet_address], []
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^character_id], []
                                                   when type == owner_cap_type ->
       {:error, :timeout}
     end)
@@ -660,20 +666,23 @@ defmodule SigilWeb.DashboardLiveTest do
     "#{@world_package_id}::access::OwnerCap"
   end
 
-  defp character_json do
-    %{
-      "id" => uid("0xcharacter-dashboard"),
-      "key" => %{"item_id" => "1", "tenant" => "0xcharacter-tenant"},
-      "tribe_id" => "314",
-      "character_address" => "0xcharacter-address",
-      "metadata" => %{
-        "assembly_id" => "0xcharacter-metadata",
-        "name" => "Captain Frontier",
-        "description" => "Primary command character",
-        "url" => "https://example.test/characters/frontier"
+  defp character_json(overrides \\ %{}) do
+    Map.merge(
+      %{
+        "id" => uid("0xcharacter-dashboard"),
+        "key" => %{"item_id" => "1", "tenant" => "0xcharacter-tenant"},
+        "tribe_id" => "314",
+        "character_address" => "0xcharacter-address",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-metadata",
+          "name" => "Captain Frontier",
+          "description" => "Primary command character",
+          "url" => "https://example.test/characters/frontier"
+        },
+        "owner_cap_id" => uid("0xcharacter-owner")
       },
-      "owner_cap_id" => uid("0xcharacter-owner")
-    }
+      overrides
+    )
   end
 
   defp owner_cap_json(assembly_id) do

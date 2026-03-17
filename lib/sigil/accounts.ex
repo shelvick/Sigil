@@ -43,8 +43,9 @@ defmodule Sigil.Accounts do
           {:ok, Account.t()} | {:error, :invalid_address | Client.error_reason()}
   def register_wallet(address, opts) when is_binary(address) and is_list(opts) do
     with :ok <- validate_address(address),
-         {:ok, account, characters} <- load_account(address, opts) do
-      cache_account(opts, address, account, characters)
+         canonical = String.downcase(address),
+         {:ok, account, characters} <- load_account(canonical, opts) do
+      cache_account(opts, canonical, account, characters)
       broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:account_registered, account})
       {:ok, account}
     end
@@ -54,8 +55,9 @@ defmodule Sigil.Accounts do
   @spec get_account(String.t(), options()) :: {:ok, Account.t()} | {:error, :not_found}
   def get_account(address, opts) when is_binary(address) and is_list(opts) do
     table = account_table(opts)
+    canonical = String.downcase(address)
 
-    case Cache.get(table, address) do
+    case Cache.get(table, canonical) do
       %Account{} = account -> {:ok, account}
       nil -> {:error, :not_found}
     end
@@ -65,10 +67,12 @@ defmodule Sigil.Accounts do
   @spec sync_from_chain(String.t(), options()) ::
           {:ok, Account.t()} | {:error, :not_found | Client.error_reason()}
   def sync_from_chain(address, opts) when is_binary(address) and is_list(opts) do
-    case get_account(address, tables: Keyword.fetch!(opts, :tables)) do
+    canonical = String.downcase(address)
+
+    case get_account(canonical, tables: Keyword.fetch!(opts, :tables)) do
       {:ok, _account} ->
-        with {:ok, account, characters} <- load_account(address, opts) do
-          cache_account(opts, address, account, characters)
+        with {:ok, account, characters} <- load_account(canonical, opts) do
+          cache_account(opts, canonical, account, characters)
           broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:account_updated, account})
           {:ok, account}
         end
@@ -83,11 +87,35 @@ defmodule Sigil.Accounts do
   defp load_account(address, opts) do
     req_options = Keyword.get(opts, :req_options, [])
 
-    with {:ok, %{data: characters_json}} <-
-           @sui_client.get_objects([type: character_type_string(), owner: address], req_options) do
-      characters = Enum.map(characters_json, &Character.from_json/1)
+    with {:ok, all_characters} <- fetch_all_characters(nil, req_options, []) do
+      characters =
+        all_characters
+        |> Enum.filter(&(&1.character_address == address))
+
       account = %Account{address: address, characters: characters, tribe_id: tribe_id(characters)}
       {:ok, account, characters}
+    end
+  end
+
+  @spec fetch_all_characters(String.t() | nil, Client.request_opts(), [Character.t()]) ::
+          {:ok, [Character.t()]} | {:error, Client.error_reason()}
+  defp fetch_all_characters(cursor, req_options, acc) do
+    filters =
+      case cursor do
+        nil -> [type: character_type_string()]
+        c -> [type: character_type_string(), cursor: c]
+      end
+
+    with {:ok, %{data: characters_json, has_next_page: has_next_page, end_cursor: end_cursor}} <-
+           @sui_client.get_objects(filters, req_options) do
+      characters = Enum.map(characters_json, &Character.from_json/1)
+      acc = Enum.reverse(characters) ++ acc
+
+      if has_next_page and is_binary(end_cursor) do
+        fetch_all_characters(end_cursor, req_options, acc)
+      else
+        {:ok, Enum.reverse(acc)}
+      end
     end
   end
 
@@ -121,7 +149,8 @@ defmodule Sigil.Accounts do
   defp world_package_id do
     world = Application.fetch_env!(:sigil, :eve_world)
     worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    Map.fetch!(worlds, world)
+    %{package_id: package_id} = Map.fetch!(worlds, world)
+    package_id
   end
 
   @spec tribe_id([Character.t()]) :: non_neg_integer() | nil

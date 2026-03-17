@@ -32,11 +32,9 @@ defmodule Sigil.AccountsTest do
       character_type: character_type
     } do
       address = wallet_address()
-      page = character_page([character_json()])
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
-        {:ok, page}
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
+        {:ok, character_page([character_json(%{"character_address" => address})])}
       end)
 
       assert {:ok, account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
@@ -45,7 +43,7 @@ defmodule Sigil.AccountsTest do
       assert Cache.get(tables.accounts, address) == account
     end
 
-    test "register_wallet/2 queries characters from chain", %{
+    test "register_wallet/2 queries Characters from chain and filters by character_address", %{
       tables: tables,
       pubsub: pubsub,
       character_type: character_type
@@ -57,9 +55,8 @@ defmodule Sigil.AccountsTest do
         req_options: [plug: {Req.Test, :accounts_register_stub}]
       ]
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    ^req_options ->
-        {:ok, character_page([character_json()])}
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], ^req_options ->
+        {:ok, character_page([character_json(%{"character_address" => address})])}
       end)
 
       assert {:ok, _account} =
@@ -77,12 +74,15 @@ defmodule Sigil.AccountsTest do
     } do
       address = wallet_address()
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
         {:ok,
          character_page([
-           character_json(),
-           character_json(%{"id" => uid("0xcharacter-2"), "tribe_id" => "271"})
+           character_json(%{"character_address" => address}),
+           character_json(%{
+             "id" => uid("0xcharacter-2"),
+             "character_address" => address,
+             "tribe_id" => "271"
+           })
          ])}
       end)
 
@@ -101,9 +101,8 @@ defmodule Sigil.AccountsTest do
     } do
       address = wallet_address()
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
-        {:ok, character_page([character_json()])}
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
+        {:ok, character_page([character_json(%{"character_address" => address})])}
       end)
 
       assert {:ok, account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
@@ -117,12 +116,15 @@ defmodule Sigil.AccountsTest do
     } do
       address = wallet_address()
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
         {:ok,
          character_page([
-           character_json(%{"tribe_id" => "314"}),
-           character_json(%{"id" => uid("0xcharacter-2"), "tribe_id" => "999"})
+           character_json(%{"character_address" => address, "tribe_id" => "314"}),
+           character_json(%{
+             "id" => uid("0xcharacter-2"),
+             "character_address" => address,
+             "tribe_id" => "999"
+           })
          ])}
       end)
 
@@ -137,8 +139,7 @@ defmodule Sigil.AccountsTest do
     } do
       address = wallet_address()
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
         {:error, :timeout}
       end)
 
@@ -161,6 +162,50 @@ defmodule Sigil.AccountsTest do
       end)
     end
 
+    test "register_wallet/2 filters out characters belonging to other wallets", %{
+      tables: tables,
+      pubsub: pubsub,
+      character_type: character_type
+    } do
+      address = wallet_address()
+      other_address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
+        {:ok,
+         character_page([
+           character_json(%{"character_address" => address}),
+           character_json(%{
+             "id" => uid("0xother-character"),
+             "character_address" => other_address
+           })
+         ])}
+      end)
+
+      assert {:ok, account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
+      assert length(account.characters) == 1
+      assert hd(account.characters).id == "0xcharacter"
+    end
+
+    test "register_wallet/2 normalizes uppercase address", %{
+      tables: tables,
+      pubsub: pubsub,
+      character_type: character_type
+    } do
+      uppercase = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      lowercase = String.downcase(uppercase)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
+        {:ok, character_page([character_json(%{"character_address" => lowercase})])}
+      end)
+
+      assert {:ok, account} =
+               Accounts.register_wallet(uppercase, tables: tables, pubsub: pubsub)
+
+      assert account.address == lowercase
+      assert length(account.characters) == 1
+      assert Cache.get(tables.accounts, lowercase) == account
+    end
+
     test "register_wallet/2 handles address with no characters", %{
       tables: tables,
       pubsub: pubsub,
@@ -168,8 +213,7 @@ defmodule Sigil.AccountsTest do
     } do
       address = wallet_address()
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
         {:ok, character_page([])}
       end)
 
@@ -177,6 +221,38 @@ defmodule Sigil.AccountsTest do
       assert account.characters == []
       assert account.tribe_id == nil
       assert Cache.get(tables.characters, address) == []
+    end
+
+    test "register_wallet/2 paginates through all characters", %{
+      tables: tables,
+      pubsub: pubsub,
+      character_type: character_type
+    } do
+      address = wallet_address()
+
+      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn
+        [type: ^character_type], [] ->
+          {:ok,
+           %{
+             data: [character_json(%{"character_address" => address})],
+             has_next_page: true,
+             end_cursor: "page2"
+           }}
+
+        [type: ^character_type, cursor: "page2"], [] ->
+          {:ok,
+           character_page([
+             character_json(%{
+               "id" => uid("0xcharacter-2"),
+               "character_address" => address,
+               "tribe_id" => "271"
+             })
+           ])}
+      end)
+
+      assert {:ok, account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
+      assert length(account.characters) == 2
+      assert Enum.map(account.characters, & &1.id) == ["0xcharacter", "0xcharacter-2"]
     end
   end
 
@@ -188,9 +264,8 @@ defmodule Sigil.AccountsTest do
     } do
       address = wallet_address()
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address],
-                                                    [] ->
-        {:ok, character_page([character_json()])}
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
+        {:ok, character_page([character_json(%{"character_address" => address})])}
       end)
 
       assert {:ok, registered_account} =
@@ -214,19 +289,19 @@ defmodule Sigil.AccountsTest do
       register_opts = [url: "http://accounts.test/register"]
       sync_opts = [url: "http://accounts.test/sync"]
 
-      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn [
-                                                         type: ^character_type,
-                                                         owner: ^address
-                                                       ],
-                                                       opts ->
+      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn [type: ^character_type], opts ->
         case opts do
           ^register_opts ->
-            {:ok, character_page([character_json()])}
+            {:ok, character_page([character_json(%{"character_address" => address})])}
 
           ^sync_opts ->
             {:ok,
              character_page([
-               character_json(%{"id" => uid("0xcharacter-updated"), "tribe_id" => "777"})
+               character_json(%{
+                 "id" => uid("0xcharacter-updated"),
+                 "character_address" => address,
+                 "tribe_id" => "777"
+               })
              ])}
         end
       end)
@@ -259,17 +334,19 @@ defmodule Sigil.AccountsTest do
       register_opts = [url: "http://accounts.test/register"]
       sync_opts = [url: "http://accounts.test/sync"]
 
-      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn [
-                                                         type: ^character_type,
-                                                         owner: ^address
-                                                       ],
-                                                       opts ->
+      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn [type: ^character_type], opts ->
         case opts do
           ^register_opts ->
-            {:ok, character_page([character_json()])}
+            {:ok, character_page([character_json(%{"character_address" => address})])}
 
           ^sync_opts ->
-            {:ok, character_page([character_json(%{"id" => uid("0xcharacter-updated")})])}
+            {:ok,
+             character_page([
+               character_json(%{
+                 "id" => uid("0xcharacter-updated"),
+                 "character_address" => address
+               })
+             ])}
         end
       end)
 
@@ -311,11 +388,15 @@ defmodule Sigil.AccountsTest do
   } do
     address = wallet_address()
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type, owner: ^address], [] ->
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], [] ->
       {:ok,
        character_page([
-         character_json(%{"tribe_id" => "314"}),
-         character_json(%{"id" => uid("0xcharacter-2"), "tribe_id" => "271"})
+         character_json(%{"character_address" => address, "tribe_id" => "314"}),
+         character_json(%{
+           "id" => uid("0xcharacter-2"),
+           "character_address" => address,
+           "tribe_id" => "271"
+         })
        ])}
     end)
 
@@ -351,11 +432,11 @@ defmodule Sigil.AccountsTest do
     ]
   end
 
-  defp character_page(characters_json) do
-    %{data: characters_json, has_next_page: false, end_cursor: nil}
+  defp character_page(characters) do
+    %{data: characters, has_next_page: false, end_cursor: nil}
   end
 
-  defp character_json(overrides \\ %{}) do
+  defp character_json(overrides) do
     Map.merge(
       %{
         "id" => uid("0xcharacter"),

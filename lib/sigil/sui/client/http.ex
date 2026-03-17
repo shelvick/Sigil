@@ -7,7 +7,6 @@ defmodule Sigil.Sui.Client.HTTP do
 
   alias Sigil.Sui.Client
 
-  @default_url "https://graphql.testnet.sui.io/graphql"
   @default_limit 50
   @default_retry_delay 1_000
   @default_max_retries 3
@@ -223,7 +222,7 @@ defmodule Sigil.Sui.Client.HTTP do
     opts
     |> Keyword.get(:req_options, [])
     |> Keyword.merge(
-      url: Keyword.get(opts, :url, @default_url),
+      url: Keyword.get(opts, :url, graphql_url()),
       json: %{"query" => query, "variables" => variables},
       receive_timeout: 30_000,
       retry: &retry?/2,
@@ -384,6 +383,16 @@ defmodule Sigil.Sui.Client.HTTP do
   @spec count_leading(charlist(), char(), non_neg_integer()) :: non_neg_integer()
   defp count_leading([char | rest], char, count), do: count_leading(rest, char, count + 1)
   defp count_leading(_other, _char, count), do: count
+
+  # -- World configuration --
+
+  @spec graphql_url() :: String.t()
+  defp graphql_url do
+    world = Application.fetch_env!(:sigil, :eve_world)
+    worlds = Application.fetch_env!(:sigil, :eve_worlds)
+    %{graphql_url: url} = Map.fetch!(worlds, world)
+    url
+  end
 
   # -- Retry configuration --
 

@@ -20,17 +20,25 @@ defmodule Sigil.Assemblies do
           {:tables, tables()}
           | {:pubsub, atom() | module()}
           | {:req_options, Client.request_opts()}
+          | {:character_ids, [String.t()]}
 
   @type options() :: [option()]
 
-  @doc "Discovers assemblies owned by a wallet, caches them, and broadcasts the result."
+  @doc """
+  Discovers assemblies for a wallet, caches them, and broadcasts the result.
+
+  Requires `:character_ids` — a list of Character object addresses whose
+  OwnerCaps will be queried. On-chain, OwnerCaps are held by the Character
+  object, not the wallet. The `owner` param is used only for caching and
+  PubSub topic naming.
+  """
   @spec discover_for_owner(String.t(), options()) ::
           {:ok, [assembly()]} | {:error, Client.error_reason()}
   def discover_for_owner(owner, opts) when is_binary(owner) and is_list(opts) do
     req_options = Keyword.get(opts, :req_options, [])
+    query_owners = Keyword.fetch!(opts, :character_ids)
 
-    with {:ok, %{data: owner_caps}} <-
-           @sui_client.get_objects([type: owner_cap_type_string(), owner: owner], req_options) do
+    with {:ok, owner_caps} <- fetch_all_owner_caps(query_owners, req_options) do
       assemblies =
         owner_caps
         |> Enum.map(&Map.fetch!(&1, "authorized_object_id"))
@@ -114,6 +122,20 @@ defmodule Sigil.Assemblies do
     end
   end
 
+  @spec fetch_all_owner_caps([String.t()], Client.request_opts()) ::
+          {:ok, [map()]} | {:error, Client.error_reason()}
+  defp fetch_all_owner_caps(query_owners, req_options) do
+    Enum.reduce_while(query_owners, {:ok, []}, fn query_owner, {:ok, acc} ->
+      case @sui_client.get_objects(
+             [type: owner_cap_type_string(), owner: query_owner],
+             req_options
+           ) do
+        {:ok, %{data: caps}} -> {:cont, {:ok, acc ++ caps}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
   @spec fetch_assembly(String.t(), Client.request_opts()) ::
           {:ok, assembly()} | :skip | {:error, Client.error_reason()}
   defp fetch_assembly(assembly_id, req_options) do
@@ -161,7 +183,8 @@ defmodule Sigil.Assemblies do
   defp world_package_id do
     world = Application.fetch_env!(:sigil, :eve_world)
     worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    Map.fetch!(worlds, world)
+    %{package_id: package_id} = Map.fetch!(worlds, world)
+    package_id
   end
 
   @spec owner_topic(String.t()) :: String.t()

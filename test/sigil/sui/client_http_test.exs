@@ -539,13 +539,12 @@ defmodule Sigil.Sui.ClientHTTPTest do
       assert :ok = Req.Test.verify!(stub_name)
     end
 
-    test "default URL is Sui testnet GraphQL endpoint" do
+    test "default URL comes from active world config" do
       stub_name = stub_name(:default_url)
 
       Req.Test.expect(stub_name, fn conn ->
-        assert conn.scheme == :https
-        assert conn.host == "graphql.testnet.sui.io"
-        assert conn.port == 443
+        assert conn.scheme == :http
+        assert conn.host == "test.invalid"
         assert conn.request_path == "/graphql"
 
         Req.Test.json(conn, %{
