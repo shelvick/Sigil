@@ -5,7 +5,7 @@ defmodule Sigil.Sui.Client.HTTP do
 
   @behaviour Sigil.Sui.Client
 
-  alias Sigil.Sui.Client
+  alias Sigil.Sui.{Base58, Client}
 
   @default_limit 50
   @default_retry_delay 1_000
@@ -109,19 +109,16 @@ defmodule Sigil.Sui.Client.HTTP do
     end
   end
 
-  @typedoc "Object reference tuple: {32-byte id, version, 32-byte digest}."
-  @type object_ref :: {binary(), non_neg_integer(), binary()}
-
   @doc """
   Fetches a single Sui object with its on-chain reference (id, version, digest).
 
   Returns the Move JSON contents alongside the object ref tuple needed for
   transaction building (gas payment, object inputs).
 
-  Not a behaviour callback — specific to the HTTP implementation.
   """
+  @impl Client
   @spec get_object_with_ref(String.t(), Client.request_opts()) ::
-          {:ok, %{json: Client.object_map(), ref: object_ref()}} | {:error, Client.error_reason()}
+          {:ok, Client.object_with_ref()} | {:error, Client.error_reason()}
   def get_object_with_ref(id, opts \\ []) when is_binary(id) and is_list(opts) do
     with {:ok, data} <- graphql_request(@get_object_query, %{"id" => id}, opts) do
       case data do
@@ -234,14 +231,14 @@ defmodule Sigil.Sui.Client.HTTP do
 
   @spec map_graphql_response({:ok, Req.Response.t()} | {:error, Exception.t()}) ::
           {:ok, map()} | {:error, Client.error_reason()}
-  defp map_graphql_response({:ok, %Req.Response{status: 200, body: %{"data" => data}}})
-       when is_map(data) do
-    {:ok, data}
-  end
-
   defp map_graphql_response({:ok, %Req.Response{status: 200, body: %{"errors" => errors}}})
        when is_list(errors) do
     {:error, {:graphql_errors, errors}}
+  end
+
+  defp map_graphql_response({:ok, %Req.Response{status: 200, body: %{"data" => data}}})
+       when is_map(data) do
+    {:ok, data}
   end
 
   defp map_graphql_response({:ok, %Req.Response{status: 429}}), do: {:error, :rate_limited}
@@ -336,8 +333,6 @@ defmodule Sigil.Sui.Client.HTTP do
 
   defp parse_version(_other), do: :error
 
-  @b58_alphabet ~c"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
   @spec decode_sui_address(String.t()) :: {:ok, binary()} | {:error, :invalid_response}
   defp decode_sui_address("0x" <> hex), do: decode_sui_address(hex)
 
@@ -352,37 +347,11 @@ defmodule Sigil.Sui.Client.HTTP do
 
   @spec base58_decode(String.t()) :: {:ok, binary()} | {:error, :invalid_response}
   defp base58_decode(string) when is_binary(string) do
-    chars = String.to_charlist(string)
-    leading_zeros = count_leading(chars, ?1, 0)
-
-    case decode_b58_chars(chars, 0) do
-      {:ok, integer} ->
-        value_bytes = if integer == 0, do: <<>>, else: :binary.encode_unsigned(integer)
-        {:ok, <<0::size(leading_zeros)-unit(8), value_bytes::binary>>}
-
-      :error ->
-        {:error, :invalid_response}
+    case Base58.decode(string) do
+      {:ok, _bytes} = ok -> ok
+      {:error, :invalid_base58} -> {:error, :invalid_response}
     end
   end
-
-  @spec decode_b58_chars(charlist(), non_neg_integer()) :: {:ok, non_neg_integer()} | :error
-  defp decode_b58_chars([], acc), do: {:ok, acc}
-
-  defp decode_b58_chars([char | rest], acc) do
-    case b58_index(char, @b58_alphabet, 0) do
-      {:ok, index} -> decode_b58_chars(rest, acc * 58 + index)
-      :error -> :error
-    end
-  end
-
-  @spec b58_index(char(), charlist(), non_neg_integer()) :: {:ok, non_neg_integer()} | :error
-  defp b58_index(_char, [], _index), do: :error
-  defp b58_index(char, [char | _rest], index), do: {:ok, index}
-  defp b58_index(char, [_other | rest], index), do: b58_index(char, rest, index + 1)
-
-  @spec count_leading(charlist(), char(), non_neg_integer()) :: non_neg_integer()
-  defp count_leading([char | rest], char, count), do: count_leading(rest, char, count + 1)
-  defp count_leading(_other, _char, count), do: count
 
   # -- World configuration --
 

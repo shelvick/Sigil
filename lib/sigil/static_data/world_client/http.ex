@@ -30,6 +30,12 @@ defmodule Sigil.StaticData.WorldClient.HTTP do
           {:ok, [WorldClient.record()]} | {:error, WorldClient.error_reason()}
   def fetch_constellations(opts \\ []), do: fetch_paginated("/v2/constellations", opts)
 
+  @doc "Fetches every tribe record across all pages."
+  @impl WorldClient
+  @spec fetch_tribes(WorldClient.request_opts()) ::
+          {:ok, [WorldClient.record()]} | {:error, WorldClient.error_reason()}
+  def fetch_tribes(opts \\ []), do: fetch_paginated("/v2/tribes", opts)
+
   @spec fetch_paginated(String.t(), WorldClient.request_opts()) ::
           {:ok, [WorldClient.record()]} | {:error, WorldClient.error_reason()}
   defp fetch_paginated(path, opts) do

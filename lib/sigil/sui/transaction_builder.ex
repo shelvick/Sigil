@@ -47,6 +47,23 @@ defmodule Sigil.Sui.TransactionBuilder do
     PTB.encode_transaction_data(transaction_data)
   end
 
+  @typedoc "Keyword options for building just the transaction kind (no gas/sender)."
+  @type kind_opts :: [
+          inputs: [PTB.call_arg()],
+          commands: [PTB.command()]
+        ]
+
+  @doc "Builds transaction kind bytes (no gas data or sender). For wallet-signed flows."
+  @spec build_kind!(kind_opts()) :: binary()
+  def build_kind!(opts) when is_list(opts) do
+    commands = fetch_commands!(opts)
+
+    PTB.encode_transaction_kind(%{
+      inputs: Keyword.get(opts, :inputs, []),
+      commands: commands
+    })
+  end
+
   @doc "Builds transaction data bytes and returns an error tuple for invalid options."
   @spec build(build_opts()) :: {:ok, binary()} | {:error, String.t()}
   def build(opts) when is_list(opts) do

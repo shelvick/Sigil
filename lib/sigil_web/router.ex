@@ -26,11 +26,14 @@ defmodule SigilWeb.Router do
     pipe_through :browser
 
     post "/session", SessionController, :create
+    put "/session/character/:character_id", SessionController, :update_character
     delete "/session", SessionController, :delete
 
     live_session :wallet_session, on_mount: SigilWeb.WalletSession do
       live "/", DashboardLive
       live "/assembly/:id", AssemblyDetailLive
+      live "/tribe/:tribe_id", TribeOverviewLive
+      live "/tribe/:tribe_id/diplomacy", DiplomacyLive
     end
   end
 

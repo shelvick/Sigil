@@ -127,7 +127,7 @@ defmodule Mix.Tasks.Sui.VerifyE2e do
     end
   end
 
-  @spec fetch_coin_ref!(String.t()) :: Client.HTTP.object_ref()
+  @spec fetch_coin_ref!(String.t()) :: Client.object_ref()
   defp fetch_coin_ref!(sui_address) do
     coin_address =
       case Client.HTTP.get_objects(

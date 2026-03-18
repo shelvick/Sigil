@@ -44,6 +44,16 @@ defmodule Sigil.Sui.Client do
   @callback get_object(String.t(), request_opts()) ::
               {:ok, object_map()} | {:error, error_reason()}
 
+  @typedoc "Object reference: {32-byte id, version, 32-byte digest}."
+  @type object_ref :: {binary(), non_neg_integer(), binary()}
+
+  @typedoc "Object with its on-chain reference."
+  @type object_with_ref :: %{json: object_map(), ref: object_ref()}
+
+  @doc "Fetches a single object with its on-chain reference (id, version, digest)."
+  @callback get_object_with_ref(String.t(), request_opts()) ::
+              {:ok, object_with_ref()} | {:error, error_reason()}
+
   @doc "Fetches objects matching the supplied filters."
   @callback get_objects(object_filter(), request_opts()) ::
               {:ok, objects_page()} | {:error, error_reason()}

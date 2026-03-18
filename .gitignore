@@ -46,3 +46,4 @@ sigil-*.tar
 
 # Docker environment (contains secrets)
 .env
+node_modules/

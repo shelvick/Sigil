@@ -20,4 +20,7 @@ defmodule Sigil.StaticData.WorldClient do
 
   @doc "Fetches all constellations from the World API."
   @callback fetch_constellations(request_opts()) :: {:ok, [record()]} | {:error, error_reason()}
+
+  @doc "Fetches all tribes from the World API."
+  @callback fetch_tribes(request_opts()) :: {:ok, [record()]} | {:error, error_reason()}
 end

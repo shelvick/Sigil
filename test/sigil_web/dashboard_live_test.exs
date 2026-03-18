@@ -94,6 +94,50 @@ defmodule SigilWeb.DashboardLiveTest do
     assert selected_html =~ "Connecting to wallet..."
   end
 
+  test "wallet_accounts event renders account picker with addresses and labels", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+    labeled_address = unique_wallet_address()
+    unlabeled_address = unique_wallet_address()
+
+    html =
+      view
+      |> element("#wallet-connect")
+      |> render_hook("wallet_accounts", %{
+        "accounts" => [
+          account_payload(labeled_address, "Main Bridge"),
+          account_payload(unlabeled_address)
+        ]
+      })
+
+    assert html =~ "Select Account"
+    assert html =~ "Main Bridge"
+    assert html =~ truncate_id(unlabeled_address)
+    refute html =~ "No Sui wallet detected"
+    refute html =~ "Connecting to wallet..."
+  end
+
+  test "selecting account pushes select_account to hook", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_accounts", %{
+      "accounts" => [
+        account_payload(unique_wallet_address(), "Reserve"),
+        account_payload(unique_wallet_address(), "Fleet Command")
+      ]
+    })
+
+    selected_html =
+      view
+      |> element(~s(button[phx-click="select_account"][phx-value-index="1"]))
+      |> render_click()
+
+    assert_push_event(view, "select_account", %{"index" => 1})
+    assert selected_html =~ "Connecting to wallet..."
+    refute selected_html =~ "Select Account"
+  end
+
   test "wallet_connected generates nonce and pushes request_sign", %{
     conn: conn,
     cache_tables: cache_tables,
@@ -180,6 +224,207 @@ defmodule SigilWeb.DashboardLiveTest do
     # Should still show signing state, not reset to wallet picker
     assert html =~ "approve the signing request"
     refute html =~ "Available wallets"
+  end
+
+  test "wallet_account_changed shows re-auth notification", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_account_changed", %{})
+
+    html = render(view)
+
+    assert has_element?(
+             view,
+             "[role=alert]",
+             "Wallet account changed. Re-authenticate to switch."
+           )
+
+    assert html =~ "Wallet account changed. Re-authenticate to switch."
+    refute html =~ "Selected account not available"
+    # wallet_state remains unchanged — only a flash notification is shown
+  end
+
+  test "single account wallet skips account picker", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {:ok, view, _html} =
+      live(init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}), "/")
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => wallet_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => _, "message" => _})
+
+    html = render(view)
+    assert html =~ "approve the signing request"
+    refute html =~ "Select Account"
+    refute html =~ "No Sui wallet detected"
+  end
+
+  test "authenticated view shows character picker when multiple characters", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    first =
+      character_fixture(%{
+        "id" => uid("0xcharacter-scout"),
+        "tribe_id" => "314",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-scout-metadata",
+          "name" => "Scout Vega",
+          "description" => "Forward scout",
+          "url" => "https://example.test/characters/scout-vega"
+        }
+      })
+
+    second =
+      character_fixture(%{
+        "id" => uid("0xcharacter-marshal"),
+        "tribe_id" => "271828",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-marshal-metadata",
+          "name" => "Marshal Iona",
+          "description" => "Fleet commander",
+          "url" => "https://example.test/characters/marshal-iona"
+        }
+      })
+
+    Cache.put(
+      cache_tables.accounts,
+      wallet_address,
+      account_fixture(wallet_address, [first, second], 314_159)
+    )
+
+    stub_dashboard_discovery([])
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub, second.id), "/")
+
+    assert html =~ "Marshal Iona"
+    assert html =~ "Scout Vega"
+    assert html =~ "/session/character/#{first.id}"
+    assert html =~ "/session/character/#{second.id}"
+    refute html =~ "No characters synced"
+    refute html =~ "Commander profile"
+  end
+
+  test "assembly discovery passes only active character ID", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    first = character_fixture(%{"id" => uid("0xcharacter-alpha")})
+    second = character_fixture(%{"id" => uid("0xcharacter-beta")})
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xactive-character-gate")}))
+
+    Cache.put(
+      cache_tables.accounts,
+      wallet_address,
+      account_fixture(wallet_address, [first, second], 314)
+    )
+
+    expect_dashboard_discovery_for_character(second.id, [gate])
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub, second.id), "/")
+
+    assert html =~ "Jump Gate Alpha"
+    assert html =~ "Operational Assets"
+    refute html =~ "Assembly discovery is temporarily unavailable"
+    refute html =~ "No assemblies found"
+  end
+
+  test "authenticated view shows active character name and tribe", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    first =
+      character_fixture(%{
+        "id" => uid("0xcharacter-anchor"),
+        "tribe_id" => "314",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-anchor-metadata",
+          "name" => "Anchor Holt",
+          "description" => "Anchor pilot",
+          "url" => "https://example.test/characters/anchor-holt"
+        }
+      })
+
+    second =
+      character_fixture(%{
+        "id" => uid("0xcharacter-vanguard"),
+        "tribe_id" => "271828",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-vanguard-metadata",
+          "name" => "Vanguard Nia",
+          "description" => "Active commander",
+          "url" => "https://example.test/characters/vanguard-nia"
+        }
+      })
+
+    Cache.put(
+      cache_tables.accounts,
+      wallet_address,
+      account_fixture(wallet_address, [first, second], 314_159)
+    )
+
+    stub_dashboard_discovery([])
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub, second.id), "/")
+
+    assert html =~ "Vanguard Nia"
+    assert html =~ "271828"
+    refute html =~ "No characters synced"
+  end
+
+  test "authenticated view hides character picker for single character", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    only_character =
+      character_fixture(%{
+        "id" => uid("0xcharacter-solo"),
+        "tribe_id" => "314",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-solo-metadata",
+          "name" => "Solo Rhea",
+          "description" => "Only linked pilot",
+          "url" => "https://example.test/characters/solo-rhea"
+        }
+      })
+
+    Cache.put(
+      cache_tables.accounts,
+      wallet_address,
+      account_fixture(wallet_address, [only_character], 314)
+    )
+
+    stub_dashboard_discovery([])
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub, only_character.id),
+               "/"
+             )
+
+    assert html =~ "Solo Rhea"
+    refute html =~ "/session/character/#{only_character.id}"
+    refute html =~ "No characters synced"
+    refute html =~ "Commander profile"
   end
 
   test "renders assembly list when authenticated", %{
@@ -447,6 +692,43 @@ defmodule SigilWeb.DashboardLiveTest do
     assert html =~ wallet_address
   end
 
+  test "authenticated user with tribe sees View Tribe link", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    expect_empty_dashboard_discovery(wallet_address)
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "View Tribe"
+    assert html =~ ~s(/tribe/#{account.tribe_id})
+    refute html =~ "Unable to refresh"
+  end
+
+  test "authenticated user without tribe sees no tribe link", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    tribeless_character = character_fixture(%{"tribe_id" => "0"})
+    account = %Account{address: wallet_address, characters: [tribeless_character], tribe_id: nil}
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    expect_empty_dashboard_discovery(wallet_address)
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    refute html =~ "View Tribe"
+    refute html =~ "/tribe/"
+    assert html =~ wallet_address
+  end
+
   test "wallet connect event prepares signed auth request for dashboard login", %{
     conn: conn,
     cache_tables: cache_tables,
@@ -563,12 +845,153 @@ defmodule SigilWeb.DashboardLiveTest do
     refute html =~ "No assemblies found"
   end
 
-  defp expect_dashboard_discovery(_wallet_address, assemblies) do
-    owner_cap_type = owner_cap_type()
-    character_id = "0xcharacter-dashboard"
+  @tag :acceptance
+  test "multi-account wallet selection results in character-scoped dashboard", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    selected_address = unique_wallet_address()
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xacceptance-multi-gate")}))
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: type, owner: ^character_id], []
-                                                  when type == owner_cap_type ->
+    selected_character =
+      character_fixture(%{
+        "id" => uid("0xcharacter-selected"),
+        "character_address" => selected_address,
+        "tribe_id" => "271828",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-selected-metadata",
+          "name" => "Marshal Iona",
+          "description" => "Selected fleet commander",
+          "url" => "https://example.test/characters/marshal-iona"
+        }
+      })
+
+    other_character =
+      character_fixture(%{
+        "id" => uid("0xcharacter-other"),
+        "character_address" => wallet_address,
+        "tribe_id" => "314",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-other-metadata",
+          "name" => "Scout Vega",
+          "description" => "Alternate commander",
+          "url" => "https://example.test/characters/scout-vega"
+        }
+      })
+
+    character_type = character_type()
+    owner_cap_type = owner_cap_type()
+    gate_id = gate.id
+
+    expect(Sigil.Sui.ClientMock, :verify_zklogin_signature, fn _bytes,
+                                                               @zklogin_sig,
+                                                               "PERSONAL_MESSAGE",
+                                                               ^selected_address,
+                                                               [] ->
+      {:ok, %{"verifyZkLoginSignature" => %{"success" => true}}}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_objects, 2, fn filters, [] ->
+      case Keyword.get(filters, :type) do
+        ^character_type ->
+          {:ok,
+           %{
+             data: [character_to_json(other_character), character_to_json(selected_character)],
+             has_next_page: false,
+             end_cursor: nil
+           }}
+
+        ^owner_cap_type ->
+          assert Keyword.get(filters, :owner) == selected_character.id
+
+          {:ok,
+           %{
+             data: [owner_cap_json(gate_id)],
+             has_next_page: false,
+             end_cursor: nil
+           }}
+      end
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object, fn ^gate_id, [] ->
+      {:ok, gate_json(%{"id" => uid(gate_id)})}
+    end)
+
+    {:ok, view, initial_html} =
+      live(
+        init_test_session(conn, %{"cache_tables" => cache_tables, "pubsub" => pubsub}),
+        "/"
+      )
+
+    assert initial_html =~ "Connect Your Wallet"
+    refute initial_html =~ "Operational Assets"
+
+    account_selection_html =
+      view
+      |> element("#wallet-connect")
+      |> render_hook("wallet_accounts", %{
+        "accounts" => [
+          account_payload(wallet_address, "Scout Wing"),
+          account_payload(selected_address, "Marshal Bridge")
+        ]
+      })
+
+    assert account_selection_html =~ "Select Account"
+    assert account_selection_html =~ "Marshal Bridge"
+    refute account_selection_html =~ "No Sui wallet detected"
+
+    selection_html =
+      view
+      |> element(~s(button[phx-click="select_account"][phx-value-index="1"]))
+      |> render_click()
+
+    assert_push_event(view, "select_account", %{"index" => 1})
+    assert selection_html =~ "Connecting to wallet..."
+    refute selection_html =~ "Select Account"
+
+    view
+    |> element("#wallet-connect")
+    |> render_hook("wallet_connected", %{"address" => selected_address, "name" => "Eve Vault"})
+
+    assert_push_event(view, "request_sign", %{"nonce" => nonce, "message" => message})
+    assert message == "Sign in to Sigil: #{nonce}"
+
+    conn =
+      conn
+      |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+      |> post("/session", %{
+        "wallet_address" => selected_address,
+        "bytes" => Base.encode64(message),
+        "signature" => zklogin_signature(),
+        "nonce" => nonce
+      })
+
+    assert redirected_to(conn) == "/"
+
+    assert {:ok, _dashboard_view, html} = live(recycle(conn), "/")
+
+    assert html =~ "Marshal Iona"
+    assert html =~ "271828"
+    assert html =~ "Jump Gate Alpha"
+    assert html =~ "/assembly/#{gate.id}"
+    refute html =~ "Connect Your Wallet"
+    refute html =~ "No assemblies found"
+    refute html =~ "314159"
+  end
+
+  defp expect_dashboard_discovery(_wallet_address, assemblies) do
+    expect_dashboard_discovery_for_character("0xcharacter-dashboard", assemblies)
+  end
+
+  defp expect_dashboard_discovery_for_character(character_id, assemblies) do
+    owner_cap_type = owner_cap_type()
+
+    expect(Sigil.Sui.ClientMock, :get_objects, fn filters, [] ->
+      assert Keyword.get(filters, :type) == owner_cap_type
+      assert Keyword.get(filters, :owner) == character_id
+
       {:ok,
        %{
          data: Enum.map(assemblies, &owner_cap_json(&1.id)),
@@ -593,6 +1016,24 @@ defmodule SigilWeb.DashboardLiveTest do
     end)
   end
 
+  defp stub_dashboard_discovery(assemblies) do
+    expect(Sigil.Sui.ClientMock, :get_objects, fn filters, [] ->
+      assert Keyword.get(filters, :type) == owner_cap_type()
+
+      {:ok,
+       %{
+         data: Enum.map(assemblies, &owner_cap_json(&1.id)),
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object, length(assemblies), fn assembly_id, [] ->
+      assembly = Enum.find(assemblies, &(&1.id == assembly_id))
+      {:ok, assembly_json_for(assembly)}
+    end)
+  end
+
   defp expect_dashboard_discovery_failure(_wallet_address) do
     owner_cap_type = owner_cap_type()
     character_id = "0xcharacter-dashboard"
@@ -604,11 +1045,24 @@ defmodule SigilWeb.DashboardLiveTest do
   end
 
   defp authenticated_conn(conn, wallet_address, cache_tables, pubsub) do
-    init_test_session(conn, %{
+    authenticated_conn(conn, wallet_address, cache_tables, pubsub, nil)
+  end
+
+  defp authenticated_conn(conn, wallet_address, cache_tables, pubsub, active_character_id) do
+    session = %{
       "wallet_address" => wallet_address,
       "cache_tables" => cache_tables,
       "pubsub" => pubsub
-    })
+    }
+
+    session =
+      if is_binary(active_character_id) do
+        Map.put(session, "active_character_id", active_character_id)
+      else
+        session
+      end
+
+    init_test_session(conn, session)
   end
 
   defp assembly_json_for(%Gate{id: id, status: %{status: status}}) do
@@ -622,11 +1076,15 @@ defmodule SigilWeb.DashboardLiveTest do
   end
 
   defp account_fixture(wallet_address) do
-    %Account{address: wallet_address, characters: [character_fixture()], tribe_id: 314}
+    account_fixture(wallet_address, [character_fixture()], 314)
   end
 
-  defp character_fixture do
-    Character.from_json(character_json())
+  defp account_fixture(wallet_address, characters, tribe_id) do
+    %Account{address: wallet_address, characters: characters, tribe_id: tribe_id}
+  end
+
+  defp character_fixture(overrides \\ %{}) do
+    Character.from_json(character_json(overrides))
   end
 
   defp unique_pubsub_name do
@@ -658,6 +1116,10 @@ defmodule SigilWeb.DashboardLiveTest do
     %{"name" => name, "icon" => "https://example.test/#{String.replace(name, " ", "-")}.png"}
   end
 
+  defp account_payload(address, label \\ nil) do
+    %{"address" => address, "label" => label}
+  end
+
   defp character_type do
     "#{@world_package_id}::character::Character"
   end
@@ -666,7 +1128,7 @@ defmodule SigilWeb.DashboardLiveTest do
     "#{@world_package_id}::access::OwnerCap"
   end
 
-  defp character_json(overrides \\ %{}) do
+  defp character_json(overrides) do
     Map.merge(
       %{
         "id" => uid("0xcharacter-dashboard"),
@@ -689,6 +1151,24 @@ defmodule SigilWeb.DashboardLiveTest do
     %{
       "id" => uid("0xownercap-#{String.trim_leading(assembly_id, "0x")}"),
       "authorized_object_id" => assembly_id
+    }
+  end
+
+  defp character_to_json(%Character{} = character) do
+    metadata = character.metadata || %{}
+
+    %{
+      "id" => uid(character.id),
+      "key" => %{"item_id" => character.key.item_id, "tenant" => character.key.tenant},
+      "tribe_id" => Integer.to_string(character.tribe_id),
+      "character_address" => character.character_address,
+      "metadata" => %{
+        "assembly_id" => metadata.assembly_id,
+        "name" => metadata.name,
+        "description" => metadata.description,
+        "url" => metadata.url
+      },
+      "owner_cap_id" => uid(character.owner_cap_id)
     }
   end
 

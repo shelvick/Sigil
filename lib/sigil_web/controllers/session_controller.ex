@@ -42,6 +42,23 @@ defmodule SigilWeb.SessionController do
   end
 
   @doc """
+  Stores the active character selection for the current wallet session.
+  """
+  @spec update_character(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def update_character(conn, %{"character_id" => character_id}) do
+    with wallet_address when is_binary(wallet_address) <- get_session(conn, :wallet_address),
+         %{} = tables <- resolve_cache_tables(conn),
+         {:ok, account} <- Accounts.get_account(wallet_address, tables: tables),
+         true <- Enum.any?(account.characters, &(&1.id == character_id)) do
+      conn
+      |> put_session(:active_character_id, character_id)
+      |> redirect(to: ~p"/")
+    else
+      _ -> redirect(conn, to: ~p"/")
+    end
+  end
+
+  @doc """
   Clears the current wallet session.
   """
   @spec delete(Plug.Conn.t(), map()) :: Plug.Conn.t()

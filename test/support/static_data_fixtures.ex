@@ -49,6 +49,25 @@ defmodule Sigil.StaticDataTestFixtures do
     config_path
   end
 
+  @spec write_diplomacy_probe_config!(String.t(), keyword()) :: String.t()
+  def write_diplomacy_probe_config!(config_dir, opts) do
+    gas_price = Keyword.get(opts, :reference_gas_price, 1_000)
+    world_client = Keyword.get(opts, :world_client, Sigil.DiplomacyTestWorldClient)
+    config_path = Path.join(config_dir, "diplomacy_probe_config.exs")
+
+    File.write!(
+      config_path,
+      """
+      import Config
+
+      config :sigil, :world_client, #{inspect(world_client)}
+      config :sigil, :reference_gas_price, #{inspect(gas_price)}
+      """
+    )
+
+    config_path
+  end
+
   @spec write_populate_static_data_config!(String.t(), String.t()) :: String.t()
   def write_populate_static_data_config!(config_dir, output_dir) do
     config_path = Path.join(config_dir, "populate_static_data_config.exs")

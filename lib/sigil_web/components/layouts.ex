@@ -19,4 +19,16 @@ defmodule SigilWeb.Layouts do
   end
 
   defp truncate_wallet(wallet_address) when is_binary(wallet_address), do: wallet_address
+
+  @spec character_display_name(Sigil.Sui.Types.Character.t()) :: String.t()
+  defp character_display_name(%{metadata: %{name: name}}) when is_binary(name), do: name
+  defp character_display_name(_character), do: "Commander"
+
+  @spec character_tribe_label(Sigil.Sui.Types.Character.t()) :: String.t()
+  defp character_tribe_label(%{tribe_id: 0}), do: "Unaligned"
+
+  defp character_tribe_label(%{tribe_id: tribe_id}) when is_integer(tribe_id),
+    do: "Tribe #{tribe_id}"
+
+  defp character_tribe_label(_character), do: "Unaligned"
 end

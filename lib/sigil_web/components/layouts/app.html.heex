@@ -14,6 +14,33 @@
 
     <%= if @current_account do %>
       <div class="flex items-center gap-3">
+        <%= if @active_character do %>
+          <div class="flex items-center gap-2">
+            <p class="text-sm text-cream"><%= character_display_name(@active_character) %></p>
+            <span class="font-mono text-xs text-space-500"><%= character_tribe_label(@active_character) %></span>
+          </div>
+
+          <%= if length(@current_account.characters) > 1 do %>
+            <details class="relative">
+              <summary class="cursor-pointer font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 hover:text-cream">
+                Switch
+              </summary>
+              <div class="absolute right-0 top-full z-50 mt-2 w-56 rounded-2xl border border-space-600/80 bg-space-900/95 p-2 shadow-2xl backdrop-blur">
+                <%= for character <- @current_account.characters do %>
+                  <.link
+                    method="put"
+                    href={~p"/session/character/#{character.id}"}
+                    class={"block rounded-xl px-3 py-2 text-sm transition hover:bg-space-800/80 #{if @active_character.id == character.id, do: "text-quantum-300", else: "text-cream"}"}
+                  >
+                    <p><%= character_display_name(character) %></p>
+                    <p class="font-mono text-xs text-space-500"><%= character_tribe_label(character) %></p>
+                  </.link>
+                <% end %>
+              </div>
+            </details>
+          <% end %>
+        <% end %>
+
         <p class="font-mono text-xs uppercase tracking-[0.18em] text-space-500">Wallet</p>
         <p class="rounded-full border border-space-600/80 bg-space-950/70 px-3 py-1 font-mono text-sm text-cream">
           <%= truncate_wallet(@current_account.address) %>

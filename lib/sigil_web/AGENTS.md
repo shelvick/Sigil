@@ -5,14 +5,18 @@
 - `SigilWeb` (`sigil_web.ex`) — Module use macros: `:controller`, `:live_view`, `:html`, `:verified_routes`
 - `SigilWeb.Endpoint` (`endpoint.ex`) — Bandit HTTP server, LiveView socket, static assets, session config
 - `SigilWeb.Router` (`router.ex`) — Browser + API pipelines, `live_session :wallet_session` with `WalletSession` on_mount, session controller routes, health check, dev LiveDashboard
-- `SigilWeb.WalletSession` (`wallet_session.ex`) — LiveView on_mount hook: resolves cache_tables (session injection or CacheResolver), pubsub, current_account
+- `SigilWeb.WalletSession` (`wallet_session.ex`) — LiveView on_mount hook: resolves cache_tables, pubsub, current_account, active_character (from session cookie)
 - `SigilWeb.CacheResolver` (`cache_resolver.ex`) — Shared supervisor lookup for Cache tables (used by WalletSession + SessionController)
 - `SigilWeb.AssemblyHelpers` (`assembly_helpers.ex`) — Shared display helpers: type labels, names, status badges (success/warning/default), fuel gauges, ID truncation
-- `SigilWeb.Layouts` (`components/layouts.ex`) — Root + app layout templates, `truncate_wallet/1`
-- `SigilWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session: zkLogin-verified wallet auth, nonce-bound assembly context, friendly error messages
-- `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: wallet connect via JS hook (unauth), assembly manifest table (auth), PubSub subscriptions, linked StatePoller
-- `SigilWeb.DashboardLive.Components` (`live/dashboard_live/components.ex`) — Extracted template components: authenticated_view, assembly_manifest, wallet_connect_view, wallet_state_panel
+- `SigilWeb.Layouts` (`components/layouts.ex`) — Root + app layout templates, `truncate_wallet/1`, `character_display_name/1`, `character_tribe_label/1`
+- `SigilWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session + PUT /session/character/:id: zkLogin-verified wallet auth, active character switching, friendly error messages
+- `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: multi-account wallet connect (unauth), character-scoped assembly manifest (auth), character picker, PubSub subscriptions, linked StatePoller
+- `SigilWeb.DashboardLive.Components` (`live/dashboard_components.ex`) — Template components: authenticated_view (with character picker), assembly_manifest, wallet_connect_view, wallet_state_panel (idle/connecting/account_selection/signing/error)
 - `SigilWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering (Gate/Turret/StorageUnit/NetworkNode/Assembly), fuel/energy/connection panels, PubSub updates
+- `SigilWeb.TribeOverviewLive` (`live/tribe_overview_live.ex`) — Tribe overview at `/tribe/:tribe_id`: member list (connected vs chain-only), assembly aggregation, standings summary, PubSub updates
+- `SigilWeb.DiplomacyLive` (`live/diplomacy_live.ex`) — Diplomacy editor at `/tribe/:tribe_id/diplomacy`: page state machine, standings CRUD, wallet tx signing flow, PubSub updates
+- `SigilWeb.DiplomacyLive.Components` (`live/diplomacy_components.ex`) — Extracted template components: no_table_view, select_table_view, signing_overlay, tribe_standings_section, pilot_overrides_section, default_standing_section + display helpers
+- `SigilWeb.TribeHelpers` (`tribe_helpers.ex`) — Shared tribe authorization: authorize_tribe/2 validates URL tribe_id matches current_account
 - `SigilWeb.HealthController` (`controllers/health_controller.ex`) — GET /api/health → `{"status":"ok"}`
 - `SigilWeb.ErrorHTML` (`controllers/error_html.ex`) — Error page rendering
 - `SigilWeb.Telemetry` (`telemetry.ex`) — Phoenix + Ecto telemetry metrics
@@ -20,7 +24,7 @@
 ## Key Functions
 
 ### WalletSession (wallet_session.ex)
-- `on_mount/4`: Resolves cache_tables, pubsub, current_account from session → socket assigns
+- `on_mount/4`: Resolves cache_tables, pubsub, current_account, active_character from session → socket assigns
 
 ### CacheResolver (cache_resolver.ex)
 - `application_cache_tables/0`: Supervisor.which_children lookup for Cache PID → Cache.tables/1
@@ -35,26 +39,44 @@
 
 ### SessionController (controllers/session_controller.ex)
 - `create/2`: auth_params → verify_wallet (ZkLoginVerifier) → register_wallet → put_session → redirect (post_auth_path)
+- `update_character/2`: PUT /session/character/:id → validate ownership → put_session(:active_character_id) → redirect
 - `delete/2`: clear_session + drop → redirect
 - `friendly_error/1`: Maps error atoms/tuples to user-facing messages
 
 ### DashboardLive (live/dashboard_live.ex)
-- `mount/3`: assign_base_state (captures ?itemId=&tenant=) → maybe_load_assemblies → maybe_subscribe → maybe_start_poller
-- `handle_event("wallet_detected")`: Store wallets, auto-connect if single, ignore during active auth
-- `handle_event("wallet_connected")`: Generate nonce via ZkLoginVerifier, push request_sign to JS hook
+- `mount/3`: assign_base_state → maybe_load_assemblies (character-scoped) → maybe_subscribe → maybe_start_poller
+- `handle_event("wallet_detected")`: Store wallets, auto-connect if single, ignore during active auth/account_selection
+- `handle_event("wallet_accounts")`: Multi-account → store accounts, set :account_selection state
+- `handle_event("select_account")`: Push select_account to JS hook with chosen index
+- `handle_event("wallet_connected")`: Generate nonce via ZkLoginVerifier, push request_sign
+- `handle_event("wallet_account_changed")`: Flash "re-authenticate to switch" notification
 - `handle_event("wallet_error")`: Flash error + set error state with retry
-- `handle_info({:assemblies_discovered, list})`: Replace assembly list, subscribe to new topics, update poller
-- `handle_info({:assembly_updated, assembly})`: Replace single assembly in list
+- `active_character_ids/1`: Returns `[active_character.id]` or `[]` for character-scoped discovery
 
-### DashboardLive.Components (live/dashboard_live/components.ex)
-- `authenticated_view/1`: Wallet info panel + session controls + assembly manifest
+### DashboardLive.Components (live/dashboard_components.ex)
+- `authenticated_view/1`: Wallet panel (active character name/tribe) + character picker + session controls + assembly manifest + "View Tribe" link (when tribe_id present)
 - `assembly_manifest/1`: Assembly table with type/name/status/fuel columns
 - `wallet_connect_view/1`: Wallet connect prompt + button + state panel
-- `wallet_state_panel/1`: Multi-clause component for idle/connecting/signing/error states
+- `wallet_state_panel/1`: Multi-clause: idle/connecting/account_selection/signing/error
+- `account_display_name/1`: Label or truncated address fallback
+- `active_character_name/2`, `active_character_tribe_label/1`, `character_name/1`, `character_tribe_label/1`: Display helpers
 
 ### AssemblyDetailLive (live/assembly_detail_live.ex)
 - `mount/3`: fetch_assembly from cache → assign → subscribe → start poller (or redirect if not found)
 - `handle_info({:assembly_updated, assembly})`: Replace assembly assigns
+
+### TribeOverviewLive (live/tribe_overview_live.ex)
+- `mount/3`: authorize → load tribe/members/assemblies/standings → subscribe "tribes"+"diplomacy"
+- `handle_info({:tribe_discovered, _})`: Refresh members + assemblies
+- `handle_info({:standing_updated|:default_standing_updated|:table_discovered, _})`: Refresh standings summary
+
+### DiplomacyLive (live/diplomacy_live.ex)
+- `mount/3`: authorize → discover_tables → resolve tribe names → enter page state
+- Events: select_table, create_table, add_tribe_standing, set_standing, batch_set_standings, add_pilot_override, set_default_standing, filter_tribes, transaction_signed, transaction_error
+- Page states: :loading → :no_table | :select_table | :active ↔ :signing_tx
+
+### TribeHelpers (tribe_helpers.ex)
+- `authorize_tribe/2`: tribe_id_string × socket → {:ok, integer} | {:error, :unauthorized | :unauthenticated}
 
 ## Patterns
 
@@ -70,9 +92,11 @@
 - `Sigil.Assemblies` — assembly discovery, listing, sync
 - `Sigil.Cache` — ETS table resolution (including :nonces for auth)
 - `Sigil.Sui.ZkLoginVerifier` — challenge nonce generation + zkLogin verification
+- `Sigil.Diplomacy` — standings CRUD, tx building, tribe name resolution
+- `Sigil.Tribes` — tribe member discovery + assembly aggregation
 - `Sigil.GameState.Poller` — linked assembly polling
 - `Phoenix.PubSub` — real-time updates
 
 ## JS Hooks
 
-- `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, signPersonalMessage, hidden form POST. Registered in `assets/js/app.js`.
+- `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, multi-account selection (pendingAccounts + select_account), signPersonalMessage (auth), signTransaction (diplomacy), wallet change detection, hidden form POST. Registered in `assets/js/app.js`.

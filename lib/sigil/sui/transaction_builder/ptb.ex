@@ -187,6 +187,12 @@ defmodule Sigil.Sui.TransactionBuilder.PTB do
       BCS.encode_vector(commands, &encode_command/1)
   end
 
+  @doc "Encodes just the TransactionKind enum (ProgrammableTransaction variant)."
+  @spec encode_transaction_kind(programmable_transaction()) :: binary()
+  def encode_transaction_kind(%{inputs: _inputs, commands: _commands} = kind) do
+    <<0x00>> <> encode_programmable_transaction(kind)
+  end
+
   @doc "Encodes the TransactionDataV1 struct."
   @spec encode_transaction_data_v1(transaction_data_v1()) :: binary()
   # Sui uses the protocol name TransactionDataV1, so the public API keeps that exact suffix.

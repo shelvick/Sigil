@@ -58,7 +58,7 @@ defmodule SigilWeb.DashboardLive do
   @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def handle_event("wallet_detected", _params, %{assigns: %{wallet_state: state}} = socket)
-      when state in [:connecting, :signing] do
+      when state in [:connecting, :account_selection, :signing] do
     {:noreply, socket}
   end
 
@@ -106,6 +106,35 @@ defmodule SigilWeb.DashboardLive do
       _other ->
         {:noreply, assign(socket, wallet_state: :error, wallet_error: "Unable to select wallet")}
     end
+  end
+
+  @doc false
+  def handle_event("wallet_accounts", %{"accounts" => accounts}, socket) when is_list(accounts) do
+    {:noreply,
+     assign(socket,
+       wallet_accounts: accounts,
+       wallet_state: :account_selection,
+       wallet_error: nil
+     )}
+  end
+
+  @doc false
+  def handle_event("select_account", %{"index" => index}, socket) do
+    case Integer.parse(to_string(index)) do
+      {parsed_index, ""} ->
+        {:noreply,
+         socket
+         |> assign(wallet_state: :connecting, wallet_error: nil, wallet_accounts: [])
+         |> push_event("select_account", %{"index" => parsed_index})}
+
+      _other ->
+        {:noreply, assign(socket, wallet_state: :error, wallet_error: "Unable to select account")}
+    end
+  end
+
+  @doc false
+  def handle_event("wallet_account_changed", _params, socket) do
+    {:noreply, put_flash(socket, :info, "Wallet account changed. Re-authenticate to switch.")}
   end
 
   @doc false
@@ -173,6 +202,7 @@ defmodule SigilWeb.DashboardLive do
         <%= if @current_account do %>
           <.authenticated_view
             current_account={@current_account}
+            active_character={@active_character}
             assemblies={@assemblies}
             discovery_error={@discovery_error}
           />
@@ -182,6 +212,7 @@ defmodule SigilWeb.DashboardLive do
             wallet_state={@wallet_state}
             wallet_name={@wallet_name}
             wallet_error={@wallet_error}
+            wallet_accounts={@wallet_accounts}
           />
         <% end %>
       </div>
@@ -202,6 +233,7 @@ defmodule SigilWeb.DashboardLive do
       wallet_name: nil,
       wallet_error: nil,
       wallets: [],
+      wallet_accounts: [],
       item_id: Map.get(params, "itemId"),
       tenant: Map.get(params, "tenant")
     )
@@ -222,7 +254,7 @@ defmodule SigilWeb.DashboardLive do
 
   defp maybe_load_assemblies(%{assigns: %{current_account: account}} = socket) do
     address = account.address
-    character_ids = Enum.map(account.characters, & &1.id)
+    character_ids = active_character_ids(socket)
 
     if connected?(socket) do
       case discover_assemblies(
@@ -290,6 +322,10 @@ defmodule SigilWeb.DashboardLive do
   end
 
   defp maybe_update_poller(socket, _assemblies), do: socket
+
+  @spec active_character_ids(Phoenix.LiveView.Socket.t()) :: [String.t()]
+  defp active_character_ids(%{assigns: %{active_character: %{id: id}}}), do: [id]
+  defp active_character_ids(_socket), do: []
 
   @spec discover_assemblies(String.t(), [String.t()], map() | nil, atom() | module()) ::
           {:ok, [Assemblies.assembly()]} | {:error, term()}

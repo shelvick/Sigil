@@ -9,19 +9,24 @@ config :sigil, :world_client, Sigil.StaticData.WorldClient.HTTP
 config :sigil, :eve_worlds, %{
   "stillness" => %{
     package_id: "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c",
+    sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
     graphql_url: "https://graphql.testnet.sui.io/graphql"
   },
   "utopia" => %{
     package_id: "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
+    sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
     graphql_url: "https://graphql.testnet.sui.io/graphql"
   },
   "internal" => %{
     package_id: "0x353988e063b4683580e3603dbe9e91fefd8f6a06263a646d43fd3a2f3ef6b8c1",
+    sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
     graphql_url: "https://graphql.testnet.sui.io/graphql"
   },
   "localnet" => %{
-    package_id: "0xd9171e06e79f88956c0750f442e38dd1148052d8932ac67abd8747ab66619a5f",
-    graphql_url: "http://localhost:9125/graphql"
+    package_id: "must be set via SUI_LOCALNET_PACKAGE_ID env var",
+    sigil_package_id: "must be set via SUI_LOCALNET_SIGIL_PACKAGE_ID env var",
+    graphql_url: "http://localhost:9125/graphql",
+    rpc_url: "http://localhost:9000"
   }
 }
 
@@ -45,7 +50,7 @@ if config_env() != :test do
     version: "0.17.11",
     sigil: [
       args:
-        ~w(js/app.js --bundle --target=es2017 --outdir=../priv/static/assets --external:/fonts/* --external:/images/*),
+        ~w(js/app.js --bundle --target=es2020 --outdir=../priv/static/assets --external:/fonts/* --external:/images/*),
       cd: Path.expand("../assets", __DIR__),
       env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
     ]

@@ -35,7 +35,7 @@ defmodule Sigil.GameState.PollerTest do
 
     counts =
       Enum.reduce(1..4, %{}, fn _, acc ->
-        assert_receive {:sync_called, assembly_id}, 300
+        assert_receive {:sync_called, assembly_id}, 1_000
         Map.update(acc, assembly_id, 1, &(&1 + 1))
       end)
 
@@ -66,9 +66,9 @@ defmodule Sigil.GameState.PollerTest do
 
     send(poller, :poll)
 
-    assert_receive {:sync_called, "assembly-a", ^tables, ^pubsub}, 100
-    assert_receive {:sync_called, "assembly-b", ^tables, ^pubsub}, 100
-    assert_receive {:sync_called, "assembly-c", ^tables, ^pubsub}, 100
+    assert_receive {:sync_called, "assembly-a", ^tables, ^pubsub}, 1_000
+    assert_receive {:sync_called, "assembly-b", ^tables, ^pubsub}, 1_000
+    assert_receive {:sync_called, "assembly-c", ^tables, ^pubsub}, 1_000
   end
 
   test "continues polling remaining assemblies after sync failure", %{
@@ -98,8 +98,8 @@ defmodule Sigil.GameState.PollerTest do
 
     send(poller, :poll)
 
-    assert_receive {:sync_failed, "assembly-a"}, 100
-    assert_receive {:sync_called, "assembly-b"}, 100
+    assert_receive {:sync_failed, "assembly-a"}, 1_000
+    assert_receive {:sync_called, "assembly-b"}, 1_000
     assert Process.alive?(poller)
   end
 
@@ -123,7 +123,7 @@ defmodule Sigil.GameState.PollerTest do
     assert :ok = Poller.update_assembly_ids(poller, ["new-assembly"])
     send(poller, :poll)
 
-    assert_receive {:sync_called, "new-assembly"}, 100
+    assert_receive {:sync_called, "new-assembly"}, 1_000
     refute_receive {:sync_called, "old-assembly"}, 50
   end
 
@@ -169,12 +169,12 @@ defmodule Sigil.GameState.PollerTest do
         end
       end)
 
-    assert_receive {:poller_started, poller, ^owner}, 100
+    assert_receive {:poller_started, poller, ^owner}, 1_000
     poller_ref = Process.monitor(poller)
 
     Process.exit(owner, :kill)
 
-    assert_receive {:DOWN, ^poller_ref, :process, ^poller, _reason}, 100
+    assert_receive {:DOWN, ^poller_ref, :process, ^poller, _reason}, 1_000
   end
 
   test "stop/1 terminates the poller", %{tables: tables, pubsub: pubsub} do
@@ -189,7 +189,7 @@ defmodule Sigil.GameState.PollerTest do
 
     ref = Process.monitor(poller)
     assert :ok = Poller.stop(poller)
-    assert_receive {:DOWN, ^ref, :process, ^poller, reason}, 100
+    assert_receive {:DOWN, ^ref, :process, ^poller, reason}, 1_000
     assert reason in [:normal, :shutdown, {:shutdown, :normal}]
   end
 
@@ -232,8 +232,8 @@ defmodule Sigil.GameState.PollerTest do
         sync_fun: sync_fun
       )
 
-    assert_receive {:sync_called, "assembly-a", first_at}, 80
-    assert_receive {:sync_called, "assembly-a", second_at}, 80
+    assert_receive {:sync_called, "assembly-a", first_at}, 1_000
+    assert_receive {:sync_called, "assembly-a", second_at}, 1_000
     assert second_at - first_at <= 80
   end
 

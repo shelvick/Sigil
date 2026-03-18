@@ -22,17 +22,46 @@ defmodule SigilWeb.DashboardLive.Components do
           <dl class="mt-6 grid gap-4 sm:grid-cols-3">
             <div>
               <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Character</dt>
-              <dd class="mt-2 text-sm text-cream"><%= primary_character_name(@current_account) %></dd>
+              <dd class="mt-2 text-sm text-cream"><%= active_character_name(@active_character, @current_account) %></dd>
             </div>
             <div>
               <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Tribe</dt>
-              <dd class="mt-2 text-sm text-cream"><%= tribe_label(@current_account) %></dd>
+              <dd class="mt-2 text-sm text-cream"><%= active_character_tribe_label(@active_character) %></dd>
             </div>
             <div>
               <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Crew count</dt>
               <dd class="mt-2 text-sm text-cream"><%= length(@current_account.characters) %> online</dd>
             </div>
           </dl>
+
+          <%= if length(@current_account.characters) > 1 do %>
+            <div class="mt-6 space-y-3 border-t border-space-600/80 pt-6">
+              <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">Character roster</p>
+              <%= for character <- @current_account.characters do %>
+                <div class="flex items-center justify-between rounded-2xl border border-space-600/80 bg-space-900/70 px-4 py-3">
+                  <div>
+                    <p class="text-sm text-cream"><%= character_name(character) %></p>
+                    <p class="font-mono text-xs text-space-500">Tribe: <%= character_tribe_label(character) %></p>
+                  </div>
+                  <.link
+                    method="put"
+                    href={~p"/session/character/#{character.id}"}
+                    class="font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 hover:text-cream"
+                  >
+                    <%= if @active_character && @active_character.id == character.id, do: "Active", else: "Switch" %>
+                  </.link>
+                </div>
+              <% end %>
+            </div>
+          <% end %>
+
+          <.link
+            :if={@active_character && @active_character.tribe_id && @active_character.tribe_id > 0}
+            navigate={~p"/tribe/#{@active_character.tribe_id}"}
+            class="mt-6 inline-flex rounded-full border border-quantum-400/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+          >
+            View Tribe
+          </.link>
         </div>
 
         <div class="rounded-3xl border border-space-600/80 bg-space-800/60 p-6">
@@ -163,6 +192,7 @@ defmodule SigilWeb.DashboardLive.Components do
           wallet_state={@wallet_state}
           wallet_name={@wallet_name}
           wallet_error={@wallet_error}
+          wallet_accounts={@wallet_accounts}
         />
       </div>
     </div>
@@ -192,6 +222,31 @@ defmodule SigilWeb.DashboardLive.Components do
           </span>
           <span class="font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
             Connect
+          </span>
+        </button>
+      <% end %>
+    </div>
+    """
+  end
+
+  def wallet_state_panel(%{wallet_state: :account_selection} = assigns) do
+    ~H"""
+    <div class="mt-6 space-y-3">
+      <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">
+        Select Account
+      </p>
+      <%= for {account, index} <- Enum.with_index(@wallet_accounts) do %>
+        <button
+          type="button"
+          phx-click="select_account"
+          phx-value-index={index}
+          class="flex w-full items-center justify-between rounded-2xl border border-space-600/80 bg-space-900/70 px-4 py-3 text-left transition hover:border-quantum-400/40 hover:bg-space-900"
+        >
+          <span class="text-sm text-cream">
+            <%= account_display_name(account) %>
+          </span>
+          <span class="font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
+            Select
           </span>
         </button>
       <% end %>
@@ -241,19 +296,38 @@ defmodule SigilWeb.DashboardLive.Components do
     """
   end
 
-  @spec primary_character_name(Account.t()) :: String.t()
-  defp primary_character_name(%Account{characters: [%{metadata: %{name: name}} | _rest]})
-       when is_binary(name),
-       do: name
+  @spec active_character_name(Sigil.Sui.Types.Character.t() | nil, Account.t()) :: String.t()
+  defp active_character_name(%{metadata: %{name: name}}, _account) when is_binary(name), do: name
+  defp active_character_name(nil, %Account{characters: []}), do: "No characters synced"
+  defp active_character_name(_, _account), do: "Commander profile"
 
-  defp primary_character_name(%Account{characters: []}), do: "No characters synced"
-  defp primary_character_name(%Account{}), do: "Commander profile"
+  @spec active_character_tribe_label(Sigil.Sui.Types.Character.t() | nil) :: String.t()
+  defp active_character_tribe_label(%{tribe_id: 0}), do: "Unaligned"
 
-  @spec tribe_label(Account.t()) :: String.t()
-  defp tribe_label(%Account{tribe_id: tribe_id}) when is_integer(tribe_id),
-    do: Integer.to_string(tribe_id)
+  defp active_character_tribe_label(%{tribe_id: tribe_id}) when is_integer(tribe_id),
+    do: "Tribe #{tribe_id}"
 
-  defp tribe_label(%Account{}), do: "Unaligned"
+  defp active_character_tribe_label(_character), do: "Unaligned"
+
+  @spec character_name(Sigil.Sui.Types.Character.t()) :: String.t()
+  defp character_name(%{metadata: %{name: name}}) when is_binary(name), do: name
+  defp character_name(_character), do: "Unknown Character"
+
+  @spec character_tribe_label(Sigil.Sui.Types.Character.t()) :: String.t()
+  defp character_tribe_label(%{tribe_id: 0}), do: "Unaligned"
+
+  defp character_tribe_label(%{tribe_id: tribe_id}) when is_integer(tribe_id),
+    do: "Tribe #{tribe_id}"
+
+  defp character_tribe_label(_character), do: "Unaligned"
+
+  @spec account_display_name(map()) :: String.t()
+  defp account_display_name(%{"label" => label}) when is_binary(label), do: label
+
+  defp account_display_name(%{"address" => address}) when is_binary(address),
+    do: truncate_id(address)
+
+  defp account_display_name(_account), do: "Unknown Account"
 
   @spec wallet_name(map()) :: String.t()
   defp wallet_name(%{"name" => name}) when is_binary(name), do: name

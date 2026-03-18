@@ -63,6 +63,16 @@ defmodule Sigil.Accounts do
     end
   end
 
+  @doc "Resolves the active character for an account and optional session selection."
+  @spec active_character(Account.t(), String.t() | nil) :: Character.t() | nil
+  def active_character(%Account{characters: []}, _character_id), do: nil
+  def active_character(%Account{characters: [first | _rest]}, nil), do: first
+
+  def active_character(%Account{characters: characters}, character_id)
+      when is_binary(character_id) do
+    Enum.find(characters, List.first(characters), &(&1.id == character_id))
+  end
+
   @doc "Refreshes a registered wallet from chain and broadcasts the updated account."
   @spec sync_from_chain(String.t(), options()) ::
           {:ok, Account.t()} | {:error, :not_found | Client.error_reason()}

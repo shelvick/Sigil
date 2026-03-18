@@ -4,6 +4,23 @@ if config_env() != :test do
   if eve_world = System.get_env("EVE_WORLD") do
     config :sigil, :eve_world, eve_world
   end
+
+  worlds = Application.get_env(:sigil, :eve_worlds, %{})
+  localnet = Map.get(worlds, "localnet", %{})
+
+  localnet =
+    case System.get_env("SUI_LOCALNET_PACKAGE_ID") do
+      nil -> localnet
+      id -> %{localnet | package_id: id}
+    end
+
+  localnet =
+    case System.get_env("SUI_LOCALNET_SIGIL_PACKAGE_ID") do
+      nil -> localnet
+      id -> %{localnet | sigil_package_id: id}
+    end
+
+  config :sigil, :eve_worlds, Map.put(worlds, "localnet", localnet)
 end
 
 if config_env() == :prod do

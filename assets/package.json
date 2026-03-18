@@ -1,0 +1,7 @@
+{
+  "name": "sigil-assets",
+  "private": true,
+  "dependencies": {
+    "@mysten/sui": "^1.0.0"
+  }
+}

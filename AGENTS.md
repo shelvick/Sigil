@@ -10,13 +10,13 @@ Tribe coordination tool for EVE Frontier. Manages diplomacy, infrastructure, and
 
 Monolithic Phoenix app with OTP supervision tree, domain-driven contexts, and dedicated Sui integration layer.
 
-- **Sui Integration** (`lib/sigil/sui/`): GraphQL client, BCS encoder, Ed25519 signer, transaction builder — pure Elixir interface to Sui blockchain
+- **Sui Integration** (`lib/sigil/sui/`): GraphQL client, BCS encoder, Ed25519 signer, transaction builder — pure Elixir interface to Sui blockchain. Planned: gRPC checkpoint stream for real-time event delivery (replaces polling for monitors)
 - **Static Data** (`lib/sigil/static_data/`): DETS-backed World API reference data (types, systems, constellations)
 - **Data Layer** (`lib/sigil/`): ETS cache for blockchain state, Ecto repo (deferred to alert persistence)
-- **Domain Contexts** (`lib/sigil/`): Accounts (wallet session + character lookup), Assemblies (assembly discovery + cached query); planned: Diplomacy, Alerts
-- **OTP Monitors** (`lib/sigil/game_state/`): On-demand linked StatePoller for assembly refresh; planned: DynamicSupervisor, alert engine
+- **Domain Contexts** (`lib/sigil/`): Accounts (wallet session + character lookup), Assemblies (assembly discovery + cached query), Tribes (automatic formation + member aggregation); planned: Diplomacy, Alerts
+- **OTP Monitors** (`lib/sigil/game_state/`): On-demand linked StatePoller for assembly refresh; planned: DynamicSupervisor, gRPC-fed assembly monitors, alert engine
 - **LiveView UI** (`lib/sigil_web/`): Dashboard (wallet form + assembly manifest), assembly detail views (5 types), EVE Frontier themed shell; planned: diplomacy editor, alert feed
-- **Move Contracts** (planned): StandingsTable, frontier_gate, frontier_turret
+- **Move Contracts**: StandingsTable + frontier_gate (published to testnet); planned: frontier_turret
 
 ## Key Directories
 
@@ -52,4 +52,5 @@ Monolithic Phoenix app with OTP supervision tree, domain-driven contexts, and de
 | `hammox` | Behaviour-enforced test mocks |
 | `jason` | JSON encoding/decoding |
 | `credo`, `dialyxir` | Static analysis + type checking |
+| `grpc`, `protobuf` | (planned) Sui gRPC checkpoint streaming for real-time monitors |
 

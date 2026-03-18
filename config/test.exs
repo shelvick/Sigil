@@ -20,7 +20,11 @@ config :sigil, :world_client, Sigil.StaticData.WorldClientMock
 config :sigil, :eve_world, "test"
 
 config :sigil, :eve_worlds, %{
-  "test" => %{package_id: "0xtest_world", graphql_url: "http://test.invalid/graphql"}
+  "test" => %{
+    package_id: "0xtest_world",
+    sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
+    graphql_url: "http://test.invalid/graphql"
+  }
 }
 
 config :sigil, :start_static_data, false

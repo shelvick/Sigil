@@ -5,8 +5,10 @@
  * connects, signs a server-provided challenge nonce via signPersonalMessage,
  * and submits the signed payload to POST /session via hidden form.
  *
- * Zero npm dependencies — uses raw Wallet Standard browser events.
+ * Uses raw Wallet Standard browser events + @mysten/sui for Transaction building.
  */
+import { Transaction } from "@mysten/sui/transactions"
+
 const DISCOVERY_TIMEOUT_MS = 500
 
 const WalletConnect = {
@@ -14,6 +16,7 @@ const WalletConnect = {
     this.wallets = []
     this.selectedWallet = null
     this.currentAccount = null
+    this.pendingAccounts = null
     this._onRegister = null
     this._discoveryTimer = null
     this._walletUnsubscribe = null
@@ -26,6 +29,14 @@ const WalletConnect = {
 
     this.handleEvent("request_sign", ({ nonce, message }) => {
       this._signChallenge(nonce, message)
+    })
+
+    this.handleEvent("select_account", ({ index }) => {
+      this._selectAccount(index)
+    })
+
+    this.handleEvent("request_sign_transaction", ({ tx_bytes }) => {
+      this._signTransaction(tx_bytes)
     })
   },
 
@@ -93,6 +104,10 @@ const WalletConnect = {
 
   _finalizeDiscovery() {
     this._pushWalletList()
+    // Auto-connect for transaction signing on non-dashboard pages
+    if (this.el.id !== "wallet-connect" && this.wallets.length >= 1 && !this.selectedWallet) {
+      this._silentConnect(0)
+    }
   },
 
   _pushWalletList() {
@@ -133,9 +148,8 @@ const WalletConnect = {
       }
 
       this.selectedWallet = wallet
-      this.currentAccount = accounts[0]
 
-      // Subscribe to wallet events for disconnect detection
+      // Subscribe to wallet events for disconnect and account change detection
       const eventsFeature = wallet.features && wallet.features["standard:events"]
       if (eventsFeature) {
         this._walletUnsubscribe = eventsFeature.on("change", ({ accounts: updated }) => {
@@ -143,17 +157,48 @@ const WalletConnect = {
             this.pushEvent("wallet_error", { reason: "Wallet disconnected" })
             this.selectedWallet = null
             this.currentAccount = null
+          } else if (this.currentAccount) {
+            const stillPresent = updated.some(a => a.address === this.currentAccount.address)
+            if (!stillPresent) {
+              this.pushEvent("wallet_account_changed", {})
+            }
           }
         })
       }
 
-      this.pushEvent("wallet_connected", {
-        address: this.currentAccount.address,
-        name: wallet.name
-      })
+      if (accounts.length === 1) {
+        // Single account — auto-select
+        this.currentAccount = accounts[0]
+        this.pushEvent("wallet_connected", {
+          address: this.currentAccount.address,
+          name: wallet.name
+        })
+      } else {
+        // Multiple accounts — send list to server for account picker
+        this.pendingAccounts = accounts
+        this.pushEvent("wallet_accounts", {
+          accounts: accounts.map(a => ({
+            address: a.address,
+            label: a.label || null
+          }))
+        })
+      }
     } catch (err) {
       const message = err && err.message ? err.message : "Connection rejected"
       this.pushEvent("wallet_error", { reason: message })
+    }
+  },
+
+  _selectAccount(index) {
+    if (this.pendingAccounts && this.pendingAccounts[index]) {
+      this.currentAccount = this.pendingAccounts[index]
+      this.pushEvent("wallet_connected", {
+        address: this.currentAccount.address,
+        name: this.selectedWallet.name
+      })
+      this.pendingAccounts = null
+    } else {
+      this.pushEvent("wallet_error", { reason: "Selected account not available" })
     }
   },
 
@@ -190,6 +235,72 @@ const WalletConnect = {
       const message =
         err && err.message ? err.message : "User rejected signing request"
       this.pushEvent("wallet_error", { reason: message })
+    }
+  },
+
+  async _silentConnect(index) {
+    const wallet = this.wallets[index]
+    if (!wallet) return
+
+    const connectFeature = wallet.features && wallet.features["standard:connect"]
+    if (!connectFeature) return
+
+    try {
+      const result = await connectFeature.connect()
+      const accounts = result.accounts || []
+      if (accounts.length > 0) {
+        this.selectedWallet = wallet
+        this.currentAccount = accounts[0]
+      }
+    } catch (_e) {
+      // Silent — signing will show an error if wallet isn't available
+    }
+  },
+
+  async _signTransaction(txBytesBase64) {
+    if (!this.selectedWallet || !this.currentAccount) {
+      this.pushEvent("transaction_error", { reason: "No wallet connected" })
+      return
+    }
+
+    const signFeature =
+      this.selectedWallet.features &&
+      this.selectedWallet.features["sui:signTransaction"]
+    if (!signFeature) {
+      this.pushEvent("transaction_error", {
+        reason: "Wallet does not support transaction signing"
+      })
+      return
+    }
+
+    try {
+      const raw = atob(txBytesBase64)
+      const kindBytes = new Uint8Array(raw.length)
+      for (let i = 0; i < raw.length; i++) {
+        kindBytes[i] = raw.charCodeAt(i)
+      }
+
+      const transaction = Transaction.fromKind(kindBytes)
+      transaction.setSender(this.currentAccount.address)
+
+      const chain =
+        this.el.dataset.suiChain ||
+        (this.currentAccount.chains && this.currentAccount.chains[0]) ||
+        "sui:testnet"
+      const result = await signFeature.signTransaction({
+        transaction,
+        account: this.currentAccount,
+        chain
+      })
+
+      this.pushEvent("transaction_signed", {
+        bytes: result.bytes,
+        signature: result.signature
+      })
+    } catch (err) {
+      const reason =
+        err && err.message ? err.message : "User rejected transaction"
+      this.pushEvent("transaction_error", { reason })
     }
   },
 

@@ -9,7 +9,7 @@ defmodule SigilWeb.RouterWalletSessionTest do
   import Hammox
 
   alias Sigil.{Accounts.Account, Cache}
-  alias Sigil.Sui.Types.Assembly
+  alias Sigil.Sui.Types.{Assembly, Character}
 
   @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
 
@@ -35,6 +35,64 @@ defmodule SigilWeb.RouterWalletSessionTest do
     test "/ routes to DashboardLive", %{conn: conn} do
       assert {:ok, view, _html} = live(conn, "/")
       assert view.module == SigilWeb.DashboardLive
+    end
+
+    test "/tribe/:tribe_id routes to TribeOverviewLive", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      char = %Character{
+        id: "0xchar-tribe42",
+        key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+        tribe_id: 42,
+        character_address: wallet_address,
+        metadata: nil,
+        owner_cap_id: "0xowner"
+      }
+
+      account = %Account{address: wallet_address, characters: [char], tribe_id: 42}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:ok, view, _html} = live(conn, "/tribe/42")
+      assert view.module == SigilWeb.TribeOverviewLive
+    end
+
+    test "/tribe/:tribe_id/diplomacy routes to DiplomacyLive", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      char = %Character{
+        id: "0xchar-tribe42",
+        key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+        tribe_id: 42,
+        character_address: wallet_address,
+        metadata: nil,
+        owner_cap_id: "0xowner"
+      }
+
+      account = %Account{address: wallet_address, characters: [char], tribe_id: 42}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:ok, view, _html} = live(conn, "/tribe/42/diplomacy")
+      assert view.module == SigilWeb.DiplomacyLive
     end
 
     test "/assembly/:id routes to AssemblyDetailLive", %{
@@ -143,6 +201,55 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert view.module == SigilWeb.AssemblyDetailLive
       refute html =~ "Assembly not found"
     end
+
+    test "PUT /session/character/:character_id routes to SessionController", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      first =
+        character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => wallet_address})
+
+      second =
+        character_fixture(%{
+          "id" => uid("0xcharacter-2"),
+          "character_address" => wallet_address,
+          "tribe_id" => "271"
+        })
+
+      account = account_fixture(wallet_address, [first, second])
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        conn
+        |> init_test_session(%{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+        |> put("/session/character/#{second.id}")
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert get_session(conn, :active_character_id) == second.id
+      refute get_session(conn, :active_character_id) == first.id
+    end
+
+    test "character switch route enforces CSRF protection" do
+      assert %{
+               plug: SigilWeb.SessionController,
+               plug_opts: :update_character,
+               route: "/session/character/:character_id",
+               pipe_through: [:browser]
+             } =
+               Phoenix.Router.route_info(
+                 SigilWeb.Router,
+                 "PUT",
+                 "/session/character/0xcharacter-1",
+                 "localhost"
+               )
+    end
   end
 
   describe "WalletSession.on_mount/4" do
@@ -224,6 +331,96 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert socket.assigns.current_account == nil
       assert socket.assigns.cache_tables == cache_tables
       assert socket.assigns.pubsub == Sigil.PubSub
+    end
+
+    test "on_mount assigns active_character matching session character_id", %{
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      first =
+        character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => wallet_address})
+
+      second =
+        character_fixture(%{
+          "id" => uid("0xcharacter-2"),
+          "character_address" => wallet_address,
+          "tribe_id" => "271"
+        })
+
+      account = account_fixture(wallet_address, [first, second])
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      assert {:cont, socket} =
+               SigilWeb.WalletSession.on_mount(
+                 :default,
+                 %{},
+                 %{
+                   "wallet_address" => wallet_address,
+                   "active_character_id" => second.id,
+                   "cache_tables" => cache_tables,
+                   "pubsub" => pubsub
+                 },
+                 socket_fixture()
+               )
+
+      assert socket.assigns.current_account == account
+      assert socket.assigns.active_character == second
+      assert socket.assigns.cache_tables == cache_tables
+      assert socket.assigns.pubsub == pubsub
+    end
+
+    test "on_mount assigns first character when no active_character_id in session", %{
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      first =
+        character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => wallet_address})
+
+      second =
+        character_fixture(%{
+          "id" => uid("0xcharacter-2"),
+          "character_address" => wallet_address,
+          "tribe_id" => "271"
+        })
+
+      account = account_fixture(wallet_address, [first, second])
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      assert {:cont, socket} =
+               SigilWeb.WalletSession.on_mount(
+                 :default,
+                 %{},
+                 %{
+                   "wallet_address" => wallet_address,
+                   "cache_tables" => cache_tables,
+                   "pubsub" => pubsub
+                 },
+                 socket_fixture()
+               )
+
+      assert socket.assigns.current_account == account
+      assert socket.assigns.active_character == first
+      refute socket.assigns.active_character == second
+    end
+
+    test "on_mount assigns nil active_character when not authenticated", %{
+      cache_tables: cache_tables,
+      pubsub: pubsub
+    } do
+      assert {:cont, socket} =
+               SigilWeb.WalletSession.on_mount(
+                 :default,
+                 %{},
+                 %{"cache_tables" => cache_tables, "pubsub" => pubsub},
+                 socket_fixture()
+               )
+
+      assert socket.assigns.current_account == nil
+      assert socket.assigns.active_character == nil
+      assert socket.assigns.cache_tables == cache_tables
+      assert socket.assigns.pubsub == pubsub
     end
   end
 
@@ -501,6 +698,85 @@ defmodule SigilWeb.RouterWalletSessionTest do
       refute get_session(conn, :wallet_address) == wallet_address
     end
 
+    @tag :acceptance
+    test "PUT /session/character stores active_character_id and redirects", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      first =
+        character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => wallet_address})
+
+      second =
+        character_fixture(%{
+          "id" => uid("0xcharacter-2"),
+          "character_address" => wallet_address,
+          "tribe_id" => "271"
+        })
+
+      account = account_fixture(wallet_address, [first, second])
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        conn
+        |> init_test_session(%{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+        |> put("/session/character/#{second.id}")
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert get_session(conn, :active_character_id) == second.id
+      refute get_session(conn, :active_character_id) == first.id
+    end
+
+    test "PUT /session/character ignores character_id not in account", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      first =
+        character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => wallet_address})
+
+      account = account_fixture(wallet_address, [first])
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        conn
+        |> init_test_session(%{
+          "wallet_address" => wallet_address,
+          "active_character_id" => first.id,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+        |> put("/session/character/0xmissing-character")
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert get_session(conn, :active_character_id) == first.id
+      refute get_session(conn, :active_character_id) == "0xmissing-character"
+    end
+
+    test "PUT /session/character redirects without session when not authenticated", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub
+    } do
+      conn =
+        conn
+        |> init_test_session(%{"cache_tables" => cache_tables, "pubsub" => pubsub})
+        |> put("/session/character/0xmissing-character")
+
+      assert conn.status == 302
+      assert redirected_to(conn) == "/"
+      assert get_session(conn, :wallet_address) == nil
+      assert get_session(conn, :active_character_id) == nil
+    end
+
     test "DELETE /session clears the session and redirects home", %{
       conn: conn,
       wallet_address: wallet_address
@@ -515,12 +791,6 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert get_session(conn, :wallet_address) == nil
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == nil
     end
-
-    # Note: The nil cache tables fallback path (resolve_cache_tables returning nil)
-    # cannot be directly tested because the application supervisor starts a real
-    # Cache process in the test environment. The path is: resolve_cache_tables/1
-    # returns nil → with %{} = tables <- nil fails → nil -> clause returns
-    # friendly_error(:cache_unavailable). This is a boot-time edge case.
   end
 
   defp socket_fixture do
@@ -571,6 +841,38 @@ defmodule SigilWeb.RouterWalletSessionTest do
   end
 
   defp challenge_message(nonce), do: "Sign in to Sigil: #{nonce}"
+
+  defp account_fixture(address, characters) do
+    %Account{address: address, characters: characters, tribe_id: first_tribe_id(characters)}
+  end
+
+  defp character_fixture(overrides) do
+    overrides
+    |> character_json()
+    |> Character.from_json()
+  end
+
+  defp first_tribe_id([%Character{tribe_id: tribe_id} | _rest]), do: tribe_id
+  defp first_tribe_id([]), do: nil
+
+  defp character_json(overrides) do
+    Map.merge(
+      %{
+        "id" => uid("0xcharacter"),
+        "key" => %{"item_id" => "10", "tenant" => "0xcharacter-tenant"},
+        "tribe_id" => "314",
+        "character_address" => "0xcharacter-address",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-metadata",
+          "name" => "Pilot One",
+          "description" => "Character metadata",
+          "url" => "https://example.test/characters/1"
+        },
+        "owner_cap_id" => uid("0xcharacter-owner")
+      },
+      overrides
+    )
+  end
 
   defp assembly_json do
     %{

@@ -158,14 +158,12 @@ defmodule Sigil.Tribes do
     opts
     |> account_table()
     |> Cache.all()
-    |> Enum.reduce(%{}, fn
-      %Account{address: address, tribe_id: ^tribe_id, characters: characters}, acc ->
-        Enum.reduce(characters, acc, fn %Character{id: character_id}, character_acc ->
-          Map.put(character_acc, character_id, address)
-        end)
-
-      %Account{}, acc ->
-        acc
+    |> Enum.reduce(%{}, fn %Account{address: address, characters: characters}, acc ->
+      characters
+      |> Enum.filter(&(&1.tribe_id == tribe_id))
+      |> Enum.reduce(acc, fn %Character{id: character_id}, character_acc ->
+        Map.put(character_acc, character_id, address)
+      end)
     end)
   end
 

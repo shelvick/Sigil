@@ -9,6 +9,8 @@
 - `Sigil.Sui.ZkLoginVerifier` — Challenge nonce lifecycle + zkLogin signature verification. Pure function module over injected ETS + Sui client
 - `Sigil.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
 - `Sigil.Sui.TransactionBuilder.PTB` — BCS encoding for all PTB struct types
+- `Sigil.Sui.TxDiplomacy` — PTB construction for StandingsTable operations (create, set_standing, batch, pilot, default)
+- `Sigil.Sui.Base58` — Pure Base58 encoder/decoder for Sui digest strings
 - `Sigil.Sui.Types` — Namespace for Sui type structs
 - `Sigil.Sui.Types.Parser` — Shared scalar parsers (integer!, bytes!, uid!, status!, optional)
 - `Sigil.Sui.Types.TenantItemId` — Tenant-scoped item identifier
@@ -70,6 +72,18 @@
 - `encode_programmable_transaction/1`: Inputs vector + commands vector
 - `encode_transaction_data_v1/1`: Kind + sender + gas_data + expiration
 - `encode_transaction_data/1`: Outer enum wrapper (V1 = variant 0)
+
+### TxDiplomacy (tx_diplomacy.ex)
+- `build_create_table/1`: tx_opts → build_opts (standings_table::create)
+- `build_set_standing/4`: table_ref × tribe_id × standing × tx_opts → build_opts
+- `build_set_default_standing/3`: table_ref × standing × tx_opts → build_opts
+- `build_set_pilot_standing/4`: table_ref × pilot_bytes × standing × tx_opts → build_opts
+- `build_batch_set_standings/3`: table_ref × [{tribe_id, standing}] × tx_opts → build_opts
+- `build_batch_set_pilot_standings/3`: table_ref × [{pilot_bytes, standing}] × tx_opts → build_opts
+
+### Base58 (base58.ex)
+- `decode!/1`: Base58 string → binary (raises on invalid)
+- `decode/1`: Base58 string → {:ok, binary} | {:error, :invalid_base58}
 
 ### Types (types/*.ex)
 - Each struct: `from_json/1` parses Sui GraphQL JSON into typed Elixir struct

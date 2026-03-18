@@ -8,6 +8,7 @@ defmodule Sigil.AccountsTest do
   import Hammox
 
   alias Sigil.{Accounts, Cache}
+  alias Sigil.Accounts.Account
   alias Sigil.Sui.Types.Character
 
   @world_package_id "0xtest_world"
@@ -380,6 +381,51 @@ defmodule Sigil.AccountsTest do
     end
   end
 
+  describe "active_character/2" do
+    test "active_character/2 returns character matching the given ID" do
+      address = wallet_address()
+      first = character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => address})
+
+      second =
+        character_fixture(%{
+          "id" => uid("0xcharacter-2"),
+          "character_address" => address,
+          "tribe_id" => "271"
+        })
+
+      account = account_fixture(address, [first, second])
+
+      assert Accounts.active_character(account, second.id) == second
+    end
+
+    test "active_character/2 returns first character when character_id is nil" do
+      address = wallet_address()
+      first = character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => address})
+      second = character_fixture(%{"id" => uid("0xcharacter-2"), "character_address" => address})
+
+      account = account_fixture(address, [first, second])
+
+      assert Accounts.active_character(account, nil) == first
+    end
+
+    test "active_character/2 falls back to first character when ID not found" do
+      address = wallet_address()
+      first = character_fixture(%{"id" => uid("0xcharacter-1"), "character_address" => address})
+      second = character_fixture(%{"id" => uid("0xcharacter-2"), "character_address" => address})
+
+      account = account_fixture(address, [first, second])
+
+      assert Accounts.active_character(account, "0xmissing-character") == first
+    end
+
+    test "active_character/2 returns nil when account has no characters" do
+      account = %Account{address: wallet_address(), characters: [], tribe_id: nil}
+
+      assert Accounts.active_character(account, nil) == nil
+      assert Accounts.active_character(account, "0xmissing-character") == nil
+    end
+  end
+
   @tag :acceptance
   test "full registration flow: register -> get_account returns complete data", %{
     tables: tables,
@@ -431,6 +477,19 @@ defmodule Sigil.AccountsTest do
       "0xgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
     ]
   end
+
+  defp account_fixture(address, characters) do
+    %Account{address: address, characters: characters, tribe_id: first_tribe_id(characters)}
+  end
+
+  defp character_fixture(overrides) do
+    overrides
+    |> character_json()
+    |> Character.from_json()
+  end
+
+  defp first_tribe_id([%Character{tribe_id: tribe_id} | _rest]), do: tribe_id
+  defp first_tribe_id([]), do: nil
 
   defp character_page(characters) do
     %{data: characters, has_next_page: false, end_cursor: nil}
