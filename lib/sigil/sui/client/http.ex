@@ -17,6 +17,11 @@ defmodule Sigil.Sui.Client.HTTP do
       address
       version
       digest
+      owner {
+        ... on Shared {
+          initialSharedVersion
+        }
+      }
       asMoveObject {
         contents {
           json
@@ -133,13 +138,14 @@ defmodule Sigil.Sui.Client.HTTP do
               "version" => version,
               "digest" => digest_b58,
               "asMoveObject" => %{"contents" => %{"json" => object_json}}
-            } = _object
+            } = object
         }
         when is_binary(address) and is_binary(digest_b58) and is_map(object_json) ->
           with {:ok, id_bytes} <- decode_sui_address(address),
                {:ok, <<_::binary-size(32)>> = digest_bytes} <- base58_decode(digest_b58),
                {:ok, version_int} <- parse_version(version) do
-            {:ok, %{json: object_json, ref: {id_bytes, version_int, digest_bytes}}}
+            json = merge_owner_metadata(object_json, object)
+            {:ok, %{json: json, ref: {id_bytes, version_int, digest_bytes}}}
           else
             _ -> {:error, :invalid_response}
           end
@@ -319,6 +325,16 @@ defmodule Sigil.Sui.Client.HTTP do
       {:error, :invalid_response} = error -> error
     end
   end
+
+  # -- Owner metadata merging for shared objects --
+
+  @spec merge_owner_metadata(map(), map()) :: map()
+  defp merge_owner_metadata(json, %{"owner" => %{"initialSharedVersion" => version}})
+       when is_binary(version) or is_integer(version) do
+    Map.put(json, "shared", %{"initialSharedVersion" => to_string(version)})
+  end
+
+  defp merge_owner_metadata(json, _object), do: json
 
   # -- Address, version & digest decoding for object refs --
 

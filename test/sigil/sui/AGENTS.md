@@ -11,6 +11,8 @@
 | `types_test.exs` | `Sigil.Sui.TypesTest` | 13 | All struct from_json, optionals, vectors, scalars, validation |
 | `transaction_builder_ptb_test.exs` | `PTBTest` | 20 | All PTB BCS encoders (argument, call_arg, object_ref, gas_data, expiration, type_tag, struct_tag, move_call, command, programmable_transaction, transaction_data) |
 | `transaction_builder_test.exs` | `TransactionBuilderTest` | 14 | build!/1, build/1, digest/1, execute/3, reference vector |
+| `tx_diplomacy_test.exs` | `Sigil.Sui.TxDiplomacyTest` | 11 | All builder functions, package ID, shared refs, validation, TransactionBuilder integration |
+| `tx_custodian_test.exs` | `Sigil.Sui.TxCustodianTest` | 19 | All 11 builders, package ID, mutable/immutable refs, standing/address/batch validation, TransactionBuilder integration |
 
 ## Patterns
 

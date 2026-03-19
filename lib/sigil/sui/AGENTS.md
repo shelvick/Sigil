@@ -11,6 +11,7 @@
 - `Sigil.Sui.TransactionBuilder.PTB` — BCS encoding for all PTB struct types
 - `Sigil.Sui.TxDiplomacy` — PTB construction for StandingsTable operations (create, set_standing, batch, pilot, default)
 - `Sigil.Sui.TxGateExtension` — PTB construction for gate extension authorization (3-command borrow/authorize/return pattern)
+- `Sigil.Sui.TxCustodian` — PTB construction for TribeCustodian operations (governance + standings upsert/read)
 - `Sigil.Sui.Base58` — Pure Base58 encoder/decoder for Sui digest strings
 - `Sigil.Sui.Types` — Namespace for Sui type structs
 - `Sigil.Sui.Types.Parser` — Shared scalar parsers (integer!, bytes!, uid!, status!, optional)
@@ -84,6 +85,19 @@
 
 ### TxGateExtension (tx_gate_extension.ex)
 - `build_authorize_extension/3`: gate_ref × owner_cap_ref × character_ref → kind_opts (3-command PTB: borrow_owner_cap, authorize_extension, return_owner_cap)
+
+### TxCustodian (tx_custodian.ex)
+- `build_create_custodian/3`: registry_ref × character_ref × tx_opts → builder_opts
+- `build_join/3`: custodian_ref × character_ref × tx_opts → builder_opts
+- `build_vote_leader/4`: custodian_ref × character_ref × candidate × tx_opts → builder_opts
+- `build_claim_leadership/3`: custodian_ref × character_ref × tx_opts → builder_opts
+- `build_add_operator/4`: custodian_ref × character_ref × operator × tx_opts → builder_opts
+- `build_remove_operator/4`: custodian_ref × character_ref × operator × tx_opts → builder_opts
+- `build_set_standing/5`: custodian_ref × character_ref × tribe_id × standing × tx_opts → builder_opts
+- `build_set_default_standing/4`: custodian_ref × character_ref × standing × tx_opts → builder_opts
+- `build_set_pilot_standing/5`: custodian_ref × character_ref × pilot × standing × tx_opts → builder_opts
+- `build_batch_set_standings/4`: custodian_ref × character_ref × [{tribe_id, standing}] × tx_opts → builder_opts
+- `build_batch_set_pilot_standings/4`: custodian_ref × character_ref × [{pilot, standing}] × tx_opts → builder_opts
 
 ### Base58 (base58.ex)
 - `decode!/1`: Base58 string → binary (raises on invalid)

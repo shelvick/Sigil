@@ -8,18 +8,13 @@ defmodule SigilWeb.AssemblyDetailLive do
   import SigilWeb.AssemblyHelpers, except: [assembly_name: 1]
   import SigilWeb.DiplomacyLive.Components, only: [signing_overlay: 1]
 
+  import SigilWeb.TransactionHelpers, only: [localnet?: 0, sui_chain: 0]
+
   alias Sigil.Assemblies
   alias Sigil.GameState.Poller
   alias Sigil.Sui.Types.{Assembly, Character, Gate, NetworkNode, StorageUnit, Turret}
 
   @assembly_topic_prefix "assembly:"
-  @sui_chains %{
-    "stillness" => "sui:testnet",
-    "utopia" => "sui:testnet",
-    "internal" => "sui:testnet",
-    "localnet" => "sui:testnet",
-    "mainnet" => "sui:mainnet"
-  }
 
   @doc """
   Loads the requested cached assembly, subscribes for updates, and starts a linked poller.
@@ -70,10 +65,7 @@ defmodule SigilWeb.AssemblyDetailLive do
            assembly_opts(socket)
          ) do
       {:ok, %{tx_bytes: tx_bytes}} ->
-        {:noreply,
-         socket
-         |> assign(signing_state: :signing_tx)
-         |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})}
+        {:noreply, enter_signing(socket, tx_bytes)}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, inspect(reason))}
@@ -437,10 +429,31 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   defp assembly_name(%{id: _assembly_id}), do: "Unnamed"
 
-  @spec sui_chain() :: String.t()
-  defp sui_chain do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    Map.get(@sui_chains, world, "sui:testnet")
+  @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
+  defp enter_signing(socket, tx_bytes) do
+    if localnet?() do
+      sign_and_submit_locally(socket, tx_bytes)
+    else
+      socket
+      |> assign(signing_state: :signing_tx)
+      |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})
+    end
+  end
+
+  @spec sign_and_submit_locally(Phoenix.LiveView.Socket.t(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  defp sign_and_submit_locally(socket, kind_bytes) do
+    case Assemblies.sign_and_submit_extension_locally(kind_bytes, assembly_opts(socket)) do
+      {:ok, %{digest: _digest}} ->
+        socket
+        |> put_flash(:info, "Extension authorized (local signing)")
+        |> assign(signing_state: :submitted)
+
+      {:error, reason} ->
+        socket
+        |> put_flash(:error, "Transaction failed: #{inspect(reason)}")
+        |> assign(signing_state: :idle)
+    end
   end
 
   @spec assembly_topic(String.t()) :: String.t()

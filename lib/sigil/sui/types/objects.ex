@@ -56,9 +56,14 @@ defmodule Sigil.Sui.Types.Gate do
       location: json |> Map.fetch!("location") |> Location.from_json(),
       energy_source_id: Map.get(json, "energy_source_id"),
       metadata: json |> Map.get("metadata") |> Parser.optional(&Metadata.from_json/1),
-      extension: Map.get(json, "extension")
+      extension: json |> Map.get("extension") |> parse_extension()
     }
   end
+
+  @spec parse_extension(term()) :: String.t() | nil
+  defp parse_extension(%{"name" => name}) when is_binary(name), do: name
+  defp parse_extension(value) when is_binary(value), do: value
+  defp parse_extension(_other), do: nil
 end
 
 defmodule Sigil.Sui.Types.Assembly do
@@ -265,9 +270,14 @@ defmodule Sigil.Sui.Types.Turret do
       location: json |> Map.fetch!("location") |> Location.from_json(),
       energy_source_id: Map.get(json, "energy_source_id"),
       metadata: json |> Map.get("metadata") |> Parser.optional(&Metadata.from_json/1),
-      extension: Map.get(json, "extension")
+      extension: json |> Map.get("extension") |> parse_extension()
     }
   end
+
+  @spec parse_extension(term()) :: String.t() | nil
+  defp parse_extension(%{"name" => name}) when is_binary(name), do: name
+  defp parse_extension(value) when is_binary(value), do: value
+  defp parse_extension(_other), do: nil
 end
 
 defmodule Sigil.Sui.Types.StorageUnit do
@@ -328,7 +338,12 @@ defmodule Sigil.Sui.Types.StorageUnit do
       inventory_keys: Map.fetch!(json, "inventory_keys"),
       energy_source_id: Map.get(json, "energy_source_id"),
       metadata: json |> Map.get("metadata") |> Parser.optional(&Metadata.from_json/1),
-      extension: Map.get(json, "extension")
+      extension: json |> Map.get("extension") |> parse_extension()
     }
   end
+
+  @spec parse_extension(term()) :: String.t() | nil
+  defp parse_extension(%{"name" => name}) when is_binary(name), do: name
+  defp parse_extension(value) when is_binary(value), do: value
+  defp parse_extension(_other), do: nil
 end

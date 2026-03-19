@@ -850,6 +850,32 @@ defmodule Sigil.AssembliesTest do
     end
   end
 
+  describe "sign_and_submit_extension_locally/2" do
+    test "returns error when no signer key configured", %{tables: tables} do
+      kind_bytes = Base.encode64("test-kind-bytes")
+
+      assert {:error, :no_signer_key} =
+               Assemblies.sign_and_submit_extension_locally(kind_bytes, tables: tables)
+    end
+
+    test "preserves pending tx on error", %{tables: tables} do
+      gate_id = hex_id(70)
+      kind_bytes = Base.encode64("pending-local-kind")
+
+      Cache.put(
+        tables.assemblies,
+        {:pending_ext_tx, kind_bytes},
+        {:authorize_gate_extension, gate_id}
+      )
+
+      assert {:error, :no_signer_key} =
+               Assemblies.sign_and_submit_extension_locally(kind_bytes, tables: tables)
+
+      assert Cache.get(tables.assemblies, {:pending_ext_tx, kind_bytes}) ==
+               {:authorize_gate_extension, gate_id}
+    end
+  end
+
   @tag :acceptance
   test "full flow: build gate extension tx -> submit -> gate extension updated in cache", %{
     tables: tables,

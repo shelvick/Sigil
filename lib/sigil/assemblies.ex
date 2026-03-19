@@ -171,6 +171,23 @@ defmodule Sigil.Assemblies do
     end
   end
 
+  @doc "Signs and submits a gate extension transaction locally (no wallet). For localnet only."
+  @spec sign_and_submit_extension_locally(String.t(), options()) ::
+          {:ok, %{digest: String.t()}} | {:error, term()}
+  def sign_and_submit_extension_locally(kind_bytes_b64, opts)
+      when is_binary(kind_bytes_b64) and is_list(opts) do
+    alias Sigil.Diplomacy.LocalSigner
+
+    case LocalSigner.sign_and_submit(kind_bytes_b64) do
+      {:ok, digest} ->
+        apply_pending_extension_tx(opts, kind_bytes_b64)
+        {:ok, %{digest: digest}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   @doc "Submits a wallet-signed gate extension transaction and refreshes cache on success."
   @spec submit_signed_extension_tx(String.t(), String.t(), options()) ::
           {:ok, %{digest: String.t(), effects_bcs: String.t() | nil}}

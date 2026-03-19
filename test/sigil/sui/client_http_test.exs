@@ -144,6 +144,61 @@ defmodule Sigil.Sui.ClientHTTPTest do
       assert :ok = Req.Test.verify!(stub_name)
     end
 
+    test "merges initialSharedVersion from owner field for shared objects" do
+      stub_name = stub_name(:get_object_with_ref_shared)
+      object_json = %{"id" => "0xshared", "name" => "Shared Gate"}
+      digest_b58 = "11111111111111111111111111111111"
+
+      Req.Test.expect(stub_name, fn conn ->
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "address" => "0x" <> String.duplicate("cc", 32),
+              "version" => 10,
+              "digest" => digest_b58,
+              "owner" => %{"initialSharedVersion" => 5},
+              "asMoveObject" => %{"contents" => %{"json" => object_json}}
+            }
+          }
+        })
+      end)
+
+      assert {:ok, %{json: json}} =
+               ClientHTTP.get_object_with_ref("0xshared",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert json["shared"] == %{"initialSharedVersion" => "5"}
+      assert json["id"] == "0xshared"
+    end
+
+    test "does not merge owner metadata for non-shared objects" do
+      stub_name = stub_name(:get_object_with_ref_owned)
+      object_json = %{"id" => "0xowned", "name" => "Owned Cap"}
+      digest_b58 = "11111111111111111111111111111111"
+
+      Req.Test.expect(stub_name, fn conn ->
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "address" => "0x" <> String.duplicate("dd", 32),
+              "version" => 7,
+              "digest" => digest_b58,
+              "owner" => %{},
+              "asMoveObject" => %{"contents" => %{"json" => object_json}}
+            }
+          }
+        })
+      end)
+
+      assert {:ok, %{json: json}} =
+               ClientHTTP.get_object_with_ref("0xowned",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      refute Map.has_key?(json, "shared")
+    end
+
     test "returns not_found when object is null" do
       stub_name = stub_name(:get_object_with_ref_not_found)
 

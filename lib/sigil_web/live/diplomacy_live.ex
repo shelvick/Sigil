@@ -6,6 +6,10 @@ defmodule SigilWeb.DiplomacyLive do
   use SigilWeb, :live_view
 
   import SigilWeb.DiplomacyLive.Components
+
+  import SigilWeb.TransactionHelpers,
+    only: [localnet?: 0, sui_chain: 0, localnet_signer_address: 0]
+
   import SigilWeb.TribeHelpers, only: [authorize_tribe: 2]
 
   alias Sigil.{Cache, Diplomacy}
@@ -332,7 +336,7 @@ defmodule SigilWeb.DiplomacyLive do
     [
       tables: socket.assigns.cache_tables,
       pubsub: socket.assigns.pubsub,
-      sender: socket.assigns.current_account.address
+      sender: localnet_signer_address() || socket.assigns.current_account.address
     ]
   end
 
@@ -373,16 +377,6 @@ defmodule SigilWeb.DiplomacyLive do
 
   defp maybe_rediscover_tables(socket), do: socket
 
-  @spec localnet?() :: boolean()
-  defp localnet? do
-    Application.fetch_env!(:sigil, :eve_world) == "localnet"
-  end
-
-  @spec localnet_signer_address() :: String.t() | nil
-  defp localnet_signer_address do
-    if localnet?(), do: Sigil.Diplomacy.LocalSigner.signer_address()
-  end
-
   @spec build_set_standing(Phoenix.LiveView.Socket.t(), non_neg_integer(), non_neg_integer()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   defp build_set_standing(socket, tribe_id, standing) do
@@ -406,18 +400,4 @@ defmodule SigilWeb.DiplomacyLive do
   end
 
   defp valid_address?(_other), do: false
-
-  @sui_chains %{
-    "stillness" => "sui:testnet",
-    "utopia" => "sui:testnet",
-    "internal" => "sui:testnet",
-    "localnet" => "sui:testnet",
-    "mainnet" => "sui:mainnet"
-  }
-
-  @spec sui_chain() :: String.t()
-  defp sui_chain do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    Map.get(@sui_chains, world, "sui:testnet")
-  end
 end

@@ -118,6 +118,39 @@ defmodule Sigil.Sui.TypesTest do
     assert gate.extension == nil
   end
 
+  test "parses map-shaped extension (post-authorization chain format)" do
+    gate =
+      Types.Gate.from_json(
+        gate_json(%{
+          "extension" => %{
+            "name" =>
+              "acaf4b704a0c1e496b2e377101867baf80543dd6e5f1c87a4bd45463477e3681::frontier_gate::FrontierGateAuth"
+          }
+        })
+      )
+
+    assert gate.extension ==
+             "acaf4b704a0c1e496b2e377101867baf80543dd6e5f1c87a4bd45463477e3681::frontier_gate::FrontierGateAuth"
+
+    turret =
+      Types.Turret.from_json(
+        turret_json(%{
+          "extension" => %{"name" => "0xabc::turret_ext::TurretAuth"}
+        })
+      )
+
+    assert turret.extension == "0xabc::turret_ext::TurretAuth"
+
+    storage =
+      Types.StorageUnit.from_json(
+        storage_unit_json(%{
+          "extension" => %{"name" => "0xdef::storage_ext::StorageAuth"}
+        })
+      )
+
+    assert storage.extension == "0xdef::storage_ext::StorageAuth"
+  end
+
   test "parses present optional Metadata as nested struct" do
     metadata =
       Types.Assembly.from_json(assembly_json())
