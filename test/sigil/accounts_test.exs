@@ -11,7 +11,7 @@ defmodule Sigil.AccountsTest do
   alias Sigil.Accounts.Account
   alias Sigil.Sui.Types.Character
 
-  @world_package_id "0xtest_world"
+  @world_package_id "0x1111111111111111111111111111111111111111111111111111111111111111"
 
   setup :verify_on_exit!
 

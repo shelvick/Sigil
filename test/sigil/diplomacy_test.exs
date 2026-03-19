@@ -382,7 +382,7 @@ defmodule Sigil.DiplomacyTest do
                  sender: sender
                )
 
-      assert {:ok, %{digest: "set-standing-success"}} =
+      assert {:ok, %{digest: "set-standing-success", effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
                Diplomacy.submit_signed_transaction(tx_bytes, "wallet-signature",
                  tables: tables,
                  pubsub: pubsub,
@@ -518,7 +518,7 @@ defmodule Sigil.DiplomacyTest do
       {:ok, success_effects("acceptance-digest")}
     end)
 
-    assert {:ok, %{digest: "acceptance-digest"}} =
+    assert {:ok, %{digest: "acceptance-digest", effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
              Diplomacy.submit_signed_transaction(tx_bytes, "wallet-sig",
                tables: tables,
                pubsub: pubsub,
@@ -643,6 +643,7 @@ defmodule Sigil.DiplomacyTest do
 
   defp success_effects(digest) do
     %{
+      "bcs" => "dGVzdC1lZmZlY3Rz",
       "status" => "SUCCESS",
       "transaction" => %{"digest" => digest},
       "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}

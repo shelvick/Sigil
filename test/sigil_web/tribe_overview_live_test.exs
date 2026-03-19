@@ -610,7 +610,7 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   end
 
   defp character_type do
-    "0xtest_world::character::Character"
+    "0x1111111111111111111111111111111111111111111111111111111111111111::character::Character"
   end
 
   defp character_json(overrides \\ %{}) do

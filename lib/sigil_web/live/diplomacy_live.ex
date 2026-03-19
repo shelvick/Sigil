@@ -136,11 +136,19 @@ defmodule SigilWeb.DiplomacyLive do
     opts = diplomacy_opts(socket)
 
     case Diplomacy.submit_signed_transaction(tx_bytes, signature, opts) do
-      {:ok, %{digest: _digest}} ->
-        {:noreply,
-         socket
-         |> assign(page_state: :active, pending_tx_bytes: nil)
-         |> load_standings()}
+      {:ok, %{digest: _digest, effects_bcs: effects_bcs}} ->
+        socket =
+          socket
+          |> assign(page_state: :active, pending_tx_bytes: nil)
+          |> load_standings()
+
+        # Report effects back to wallet so it can update cached object versions
+        socket =
+          if effects_bcs,
+            do: push_event(socket, "report_transaction_effects", %{effects: effects_bcs}),
+            else: socket
+
+        {:noreply, socket}
 
       {:error, _reason} ->
         {:noreply,

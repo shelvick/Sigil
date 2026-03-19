@@ -55,6 +55,7 @@ defmodule Sigil.Sui.Client.HTTP do
   mutation ExecuteTransaction($tx: Base64!, $sigs: [Base64!]!) {
     executeTransaction(transactionDataBcs: $tx, signatures: $sigs) {
       effects {
+        bcs
         status
         transaction {
           digest

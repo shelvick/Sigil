@@ -9,7 +9,7 @@
 - `dashboard_live_test.exs` — 16 tests for UI_DashboardLive (R1-R18): wallet form, assembly table, types, status, fuel, row nav, PubSub, tribe nav link, empty/error states, acceptance
 - `tribe_overview_live_test.exs` — 14 tests for UI_TribeOverviewLive (R1-R14): auth, members, assemblies, standings summary, PubSub, acceptance
 - `diplomacy_live_test.exs` — 20 tests for UI_DiplomacyLive (R1-R20): page states, standings CRUD, pilot overrides, tx signing flow, PubSub, acceptance
-- `assembly_detail_live_test.exs` — 15 tests for UI_AssemblyDetailLive (R1-R13): all 5 type renderings, fuel/energy/connections panels, PubSub, redirect, back nav, edge cases, acceptance
+- `assembly_detail_live_test.exs` — 29 tests for UI_AssemblyDetailLive (R1-R27): all 5 type renderings, fuel/energy/connections panels, PubSub, redirect, back nav, gate extension management (authorize/sign/submit), wallet hook handlers, acceptance
 - `poller_test.exs` → in `test/sigil/game_state/` — 10 tests for PROC_StatePoller (R1-R10)
 
 ## Test Patterns
@@ -34,5 +34,5 @@
 | UI_DashboardLive | 16 | R1-R18 | R18 (wallet→dashboard) |
 | UI_TribeOverviewLive | 14 | R1-R14 | R1 (tribe overview) |
 | UI_DiplomacyLive | 20 | R1-R20 | R20 (standings flow) |
-| UI_AssemblyDetailLive | 15 | R1-R13 | R13 (wallet→detail) |
+| UI_AssemblyDetailLive | 29 | R1-R27 | R13 (wallet→detail), R22 (gate extension auth) |
 | PROC_StatePoller | 10 | R1-R10 | — |

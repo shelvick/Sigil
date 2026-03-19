@@ -45,5 +45,5 @@ sigil-*.tar
 /priv/static_data/*.dets
 
 # Docker environment (contains secrets)
-.env
+.env*
 node_modules/

@@ -590,6 +590,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
+         "bcs" => "dGVzdC1lZmZlY3Rz",
          "status" => "SUCCESS",
          "transaction" => %{"digest" => "success-digest"},
          "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
@@ -778,6 +779,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
+         "bcs" => "dGVzdC1lZmZlY3Rz",
          "status" => "SUCCESS",
          "transaction" => %{"digest" => "acceptance-flow-digest"},
          "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}

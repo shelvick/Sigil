@@ -11,7 +11,7 @@ defmodule SigilWeb.DashboardLiveTest do
   alias Sigil.Accounts.Account
   alias Sigil.Sui.Types.{Character, Gate, NetworkNode, Turret}
 
-  @world_package_id "0xtest_world"
+  @world_package_id "0x1111111111111111111111111111111111111111111111111111111111111111"
   @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
 
   setup :verify_on_exit!

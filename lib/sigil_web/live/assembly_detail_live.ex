@@ -6,12 +6,20 @@ defmodule SigilWeb.AssemblyDetailLive do
   use SigilWeb, :live_view
 
   import SigilWeb.AssemblyHelpers, except: [assembly_name: 1]
+  import SigilWeb.DiplomacyLive.Components, only: [signing_overlay: 1]
 
   alias Sigil.Assemblies
   alias Sigil.GameState.Poller
-  alias Sigil.Sui.Types.{Assembly, Gate, NetworkNode, StorageUnit, Turret}
+  alias Sigil.Sui.Types.{Assembly, Character, Gate, NetworkNode, StorageUnit, Turret}
 
   @assembly_topic_prefix "assembly:"
+  @sui_chains %{
+    "stillness" => "sui:testnet",
+    "utopia" => "sui:testnet",
+    "internal" => "sui:testnet",
+    "localnet" => "sui:testnet",
+    "mainnet" => "sui:mainnet"
+  }
 
   @doc """
   Loads the requested cached assembly, subscribes for updates, and starts a linked poller.
@@ -27,7 +35,9 @@ defmodule SigilWeb.AssemblyDetailLive do
             assembly: assembly,
             assembly_type: assembly_type(assembly),
             page_title: assembly_name(assembly),
-            poller: nil
+            poller: nil,
+            signing_state: :idle,
+            is_owner: owner?(socket, assembly_id)
           )
           |> maybe_subscribe(assembly_id)
           |> maybe_start_poller(assembly_id)
@@ -44,15 +54,88 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   @doc false
   @impl true
-  @spec handle_info({:assembly_updated, Assemblies.assembly()}, Phoenix.LiveView.Socket.t()) ::
+  @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def handle_info({:assembly_updated, assembly}, socket) do
+  def handle_event(
+        "authorize_extension",
+        _params,
+        %{
+          assigns: %{assembly: %Gate{id: gate_id}, active_character: %Character{id: character_id}}
+        } =
+          socket
+      ) do
+    case Assemblies.build_authorize_gate_extension_tx(
+           gate_id,
+           character_id,
+           assembly_opts(socket)
+         ) do
+      {:ok, %{tx_bytes: tx_bytes}} ->
+        {:noreply,
+         socket
+         |> assign(signing_state: :signing_tx)
+         |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, inspect(reason))}
+    end
+  end
+
+  def handle_event("authorize_extension", _params, socket) do
+    {:noreply, put_flash(socket, :error, "Reconnect your wallet")}
+  end
+
+  def handle_event("transaction_signed", %{"bytes" => tx_bytes, "signature" => signature}, socket) do
+    case Assemblies.submit_signed_extension_tx(tx_bytes, signature, assembly_opts(socket)) do
+      {:ok, %{effects_bcs: effects_bcs}} ->
+        socket =
+          socket
+          |> put_flash(:info, "Extension authorized successfully")
+          |> assign(signing_state: :submitted)
+
+        socket =
+          if effects_bcs,
+            do: push_event(socket, "report_transaction_effects", %{effects: effects_bcs}),
+            else: socket
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, inspect(reason))
+         |> assign(signing_state: :idle)}
+    end
+  end
+
+  def handle_event("transaction_error", %{"reason" => reason}, socket) do
     {:noreply,
-     assign(socket,
-       assembly: assembly,
-       assembly_type: assembly_type(assembly),
-       page_title: assembly_name(assembly)
-     )}
+     socket
+     |> put_flash(:error, reason)
+     |> assign(signing_state: :idle)}
+  end
+
+  # Ignore wallet discovery events — hook auto-connects silently
+  def handle_event("wallet_detected", _params, socket), do: {:noreply, socket}
+  def handle_event("wallet_error", _params, socket), do: {:noreply, socket}
+
+  @doc false
+  @impl true
+  @spec handle_info(term(), Phoenix.LiveView.Socket.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def handle_info(message, socket) do
+    case message do
+      {:assembly_updated, assembly} ->
+        {:noreply,
+         assign(socket,
+           assembly: assembly,
+           assembly_type: assembly_type(assembly),
+           page_title: assembly_name(assembly),
+           signing_state: reset_signing_state(socket.assigns.signing_state)
+         )}
+
+      _other ->
+        {:noreply, socket}
+    end
   end
 
   @doc """
@@ -62,6 +145,13 @@ defmodule SigilWeb.AssemblyDetailLive do
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
     ~H"""
+    <div
+      :if={@is_owner}
+      id={"wallet-hook-#{@assembly.id}"}
+      phx-hook="WalletConnect"
+      data-sui-chain={sui_chain()}
+      class="hidden"
+    ></div>
     <section class="px-4 py-12 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-5xl rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
         <div class="flex flex-col gap-6 border-b border-space-600/80 pb-8 md:flex-row md:items-start md:justify-between">
@@ -87,17 +177,52 @@ defmodule SigilWeb.AssemblyDetailLive do
         </div>
 
         <div class="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <.detail_card title="Owner Cap ID" value={truncate_or_placeholder(@assembly.owner_cap_id)} mono full_value={@assembly.owner_cap_id} />
+          <.detail_card
+            title="Owner Cap ID"
+            value={truncate_or_placeholder(@assembly.owner_cap_id)}
+            mono
+            full_value={@assembly.owner_cap_id}
+          />
           <.detail_card title="Type ID" value={to_string(@assembly.type_id)} mono />
-          <.detail_card title="Location Hash" value={format_location_hash(@assembly.location.location_hash)} mono full_value={Base.encode16(@assembly.location.location_hash, case: :lower)} />
-          <.detail_card title="Energy Source ID" value={truncate_or_placeholder(Map.get(@assembly, :energy_source_id))} mono full_value={Map.get(@assembly, :energy_source_id)} />
+          <.detail_card
+            title="Location Hash"
+            value={format_location_hash(@assembly.location.location_hash)}
+            mono
+            full_value={Base.encode16(@assembly.location.location_hash, case: :lower)}
+          />
+          <.detail_card
+            title="Energy Source ID"
+            value={truncate_or_placeholder(Map.get(@assembly, :energy_source_id))}
+            mono
+            full_value={Map.get(@assembly, :energy_source_id)}
+          />
         </div>
 
         <%= case @assembly_type do %>
           <% :gate -> %>
-            <div class="mt-8 grid gap-4 md:grid-cols-2">
-              <.detail_card title="Linked Gate ID" value={linked_gate_label(@assembly.linked_gate_id)} mono full_value={@assembly.linked_gate_id} />
-              <.detail_card title="Extension" value={extension_label(@assembly.extension)} mono full_value={@assembly.extension} />
+            <div class="mt-8 space-y-4">
+              <div class="grid gap-4 md:grid-cols-2">
+                <.detail_card
+                  title="Linked Gate ID"
+                  value={linked_gate_label(@assembly.linked_gate_id)}
+                  mono
+                  full_value={@assembly.linked_gate_id}
+                />
+                <.detail_card
+                  title="Extension"
+                  value={extension_label(@assembly.extension)}
+                  mono
+                  full_value={@assembly.extension}
+                />
+              </div>
+
+              <.gate_extension_panel
+                :if={@is_owner}
+                assembly={@assembly}
+                active_character={@active_character}
+              />
+
+              <.signing_overlay :if={@signing_state == :signing_tx} />
             </div>
 
           <% :turret -> %>
@@ -192,6 +317,42 @@ defmodule SigilWeb.AssemblyDetailLive do
     """
   end
 
+  attr :assembly, :map, required: true
+  attr :active_character, :map, default: nil
+
+  defp gate_extension_panel(assigns) do
+    ~H"""
+    <div class="rounded-2xl border border-quantum-400/30 bg-space-800/70 p-5">
+      <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Sigil Extension</p>
+
+          <%= if extension_active?(@assembly.extension) do %>
+            <p class="mt-3 text-sm font-semibold text-cream">Extension Active</p>
+            <p class="mt-2 break-all font-mono text-sm text-foreground"><%= @assembly.extension %></p>
+          <% else %>
+            <p class="mt-3 text-sm text-space-500">No extension configured</p>
+          <% end %>
+        </div>
+
+        <div class="flex flex-col items-start gap-3">
+          <%= if @active_character do %>
+            <button
+              type="button"
+              phx-click="authorize_extension"
+              class="inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
+            >
+              Authorize Sigil Extension
+            </button>
+          <% else %>
+            <p class="text-sm text-space-500">Reconnect your wallet</p>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   attr :title, :string, required: true
   attr :value, :string, required: true
   attr :full_value, :string, default: nil
@@ -241,6 +402,27 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   defp fetch_assembly(_assembly_id, _cache_tables), do: {:error, :not_found}
 
+  @spec owner?(Phoenix.LiveView.Socket.t(), String.t()) :: boolean()
+  defp owner?(socket, assembly_id) do
+    case {socket.assigns[:current_account], socket.assigns[:cache_tables]} do
+      {%{address: owner_address}, cache_tables}
+      when is_binary(owner_address) and is_map(cache_tables) ->
+        Assemblies.assembly_owned_by?(assembly_id, owner_address, tables: cache_tables)
+
+      _other ->
+        false
+    end
+  end
+
+  @spec assembly_opts(Phoenix.LiveView.Socket.t()) :: Assemblies.options()
+  defp assembly_opts(socket) do
+    [tables: socket.assigns.cache_tables, pubsub: socket.assigns.pubsub]
+  end
+
+  @spec reset_signing_state(atom()) :: atom()
+  defp reset_signing_state(:submitted), do: :idle
+  defp reset_signing_state(signing_state), do: signing_state
+
   @spec assembly_type(Assemblies.assembly()) ::
           :gate | :turret | :network_node | :storage_unit | :assembly
   defp assembly_type(%Gate{}), do: :gate
@@ -255,80 +437,10 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   defp assembly_name(%{id: _assembly_id}), do: "Unnamed"
 
-  @spec assembly_description(Assemblies.assembly()) :: String.t()
-  defp assembly_description(%{metadata: %{description: description}})
-       when is_binary(description) and byte_size(description) > 0,
-       do: description
-
-  defp assembly_description(_assembly), do: "No description provided"
-
-  @spec available_energy(Sigil.Sui.Types.EnergySource.t()) :: integer()
-  defp available_energy(energy_source) do
-    energy_source.current_energy_production - energy_source.total_reserved_energy
-  end
-
-  @spec energy_current_label(Sigil.Sui.Types.EnergySource.t()) :: String.t()
-  defp energy_current_label(%{max_energy_production: 0, current_energy_production: current}) do
-    "#{current} (N/A)"
-  end
-
-  defp energy_current_label(energy_source) do
-    percent =
-      div(energy_source.current_energy_production * 100, energy_source.max_energy_production)
-
-    "#{energy_source.current_energy_production} (#{percent}%)"
-  end
-
-  @spec format_burn_rate(non_neg_integer()) :: String.t()
-  defp format_burn_rate(rate_in_ms) when rate_in_ms >= 3_600_000 do
-    "#{div(rate_in_ms, 3_600_000)} per hour"
-  end
-
-  defp format_burn_rate(rate_in_ms) when rate_in_ms >= 60_000 do
-    "#{div(rate_in_ms, 60_000)} per minute"
-  end
-
-  defp format_burn_rate(rate_in_ms) do
-    "#{rate_in_ms} ms"
-  end
-
-  @spec format_timestamp(non_neg_integer(), boolean()) :: String.t()
-  defp format_timestamp(_timestamp, false), do: "Not burning"
-
-  defp format_timestamp(timestamp, true) when is_integer(timestamp) and timestamp > 0 do
-    case DateTime.from_unix(timestamp, :millisecond) do
-      {:ok, dt} -> Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S UTC")
-      {:error, _} -> Integer.to_string(timestamp)
-    end
-  end
-
-  defp format_timestamp(timestamp, true), do: Integer.to_string(timestamp)
-
-  @spec yes_no(boolean()) :: String.t()
-  defp yes_no(true), do: "Yes"
-  defp yes_no(false), do: "No"
-
-  @spec optional_integer(non_neg_integer() | nil) :: String.t()
-  defp optional_integer(nil), do: "Not set"
-  defp optional_integer(value), do: Integer.to_string(value)
-
-  @spec truncate_or_placeholder(String.t() | nil) :: String.t()
-  defp truncate_or_placeholder(nil), do: "Not set"
-  defp truncate_or_placeholder(value) when is_binary(value), do: truncate_id(value)
-
-  @spec linked_gate_label(String.t() | nil) :: String.t()
-  defp linked_gate_label(value) when is_binary(value) and byte_size(value) > 0, do: value
-  defp linked_gate_label(_value), do: "Not linked"
-
-  @spec extension_label(String.t() | nil) :: String.t()
-  defp extension_label(value) when is_binary(value) and byte_size(value) > 0, do: value
-  defp extension_label(_value), do: "None"
-
-  @spec format_location_hash(binary()) :: String.t()
-  defp format_location_hash(hash) when is_binary(hash) do
-    hash
-    |> Base.encode16(case: :lower)
-    |> truncate_or_placeholder()
+  @spec sui_chain() :: String.t()
+  defp sui_chain do
+    world = Application.fetch_env!(:sigil, :eve_world)
+    Map.get(@sui_chains, world, "sui:testnet")
   end
 
   @spec assembly_topic(String.t()) :: String.t()

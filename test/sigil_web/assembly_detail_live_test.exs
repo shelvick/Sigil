@@ -1,3 +1,35 @@
+defmodule SigilWeb.AssemblyDetailLiveIsolatedTestLive do
+  @moduledoc """
+  Test-only wrapper that mounts `SigilWeb.AssemblyDetailLive` through `live_isolated/3`.
+  """
+
+  use SigilWeb, :live_view
+
+  on_mount SigilWeb.WalletSession
+
+  @doc false
+  @impl true
+  def mount(_params, %{"assembly_id" => assembly_id} = session, socket) do
+    SigilWeb.AssemblyDetailLive.mount(%{"id" => assembly_id}, session, socket)
+  end
+
+  @doc false
+  @impl true
+  def render(assigns), do: SigilWeb.AssemblyDetailLive.render(assigns)
+
+  @doc false
+  @impl true
+  def handle_info(message, socket) do
+    SigilWeb.AssemblyDetailLive.handle_info(message, socket)
+  end
+
+  @doc false
+  @impl true
+  def handle_event(event, params, socket) do
+    apply(SigilWeb.AssemblyDetailLive, :handle_event, [event, params, socket])
+  end
+end
+
 defmodule SigilWeb.AssemblyDetailLiveTest do
   @moduledoc """
   Covers assembly detail rendering, updates, and authenticated navigation flow.
@@ -40,10 +72,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
 
     assert {:ok, _view, html} =
-             live(
-               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
-               "/assembly/#{gate.id}"
-             )
+             isolated_detail_live(conn, gate.id, wallet_address, cache_tables, pubsub)
 
     assert html =~ "Assembly uplink"
     assert html =~ "Gate"
@@ -197,10 +226,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
 
     assert {:ok, _view, html} =
-             live(
-               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
-               "/assembly/#{gate.id}"
-             )
+             isolated_detail_live(conn, gate.id, wallet_address, cache_tables, pubsub)
 
     assert html =~ gate.id
     assert html =~ "online"
@@ -315,10 +341,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
 
     assert {:ok, _view, html} =
-             live(
-               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
-               "/assembly/#{gate.id}"
-             )
+             isolated_detail_live(conn, gate.id, wallet_address, cache_tables, pubsub)
 
     assert html =~ "Unnamed"
     assert html =~ "No description provided"
@@ -528,6 +551,536 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     refute html =~ "Connect Your Wallet"
   end
 
+  test "gate detail shows authorize button when no extension and user is owner", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+
+    gate =
+      Gate.from_json(gate_json(%{"id" => uid("0xowned-gate-no-extension"), "extension" => nil}))
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+    assert {:ok, _view, html} =
+             isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert html =~ "No extension configured"
+    assert html =~ "Authorize Sigil Extension"
+    refute html =~ "Extension Active"
+    refute html =~ "Reconnect your wallet"
+  end
+
+  test "gate detail hides authorize button for non-owner", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+
+    gate =
+      Gate.from_json(gate_json(%{"id" => uid("0xforeign-gate-no-extension"), "extension" => nil}))
+
+    other_owner = unique_wallet_address()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {other_owner, gate})
+
+    assert {:ok, _view, html} =
+             isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert html =~ gate.linked_gate_id
+    assert html =~ "None"
+    refute html =~ "Authorize Sigil Extension"
+    refute html =~ "No extension configured"
+    refute html =~ "Reconnect your wallet"
+  end
+
+  test "missing active character hides authorize action", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_without_characters_fixture(wallet_address)
+
+    gate =
+      Gate.from_json(gate_json(%{"id" => uid("0xowned-gate-no-character"), "extension" => nil}))
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+    assert {:ok, _view, html} =
+             isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert html =~ "Reconnect your wallet"
+    refute html =~ "Authorize Sigil Extension"
+    refute html =~ "Extension Active"
+    refute html =~ "Approve in your wallet"
+  end
+
+  test "authorize extension prompts wallet approval", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+
+    gate =
+      signing_gate_fixture(32, 33, %{
+        "extension" => nil,
+        "metadata" => %{
+          "assembly_id" => "0xgate-metadata",
+          "name" => "Jump Gate Alpha",
+          "description" => "Gate description",
+          "url" => "https://example.test/gates/alpha"
+        }
+      })
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+    assert is_binary(tx_bytes)
+
+    html = render(view)
+    assert html =~ "Approve in your wallet"
+    refute html =~ "Extension authorized successfully"
+    refute html =~ "Transaction failed"
+  end
+
+  test "signed transaction shows success flash", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(34, 35, %{"extension" => nil})
+    gate_id = gate.id
+    owner_cap_id = gate.owner_cap_id
+    updated_extension = unique_wallet_address()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+    test_pid = self()
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn submitted_tx_bytes,
+                                                          ["wallet-signature"],
+                                                          [] ->
+      send(test_pid, {:extension_submit_attempted, submitted_tx_bytes})
+
+      {:ok,
+       %{
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "gate-extension-success"},
+         "bcs" => "effects-bcs-success"
+       }}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object, fn ^gate_id, [] ->
+      {:ok,
+       gate_json(%{
+         "id" => uid(gate_id),
+         "owner_cap_id" => uid(owner_cap_id),
+         "extension" => updated_extension
+       })}
+    end)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    assert_receive {:extension_submit_attempted, ^tx_bytes}
+
+    html = render(view)
+    assert html =~ "Extension authorized successfully"
+    assert html =~ updated_extension
+    refute html =~ "Approve in your wallet"
+    refute html =~ "No extension configured"
+  end
+
+  test "wallet signing error shows flash", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(36, 37, %{"extension" => nil})
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => _tx_bytes})
+
+    render_hook(view, "transaction_error", %{"reason" => "User rejected the request"})
+
+    html = render(view)
+    assert has_element?(view, "[role=alert]")
+    assert html =~ "User rejected the request"
+    refute html =~ "Approve in your wallet"
+    refute html =~ "Extension authorized successfully"
+  end
+
+  test "signing overlay is visible during approval", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(38, 39, %{"extension" => nil})
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => _tx_bytes})
+
+    html = render(view)
+    assert html =~ "Approve in your wallet"
+    refute html =~ "Extension authorized successfully"
+    refute html =~ "Reconnect your wallet"
+  end
+
+  test "extension status shown with authorize button", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xowned-gate-with-extension")}))
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+    assert {:ok, _view, html} =
+             isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert html =~ gate.extension
+    assert html =~ "Extension Active"
+    assert html =~ "Authorize Sigil Extension"
+    refute html =~ "No extension configured"
+    refute html =~ "Reconnect your wallet"
+  end
+
+  @tag :acceptance
+  test "authenticated owner authorizes gate extension and sees updated status", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(40, 41, %{"extension" => nil})
+    gate_id = gate.id
+    owner_cap_id = gate.owner_cap_id
+    updated_extension = unique_wallet_address()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+    test_pid = self()
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn submitted_tx_bytes,
+                                                          ["wallet-signature"],
+                                                          [] ->
+      send(test_pid, {:extension_submit_attempted, submitted_tx_bytes})
+
+      {:ok,
+       %{
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "gate-extension-acceptance"},
+         "bcs" => "effects-bcs-acceptance"
+       }}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object, fn ^gate_id, [] ->
+      {:ok,
+       gate_json(%{
+         "id" => uid(gate_id),
+         "owner_cap_id" => uid(owner_cap_id),
+         "extension" => updated_extension
+       })}
+    end)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/assembly/#{gate.id}"
+      )
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    assert_receive {:extension_submit_attempted, ^tx_bytes}
+
+    html = render(view)
+    assert html =~ "Extension Active"
+    assert html =~ updated_extension
+    refute html =~ "No extension configured"
+    refute html =~ "Transaction failed"
+  end
+
+  test "authorize failure shows error flash", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, _character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(44, 45, %{"extension" => nil})
+    owner_cap_id = gate.owner_cap_id
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+    expect(Sigil.Sui.ClientMock, :get_object_with_ref, fn ^owner_cap_id, [] ->
+      {:error, :timeout}
+    end)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    html =
+      view
+      |> element("button", "Authorize Sigil Extension")
+      |> render_click()
+
+    assert has_element?(view, "[role=alert]")
+    assert html =~ "timeout"
+    refute html =~ "Approve in your wallet"
+    refute html =~ "Extension authorized successfully"
+  end
+
+  test "submit failure shows error flash", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(42, 43, %{"extension" => nil})
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+    test_pid = self()
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn submitted_tx_bytes,
+                                                          ["wallet-signature"],
+                                                          [] ->
+      send(test_pid, {:extension_submit_attempted, submitted_tx_bytes})
+      {:error, :timeout}
+    end)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    assert render(view) =~ "Authorize Sigil Extension"
+
+    assert has_element?(view, "button", "Authorize Sigil Extension")
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    assert_receive {:extension_submit_attempted, ^tx_bytes}
+
+    html = render(view)
+    assert has_element?(view, "[role=alert]")
+    assert html =~ "timeout"
+    refute html =~ "Approve in your wallet"
+    refute html =~ "Extension authorized successfully"
+  end
+
+  test "wallet_detected event is handled without crashing", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xwallet-detected-gate")}))
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    # The WalletConnect hook fires wallet_detected on mount — must not crash
+    render_hook(view, "wallet_detected", %{"wallets" => ["Eve Vault"]})
+
+    html = render(view)
+    assert html =~ "Jump Gate Alpha"
+    assert html =~ "Assembly uplink"
+  end
+
+  test "wallet_error event is handled without crashing", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xwallet-error-gate")}))
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    # The WalletConnect hook may fire wallet_error — must not crash
+    render_hook(view, "wallet_error", %{"reason" => "No wallets found"})
+
+    html = render(view)
+    assert html =~ "Jump Gate Alpha"
+  end
+
+  test "transaction_signed pushes report_transaction_effects to wallet hook", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    {account, character_id} = signing_account_fixture(wallet_address)
+    gate = signing_gate_fixture(46, 47, %{"extension" => nil})
+    gate_id = gate.id
+    owner_cap_id = gate.owner_cap_id
+    updated_extension = unique_wallet_address()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    expect_gate_extension_build(gate, character_id)
+    test_pid = self()
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn submitted_tx_bytes,
+                                                          ["wallet-signature"],
+                                                          [] ->
+      send(test_pid, {:extension_submit_attempted, submitted_tx_bytes})
+
+      {:ok,
+       %{
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "gate-extension-effects"},
+         "bcs" => "effects-bcs-data"
+       }}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object, fn ^gate_id, [] ->
+      {:ok,
+       gate_json(%{
+         "id" => uid(gate_id),
+         "owner_cap_id" => uid(owner_cap_id),
+         "extension" => updated_extension
+       })}
+    end)
+
+    {:ok, view, _html} =
+      isolated_gate_extension_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+    view
+    |> element("button", "Authorize Sigil Extension")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    assert_receive {:extension_submit_attempted, ^tx_bytes}
+
+    # Verify report_transaction_effects was pushed to the wallet hook
+    assert_push_event(view, "report_transaction_effects", %{effects: "effects-bcs-data"})
+
+    html = render(view)
+    assert html =~ "Extension authorized successfully"
+  end
+
   defp expect_empty_dashboard_discovery(_wallet_address) do
     owner_cap_type = owner_cap_type()
     character_id = "0xcharacter-detail"
@@ -546,12 +1099,30 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     })
   end
 
+  defp isolated_detail_live(conn, assembly_id, wallet_address, cache_tables, pubsub) do
+    live(
+      authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+      "/assembly/#{assembly_id}"
+    )
+  end
+
+  defp isolated_gate_extension_live(conn, assembly_id, wallet_address, cache_tables, pubsub) do
+    live_isolated(conn, SigilWeb.AssemblyDetailLiveIsolatedTestLive,
+      session: %{
+        "assembly_id" => assembly_id,
+        "wallet_address" => wallet_address,
+        "cache_tables" => cache_tables,
+        "pubsub" => pubsub
+      }
+    )
+  end
+
   defp character_type do
-    "0xtest_world::character::Character"
+    "0x1111111111111111111111111111111111111111111111111111111111111111::character::Character"
   end
 
   defp owner_cap_type do
-    "0xtest_world::access::OwnerCap"
+    "0x1111111111111111111111111111111111111111111111111111111111111111::access::OwnerCap"
   end
 
   defp account_fixture(wallet_address) do
@@ -561,6 +1132,110 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       tribe_id: 314
     }
   end
+
+  defp account_without_characters_fixture(wallet_address) do
+    %Account{address: wallet_address, characters: [], tribe_id: 314}
+  end
+
+  defp signing_account_fixture(wallet_address) do
+    character_id = hex_id(31)
+
+    account =
+      %Account{
+        address: wallet_address,
+        characters: [Character.from_json(character_json(%{"id" => uid(character_id)}))],
+        tribe_id: 314
+      }
+
+    {account, character_id}
+  end
+
+  defp signing_gate_fixture(id_byte, owner_cap_byte, overrides) do
+    gate_json =
+      gate_json(%{
+        "id" => uid(hex_id(id_byte)),
+        "owner_cap_id" => uid(hex_id(owner_cap_byte)),
+        "extension" => "0x2::frontier::GateExtension"
+      })
+      |> Map.merge(overrides)
+
+    Gate.from_json(gate_json)
+  end
+
+  defp expect_gate_extension_build(gate, character_id) do
+    expected_tx_bytes =
+      expected_gate_extension_tx_bytes(
+        gate.id,
+        14,
+        gate.owner_cap_id,
+        19,
+        digest_bytes(99),
+        character_id,
+        10
+      )
+
+    expect(Sigil.Sui.ClientMock, :get_object_with_ref, 3, fn
+      owner_cap_id, [] when owner_cap_id == gate.owner_cap_id ->
+        {:ok, owner_cap_with_ref(owner_cap_id, 19, 99)}
+
+      ^character_id, [] ->
+        {:ok, object_with_ref(character_id, 10, 51, 100)}
+
+      gate_id, [] when gate_id == gate.id ->
+        {:ok, object_with_ref(gate_id, 14, 52, 101)}
+    end)
+
+    expected_tx_bytes
+  end
+
+  defp expected_gate_extension_tx_bytes(
+         gate_id,
+         gate_shared_version,
+         owner_cap_id,
+         owner_cap_version,
+         owner_cap_digest,
+         character_id,
+         character_shared_version
+       ) do
+    %{
+      object_id: hex_to_bytes(gate_id),
+      initial_shared_version: gate_shared_version
+    }
+    |> Sigil.Sui.TxGateExtension.build_authorize_extension(
+      {hex_to_bytes(owner_cap_id), owner_cap_version, owner_cap_digest},
+      %{
+        object_id: hex_to_bytes(character_id),
+        initial_shared_version: character_shared_version
+      }
+    )
+    |> Sigil.Sui.TransactionBuilder.build_kind!()
+    |> Base.encode64()
+  end
+
+  defp object_with_ref(object_id, shared_version, ref_version, digest_byte) do
+    %{
+      json: %{
+        "id" => object_id,
+        "shared" => %{"initialSharedVersion" => Integer.to_string(shared_version)}
+      },
+      ref: {hex_to_bytes(object_id), ref_version, digest_bytes(digest_byte)}
+    }
+  end
+
+  defp owner_cap_with_ref(object_id, ref_version, digest_byte) do
+    %{
+      json: %{"id" => object_id},
+      ref: {hex_to_bytes(object_id), ref_version, digest_bytes(digest_byte)}
+    }
+  end
+
+  defp digest_bytes(byte), do: :binary.copy(<<byte>>, 32)
+
+  defp hex_id(byte) when is_integer(byte) and byte >= 0 and byte <= 255 do
+    "0x" <> String.duplicate(Base.encode16(<<byte>>, case: :lower), 32)
+  end
+
+  defp hex_to_bytes("0x" <> hex), do: Base.decode16!(hex, case: :mixed)
 
   defp unique_pubsub_name do
     :"assembly_detail_pubsub_#{System.unique_integer([:positive])}"

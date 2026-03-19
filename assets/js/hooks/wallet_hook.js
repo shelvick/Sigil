@@ -20,6 +20,7 @@ const WalletConnect = {
     this._onRegister = null
     this._discoveryTimer = null
     this._walletUnsubscribe = null
+    this._pendingReportEffects = null
 
     this._startDiscovery()
 
@@ -37,6 +38,10 @@ const WalletConnect = {
 
     this.handleEvent("request_sign_transaction", ({ tx_bytes }) => {
       this._signTransaction(tx_bytes)
+    })
+
+    this.handleEvent("report_transaction_effects", ({ effects }) => {
+      this._reportTransactionEffects(effects)
     })
   },
 
@@ -150,21 +155,7 @@ const WalletConnect = {
       this.selectedWallet = wallet
 
       // Subscribe to wallet events for disconnect and account change detection
-      const eventsFeature = wallet.features && wallet.features["standard:events"]
-      if (eventsFeature) {
-        this._walletUnsubscribe = eventsFeature.on("change", ({ accounts: updated }) => {
-          if (!updated || updated.length === 0) {
-            this.pushEvent("wallet_error", { reason: "Wallet disconnected" })
-            this.selectedWallet = null
-            this.currentAccount = null
-          } else if (this.currentAccount) {
-            const stillPresent = updated.some(a => a.address === this.currentAccount.address)
-            if (!stillPresent) {
-              this.pushEvent("wallet_account_changed", {})
-            }
-          }
-        })
-      }
+      this._subscribeWalletEvents(wallet)
 
       if (accounts.length === 1) {
         // Single account — auto-select
@@ -251,9 +242,41 @@ const WalletConnect = {
       if (accounts.length > 0) {
         this.selectedWallet = wallet
         this.currentAccount = accounts[0]
+
+        // Subscribe to wallet events for disconnect/account change detection
+        this._subscribeWalletEvents(wallet)
       }
     } catch (_e) {
       // Silent — signing will show an error if wallet isn't available
+    }
+  },
+
+  _subscribeWalletEvents(wallet) {
+    const eventsFeature = wallet.features && wallet.features["standard:events"]
+    if (eventsFeature) {
+      // Unsubscribe from previous wallet if any
+      if (this._walletUnsubscribe) {
+        this._walletUnsubscribe()
+      }
+      this._walletUnsubscribe = eventsFeature.on("change", ({ accounts: updated }) => {
+        if (!updated || updated.length === 0) {
+          this.pushEvent("wallet_error", { reason: "Wallet disconnected" })
+          this.selectedWallet = null
+          this.currentAccount = null
+        } else if (this.currentAccount) {
+          const stillPresent = updated.some(a => a.address === this.currentAccount.address)
+          if (!stillPresent) {
+            this.pushEvent("wallet_account_changed", {})
+          }
+        }
+      })
+    }
+  },
+
+  _reportTransactionEffects(effects) {
+    if (this._pendingReportEffects) {
+      this._pendingReportEffects(effects)
+      this._pendingReportEffects = null
     }
   },
 
@@ -292,6 +315,13 @@ const WalletConnect = {
         account: this.currentAccount,
         chain
       })
+
+      // Store reportTransactionEffects callback if wallet provides one.
+      // Server should call report_transaction_effects after execution
+      // so the wallet can update its cached object versions.
+      if (result.reportTransactionEffects) {
+        this._pendingReportEffects = result.reportTransactionEffects
+      }
 
       this.pushEvent("transaction_signed", {
         bytes: result.bytes,

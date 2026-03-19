@@ -290,16 +290,17 @@ defmodule Sigil.Diplomacy do
 
   @doc "Submits a wallet-signed transaction and updates cache on success."
   @spec submit_signed_transaction(String.t(), String.t(), options()) ::
-          {:ok, %{digest: String.t()}} | {:error, Client.error_reason()}
+          {:ok, %{digest: String.t(), effects_bcs: String.t() | nil}}
+          | {:error, Client.error_reason()}
   def submit_signed_transaction(tx_bytes, signature, opts)
       when is_binary(tx_bytes) and is_binary(signature) and is_list(opts) do
     client = Keyword.get(opts, :client, @sui_client)
     req_options = Keyword.get(opts, :req_options, [])
 
     case client.execute_transaction(tx_bytes, [signature], req_options) do
-      {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}}} ->
+      {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}} = effects} ->
         apply_pending_tx(opts, tx_bytes)
-        {:ok, %{digest: digest}}
+        {:ok, %{digest: digest, effects_bcs: effects["bcs"]}}
 
       {:error, _reason} = error ->
         error

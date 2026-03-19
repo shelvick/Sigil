@@ -10,6 +10,7 @@
 - `Sigil.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
 - `Sigil.Sui.TransactionBuilder.PTB` — BCS encoding for all PTB struct types
 - `Sigil.Sui.TxDiplomacy` — PTB construction for StandingsTable operations (create, set_standing, batch, pilot, default)
+- `Sigil.Sui.TxGateExtension` — PTB construction for gate extension authorization (3-command borrow/authorize/return pattern)
 - `Sigil.Sui.Base58` — Pure Base58 encoder/decoder for Sui digest strings
 - `Sigil.Sui.Types` — Namespace for Sui type structs
 - `Sigil.Sui.Types.Parser` — Shared scalar parsers (integer!, bytes!, uid!, status!, optional)
@@ -80,6 +81,9 @@
 - `build_set_pilot_standing/4`: table_ref × pilot_bytes × standing × tx_opts → build_opts
 - `build_batch_set_standings/3`: table_ref × [{tribe_id, standing}] × tx_opts → build_opts
 - `build_batch_set_pilot_standings/3`: table_ref × [{pilot_bytes, standing}] × tx_opts → build_opts
+
+### TxGateExtension (tx_gate_extension.ex)
+- `build_authorize_extension/3`: gate_ref × owner_cap_ref × character_ref → kind_opts (3-command PTB: borrow_owner_cap, authorize_extension, return_owner_cap)
 
 ### Base58 (base58.ex)
 - `decode!/1`: Base58 string → binary (raises on invalid)

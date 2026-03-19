@@ -7,12 +7,12 @@
 - `SigilWeb.Router` (`router.ex`) — Browser + API pipelines, `live_session :wallet_session` with `WalletSession` on_mount, session controller routes, health check, dev LiveDashboard
 - `SigilWeb.WalletSession` (`wallet_session.ex`) — LiveView on_mount hook: resolves cache_tables, pubsub, current_account, active_character (from session cookie)
 - `SigilWeb.CacheResolver` (`cache_resolver.ex`) — Shared supervisor lookup for Cache tables (used by WalletSession + SessionController)
-- `SigilWeb.AssemblyHelpers` (`assembly_helpers.ex`) — Shared display helpers: type labels, names, status badges (success/warning/default), fuel gauges, ID truncation
+- `SigilWeb.AssemblyHelpers` (`assembly_helpers.ex`) — Shared display helpers: type labels, names, status badges, fuel gauges, ID truncation, descriptions, extension labels, location hashes, burn rates, timestamps, energy labels
 - `SigilWeb.Layouts` (`components/layouts.ex`) — Root + app layout templates, `truncate_wallet/1`, `character_display_name/1`, `character_tribe_label/1`
 - `SigilWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session + PUT /session/character/:id: zkLogin-verified wallet auth, active character switching, friendly error messages
 - `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: multi-account wallet connect (unauth), character-scoped assembly manifest (auth), character picker, PubSub subscriptions, linked StatePoller
 - `SigilWeb.DashboardLive.Components` (`live/dashboard_components.ex`) — Template components: authenticated_view (with character picker), assembly_manifest, wallet_connect_view, wallet_state_panel (idle/connecting/account_selection/signing/error)
-- `SigilWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering (Gate/Turret/StorageUnit/NetworkNode/Assembly), fuel/energy/connection panels, PubSub updates
+- `SigilWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering (Gate/Turret/StorageUnit/NetworkNode/Assembly), fuel/energy/connection panels, gate extension management (authorize via wallet signing), PubSub updates
 - `SigilWeb.TribeOverviewLive` (`live/tribe_overview_live.ex`) — Tribe overview at `/tribe/:tribe_id`: member list (connected vs chain-only), assembly aggregation, standings summary, PubSub updates
 - `SigilWeb.DiplomacyLive` (`live/diplomacy_live.ex`) — Diplomacy editor at `/tribe/:tribe_id/diplomacy`: page state machine, standings CRUD, wallet tx signing flow, PubSub updates
 - `SigilWeb.DiplomacyLive.Components` (`live/diplomacy_components.ex`) — Extracted template components: no_table_view, select_table_view, signing_overlay, tribe_standings_section, pilot_overrides_section, default_standing_section + display helpers
@@ -33,9 +33,17 @@
 - `assembly_type_label/1`: Struct → "Gate"/"Turret"/"NetworkNode"/"StorageUnit"/"Assembly"
 - `assembly_name/1`: Metadata name or truncated ID fallback
 - `assembly_status/1`: Status atom → string
+- `assembly_description/1`: Metadata description or "No description provided"
 - `status_badge_classes/1`: :online → success, :offline → warning, default → space-600
 - `fuel_label/1`, `fuel_percent/1`, `fuel_percent_label/1`: Fuel display helpers
 - `truncate_id/1`: "0xabcd1234...ef78" truncation for hex IDs
+- `truncate_or_placeholder/1`: Truncate or "Not set" for nil
+- `linked_gate_label/1`, `extension_label/1`, `extension_active?/1`: Gate/extension display helpers
+- `format_location_hash/1`: Binary hash → truncated hex string
+- `format_burn_rate/1`: Milliseconds → "N per hour"/"N per minute"/"N ms"
+- `format_timestamp/2`: Sui ms timestamp → "YYYY-MM-DD HH:MM:SS UTC" or "Not burning"
+- `yes_no/1`, `optional_integer/1`: Boolean/optional formatting
+- `energy_current_label/1`, `available_energy/1`: Energy source display helpers
 
 ### SessionController (controllers/session_controller.ex)
 - `create/2`: auth_params → verify_wallet (ZkLoginVerifier) → register_wallet → put_session → redirect (post_auth_path)
@@ -62,8 +70,12 @@
 - `active_character_name/2`, `active_character_tribe_label/1`, `character_name/1`, `character_tribe_label/1`: Display helpers
 
 ### AssemblyDetailLive (live/assembly_detail_live.ex)
-- `mount/3`: fetch_assembly from cache → assign → subscribe → start poller (or redirect if not found)
-- `handle_info({:assembly_updated, assembly})`: Replace assembly assigns
+- `mount/3`: fetch_assembly from cache → assign (incl. signing_state, is_owner) → subscribe → start poller (or redirect if not found)
+- `handle_event("authorize_extension")`: Build gate extension tx → push request_sign_transaction → set signing_state
+- `handle_event("transaction_signed")`: Submit signed tx → flash success → push report_transaction_effects
+- `handle_event("transaction_error")`: Reset signing_state → flash error
+- `handle_event("wallet_detected"|"wallet_error")`: No-op handlers for hook discovery events
+- `handle_info({:assembly_updated, assembly})`: Replace assembly assigns, reset signing_state if :submitted
 
 ### TribeOverviewLive (live/tribe_overview_live.ex)
 - `mount/3`: authorize → load tribe/members/assemblies/standings → subscribe "tribes"+"diplomacy"
@@ -99,4 +111,4 @@
 
 ## JS Hooks
 
-- `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, multi-account selection (pendingAccounts + select_account), signPersonalMessage (auth), signTransaction (diplomacy), wallet change detection, hidden form POST. Registered in `assets/js/app.js`.
+- `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, multi-account selection (pendingAccounts + select_account), signPersonalMessage (auth), signTransaction (diplomacy + gate extension), reportTransactionEffects (wallet cache update), wallet change detection, hidden form POST. Registered in `assets/js/app.js`.

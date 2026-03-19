@@ -4,7 +4,7 @@ defmodule Sigil.Assemblies do
   """
 
   alias Sigil.Cache
-  alias Sigil.Sui.Client
+  alias Sigil.Sui.{Client, TransactionBuilder, TxGateExtension}
   alias Sigil.Sui.Types.{Assembly, Gate, NetworkNode, StorageUnit, Turret}
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
@@ -87,6 +87,16 @@ defmodule Sigil.Assemblies do
     end
   end
 
+  @doc "Returns whether the cached assembly belongs to the given owner."
+  @spec assembly_owned_by?(String.t(), String.t(), options()) :: boolean()
+  def assembly_owned_by?(assembly_id, owner, opts)
+      when is_binary(assembly_id) and is_binary(owner) and is_list(opts) do
+    case Cache.get(assembly_table(opts), assembly_id) do
+      {^owner, _assembly} -> true
+      _other -> false
+    end
+  end
+
   @doc "Refreshes a cached assembly from chain and broadcasts the updated value."
   @spec sync_assembly(String.t(), options()) ::
           {:ok, assembly()} | {:error, :not_found | Client.error_reason()}
@@ -119,6 +129,63 @@ defmodule Sigil.Assemblies do
 
       nil ->
         {:error, :not_found}
+    end
+  end
+
+  @doc "Builds unsigned transaction bytes for gate extension authorization."
+  @spec build_authorize_gate_extension_tx(String.t(), String.t(), options()) ::
+          {:ok, %{tx_bytes: String.t()}}
+          | {:error, :not_found | :not_a_gate | Client.error_reason()}
+  def build_authorize_gate_extension_tx(gate_id, character_id, opts)
+      when is_binary(gate_id) and is_binary(character_id) and is_list(opts) do
+    req_options = Keyword.get(opts, :req_options, [])
+
+    with {:ok, gate} <- fetch_cached_gate(gate_id, opts),
+         {:ok, %{ref: owner_cap_ref}} <-
+           @sui_client.get_object_with_ref(gate.owner_cap_id, req_options),
+         {:ok, %{json: character_json}} <-
+           @sui_client.get_object_with_ref(character_id, req_options),
+         {:ok, %{json: gate_json}} <- @sui_client.get_object_with_ref(gate_id, req_options) do
+      tx_bytes =
+        %{
+          object_id: hex_to_bytes(gate_id),
+          initial_shared_version: parse_shared_version!(gate_json)
+        }
+        |> TxGateExtension.build_authorize_extension(
+          owner_cap_ref,
+          %{
+            object_id: hex_to_bytes(character_id),
+            initial_shared_version: parse_shared_version!(character_json)
+          }
+        )
+        |> TransactionBuilder.build_kind!()
+        |> Base.encode64()
+
+      Cache.put(
+        assembly_table(opts),
+        {:pending_ext_tx, tx_bytes},
+        {:authorize_gate_extension, gate_id}
+      )
+
+      {:ok, %{tx_bytes: tx_bytes}}
+    end
+  end
+
+  @doc "Submits a wallet-signed gate extension transaction and refreshes cache on success."
+  @spec submit_signed_extension_tx(String.t(), String.t(), options()) ::
+          {:ok, %{digest: String.t(), effects_bcs: String.t() | nil}}
+          | {:error, Client.error_reason()}
+  def submit_signed_extension_tx(tx_bytes, signature, opts)
+      when is_binary(tx_bytes) and is_binary(signature) and is_list(opts) do
+    req_options = Keyword.get(opts, :req_options, [])
+
+    case @sui_client.execute_transaction(tx_bytes, [signature], req_options) do
+      {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}} = effects} ->
+        apply_pending_extension_tx(opts, tx_bytes)
+        {:ok, %{digest: digest, effects_bcs: effects["bcs"]}}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -164,6 +231,53 @@ defmodule Sigil.Assemblies do
     Cache.put(assembly_table(opts), assembly.id, {owner, assembly})
   end
 
+  @spec fetch_cached_gate(String.t(), options()) ::
+          {:ok, Gate.t()} | {:error, :not_found | :not_a_gate}
+  defp fetch_cached_gate(gate_id, opts) do
+    case Cache.get(assembly_table(opts), gate_id) do
+      nil -> {:error, :not_found}
+      {_owner, %Gate{} = gate} -> {:ok, gate}
+      {_owner, _assembly} -> {:error, :not_a_gate}
+    end
+  end
+
+  @spec apply_pending_extension_tx(options(), String.t()) :: :ok
+  defp apply_pending_extension_tx(opts, tx_bytes) do
+    table = assembly_table(opts)
+
+    case Cache.take(table, {:pending_ext_tx, tx_bytes}) do
+      {:authorize_gate_extension, gate_id} ->
+        case sync_assembly(gate_id, opts) do
+          {:ok, _assembly} -> :ok
+          {:error, _reason} -> :ok
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  @spec parse_shared_version!(map()) :: non_neg_integer()
+  defp parse_shared_version!(json) do
+    case parse_shared_version(json) do
+      nil -> raise ArgumentError, "missing initial shared version"
+      version -> version
+    end
+  end
+
+  @spec parse_shared_version(map()) :: non_neg_integer() | nil
+  defp parse_shared_version(%{"initial_shared_version" => version}) when is_integer(version),
+    do: version
+
+  defp parse_shared_version(%{"shared" => %{"initialSharedVersion" => version}})
+       when is_binary(version),
+       do: String.to_integer(version)
+
+  defp parse_shared_version(%{"initialSharedVersion" => version}) when is_binary(version),
+    do: String.to_integer(version)
+
+  defp parse_shared_version(_json), do: nil
+
   @spec assembly_table(options()) :: Cache.table_id()
   defp assembly_table(opts) do
     opts |> Keyword.fetch!(:tables) |> Map.fetch!(:assemblies)
@@ -173,6 +287,9 @@ defmodule Sigil.Assemblies do
   defp broadcast(pubsub, topic, event) do
     Phoenix.PubSub.broadcast(pubsub, topic, event)
   end
+
+  @spec hex_to_bytes(String.t()) :: binary()
+  defp hex_to_bytes("0x" <> hex), do: Base.decode16!(hex, case: :mixed)
 
   @spec owner_cap_type_string() :: String.t()
   defp owner_cap_type_string do

@@ -21,7 +21,7 @@ config :sigil, :eve_world, "test"
 
 config :sigil, :eve_worlds, %{
   "test" => %{
-    package_id: "0xtest_world",
+    package_id: "0x1111111111111111111111111111111111111111111111111111111111111111",
     sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
     graphql_url: "http://test.invalid/graphql"
   }

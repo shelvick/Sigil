@@ -7,7 +7,7 @@
 - `Sigil.Cache` (`cache.ex`) — Process-owned ETS GenServer: start_link/1, tables/1, put/3, get/2, delete/2, all/1, match/2
 - `Sigil.Accounts` (`accounts.ex`) — Wallet session + character lookup over ETS
 - `Sigil.Accounts.Account` (inline in `accounts.ex`) — Struct: address, characters, tribe_id
-- `Sigil.Assemblies` (`assemblies.ex`) — Assembly discovery + cached query over ETS
+- `Sigil.Assemblies` (`assemblies.ex`) — Assembly discovery + cached query + gate extension authorization over ETS
 - `Sigil.Tribes` (`tribes.ex`) — Tribe member discovery + aggregation over ETS
 - `Sigil.Tribes.Tribe` (inline in `tribes.ex`) — Struct: tribe_id, members, discovered_at
 - `Sigil.Tribes.TribeMember` (inline in `tribes.ex`) — Struct: character_id, character_name, character_address, tribe_id, connected, wallet_address
@@ -27,7 +27,10 @@
 - `discover_for_owner/2`: owner × opts → {:ok, [assembly()]} | {:error, reason} — OwnerCap query → resolve → cache → broadcast
 - `list_for_owner/2`: owner × opts → [assembly()] — ETS match by owner
 - `get_assembly/2`: id × opts → {:ok, assembly()} | {:error, :not_found} — ETS read
+- `assembly_owned_by?/3`: id × owner × opts → boolean — cached ownership check
 - `sync_assembly/2`: id × opts → {:ok, assembly()} | {:error, reason} — refresh cached assembly
+- `build_authorize_gate_extension_tx/3`: gate_id × character_id × opts → {:ok, %{tx_bytes: base64}} | {:error, reason} — build unsigned gate extension tx
+- `submit_signed_extension_tx/3`: tx_bytes × signature × opts → {:ok, %{digest, effects_bcs}} | {:error, reason} — submit signed tx, sync cache
 
 ### Tribes (tribes.ex)
 - `discover_members/2`: tribe_id × opts → {:ok, Tribe.t()} | {:error, reason} — paginate chain Characters, filter by tribe_id, cross-ref accounts, cache, broadcast
@@ -56,11 +59,13 @@
 - Options keyword list: `tables:` (required), `pubsub:` (optional), `req_options:` (optional)
 - PubSub topics: `"accounts"`, `"assemblies:#{owner}"`, `"assembly:#{id}"`, `"tribes"`, `"diplomacy"`
 - Type dispatch in Assemblies via multi-clause `parse_assembly/1` with field-presence pattern matching
-- Cache values: accounts `{address, Account.t()}`, assemblies `{id, {owner, assembly()}}`, tribes `{tribe_id, Tribe.t()}`, standings `{:tribe_standing|:pilot_standing|:active_table|:default_standing|:world_tribe|:pending_tx, key} → value`
+- Cache values: accounts `{address, Account.t()}`, assemblies `{id, {owner, assembly()}}` + `{:pending_ext_tx, tx_bytes} → {:authorize_gate_extension, gate_id}`, tribes `{tribe_id, Tribe.t()}`, standings `{:tribe_standing|:pilot_standing|:active_table|:default_standing|:world_tribe|:pending_tx, key} → value`
 
 ## Dependencies
 
 - `Sigil.Sui.Client` behaviour (via compile_env mock)
+- `Sigil.Sui.TransactionBuilder` for PTB encoding (`build_kind!`)
+- `Sigil.Sui.TxGateExtension` for gate extension PTB construction
 - `Sigil.Sui.Types.*` structs (Character, Gate, Turret, NetworkNode, StorageUnit, Assembly)
 - `Sigil.Cache` for ETS operations
 - `Phoenix.PubSub` for event broadcasting
