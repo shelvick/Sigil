@@ -63,8 +63,8 @@ defmodule Sigil.MixProject do
       {:telemetry_poller, "~> 1.0"},
 
       # Asset build tools
-      {:esbuild, "~> 0.9", only: :dev, runtime: true},
-      {:tailwind, "~> 0.3", only: :dev, runtime: true},
+      {:esbuild, "~> 0.9", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:heroicons,
        github: "tailwindlabs/heroicons",
        tag: "v2.1.5",
