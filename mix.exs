@@ -75,7 +75,7 @@ defmodule Sigil.MixProject do
 
       # Development
       {:phoenix_live_reload, "~> 1.2", only: :dev},
-      {:phoenix_live_dashboard, "~> 0.8", only: [:dev, :test]},
+      {:phoenix_live_dashboard, "~> 0.8"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.0", only: [:dev, :test], runtime: false},
