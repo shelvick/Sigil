@@ -93,7 +93,7 @@ defmodule SigilWeb.TribeOverviewLive do
             <p class="text-sm text-cream">Discovering tribe members...</p>
           </div>
         <% else %>
-          <.members_panel members={@members} />
+          <.members_panel members={@members} active_character={@active_character} />
           <.assemblies_panel member_assemblies={@member_assemblies} />
           <.standings_panel
             tribe_id={@tribe_id}
@@ -127,9 +127,17 @@ defmodule SigilWeb.TribeOverviewLive do
             <%= @tribe_short_name %>
           </span>
         </div>
-        <span class="rounded-full border border-space-600/80 bg-space-900/70 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-          <%= length(@members) %> members
-        </span>
+        <div class="flex items-center gap-3">
+          <span class="rounded-full border border-space-600/80 bg-space-900/70 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
+            <%= length(@members) %> members
+          </span>
+          <.link
+            navigate={~p"/tribe/#{@tribe_id}/diplomacy"}
+            class="rounded-full border border-quantum-400/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+          >
+            Diplomacy
+          </.link>
+        </div>
       </div>
     </div>
     """
@@ -164,6 +172,12 @@ defmodule SigilWeb.TribeOverviewLive do
                 <tr class="rounded-2xl bg-space-900/70 text-sm text-foreground">
                   <td class="rounded-l-2xl px-4 py-4 font-semibold text-cream">
                     <%= member.character_name || "Unknown" %>
+                    <span
+                      :if={@active_character && member.character_id == @active_character.id}
+                      class="ml-2 font-mono text-xs text-quantum-300"
+                    >
+                      (you)
+                    </span>
                   </td>
                   <td class="rounded-r-2xl px-4 py-4">
                     <%= if member.connected do %>
@@ -234,12 +248,14 @@ defmodule SigilWeb.TribeOverviewLive do
                 <table class="min-w-full border-separate border-spacing-y-2">
                   <tbody>
                     <%= for assembly <- assemblies do %>
-                      <tr class="rounded-2xl bg-space-900/70 text-sm text-foreground">
-                        <td class="rounded-l-2xl px-3 py-3 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
+                      <tr class="cursor-pointer rounded-2xl bg-space-900/70 text-sm text-foreground transition hover:bg-space-800/80" phx-click={JS.navigate(~p"/assembly/#{assembly.id}")}>
+                        <td class={["rounded-l-2xl px-3 py-3 font-mono text-xs uppercase tracking-[0.2em]", type_text_color(assembly)]}>
                           <%= assembly_type_label(assembly) %>
                         </td>
-                        <td class="px-3 py-3 font-semibold text-cream">
-                          <%= assembly_name(assembly) %>
+                        <td class="px-3 py-3">
+                          <.link navigate={~p"/assembly/#{assembly.id}"} class="font-semibold text-cream hover:text-quantum-300">
+                            <%= assembly_name(assembly) %>
+                          </.link>
                         </td>
                         <td class="rounded-r-2xl px-3 py-3">
                           <span class={status_badge_classes(assembly)}>
@@ -347,7 +363,7 @@ defmodule SigilWeb.TribeOverviewLive do
     tribe_name_data = resolve_tribe_name(tribe_id, socket)
 
     assign(socket,
-      page_title: "Tribe Overview",
+      page_title: tribe_name_data[:name] || "Tribe ##{tribe_id}",
       tribe_id: tribe_id,
       tribe_name: tribe_name_data[:name],
       tribe_short_name: tribe_name_data[:short_name],

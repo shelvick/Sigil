@@ -17,7 +17,13 @@ defmodule SigilWeb.DashboardLive.Components do
         <div class="rounded-3xl border border-space-600/80 bg-space-800/80 p-6">
           <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Wallet linked</p>
           <h2 class="mt-4 text-2xl font-semibold text-cream"><%= truncate_id(@current_account.address) %></h2>
-          <p class="mt-2 break-all font-mono text-sm text-foreground"><%= @current_account.address %></p>
+          <button
+            type="button"
+            class="mt-2 inline-flex items-center gap-2 rounded-full border border-space-600/80 bg-space-900/70 px-3 py-1 font-mono text-xs text-space-500 transition hover:border-quantum-400/40 hover:text-quantum-300"
+            onclick={"navigator.clipboard.writeText('#{@current_account.address}').then(() => { this.querySelector('span').textContent = 'Copied!'; setTimeout(() => { this.querySelector('span').textContent = 'Copy address'; }, 1500); })"}
+          >
+            <span>Copy address</span>
+          </button>
 
           <dl class="mt-6 grid gap-4 sm:grid-cols-3">
             <div>
@@ -29,8 +35,8 @@ defmodule SigilWeb.DashboardLive.Components do
               <dd class="mt-2 text-sm text-cream"><%= active_character_tribe_label(@active_character) %></dd>
             </div>
             <div>
-              <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Crew count</dt>
-              <dd class="mt-2 text-sm text-cream"><%= length(@current_account.characters) %> online</dd>
+              <dt class="font-mono text-[0.65rem] uppercase tracking-[0.25em] text-space-500">Characters</dt>
+              <dd class="mt-2 text-sm text-cream"><%= length(@current_account.characters) %></dd>
             </div>
           </dl>
 
@@ -99,6 +105,16 @@ defmodule SigilWeb.DashboardLive.Components do
         </span>
       </div>
 
+      <%= if @assemblies != [] do %>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <%= for {type, count} <- type_counts(@assemblies) do %>
+            <span class="rounded-full border border-quantum-400/30 bg-quantum-400/5 px-3 py-1 font-mono text-xs uppercase tracking-[0.15em] text-quantum-300">
+              <%= type %>: <%= count %>
+            </span>
+          <% end %>
+        </div>
+      <% end %>
+
       <%= if @assemblies == [] do %>
         <div class="mt-6 rounded-2xl border border-space-600/80 bg-space-900/70 p-5">
           <p class="text-sm text-cream">
@@ -124,7 +140,7 @@ defmodule SigilWeb.DashboardLive.Components do
             <tbody>
               <%= for assembly <- @assemblies do %>
                 <tr class="cursor-pointer rounded-2xl bg-space-900/70 text-sm text-foreground transition hover:bg-space-800/80" phx-click={JS.navigate(~p"/assembly/#{assembly.id}")}>
-                  <td class="rounded-l-2xl px-4 py-4 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
+                  <td class={["rounded-l-2xl px-4 py-4 font-mono text-xs uppercase tracking-[0.2em]", type_text_color(assembly)]}>
                     <%= assembly_type_label(assembly) %>
                   </td>
                   <td class="px-4 py-4">
@@ -145,7 +161,7 @@ defmodule SigilWeb.DashboardLive.Components do
                           <span><%= fuel_percent_label(assembly.fuel) %></span>
                         </div>
                         <div class="h-2 rounded-full bg-space-700">
-                          <div class="h-full rounded-full bg-quantum-400" style={"width: #{fuel_percent(assembly.fuel)}%"}></div>
+                          <div class={["h-full rounded-full", fuel_bar_color(assembly.fuel)]} style={"width: #{fuel_bar_width(assembly.fuel)}%"}></div>
                         </div>
                       </div>
                     <% else %>
@@ -194,6 +210,30 @@ defmodule SigilWeb.DashboardLive.Components do
           wallet_error={@wallet_error}
           wallet_accounts={@wallet_accounts}
         />
+      </div>
+    </div>
+
+    <div class="mt-12 grid gap-6 md:grid-cols-3">
+      <div class="rounded-2xl border border-space-600/60 bg-space-800/50 p-6">
+        <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Diplomacy</p>
+        <p class="mt-3 text-sm font-semibold text-cream">On-Chain Standings</p>
+        <p class="mt-2 text-sm leading-6 text-space-500">
+          Set tribe standings that enforce gate access automatically via Sui Move smart contracts.
+        </p>
+      </div>
+      <div class="rounded-2xl border border-space-600/60 bg-space-800/50 p-6">
+        <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Infrastructure</p>
+        <p class="mt-3 text-sm font-semibold text-cream">Assembly Monitoring</p>
+        <p class="mt-2 text-sm leading-6 text-space-500">
+          Track gates, nodes, turrets, and storage units with real-time fuel status and burn rate forecasting.
+        </p>
+      </div>
+      <div class="rounded-2xl border border-space-600/60 bg-space-800/50 p-6">
+        <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Coordination</p>
+        <p class="mt-3 text-sm font-semibold text-cream">Tribe Operations</p>
+        <p class="mt-2 text-sm leading-6 text-space-500">
+          Aggregate tribe fleet view, shared governance, and coordinated infrastructure management.
+        </p>
       </div>
     </div>
     """
@@ -333,4 +373,12 @@ defmodule SigilWeb.DashboardLive.Components do
   defp wallet_name(%{"name" => name}) when is_binary(name), do: name
   defp wallet_name(%{name: name}) when is_binary(name), do: name
   defp wallet_name(_wallet), do: "Unknown Wallet"
+
+  @spec type_counts([term()]) :: [{String.t(), non_neg_integer()}]
+  defp type_counts(assemblies) do
+    assemblies
+    |> Enum.group_by(&assembly_type_label/1)
+    |> Enum.map(fn {type, list} -> {type, length(list)} end)
+    |> Enum.sort_by(fn {type, _} -> type end)
+  end
 end

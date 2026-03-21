@@ -7,17 +7,19 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   import SigilWeb.AssemblyHelpers, except: [assembly_name: 1]
   import SigilWeb.DiplomacyLive.Components, only: [signing_overlay: 1]
-
   import SigilWeb.TransactionHelpers, only: [localnet?: 0, sui_chain: 0]
 
+  import SigilWeb.MonitorHelpers,
+    only: [monitor_dependencies: 1, initial_depletion: 1, relative_depletion_label: 1]
+
   alias Sigil.Assemblies
-  alias Sigil.GameState.Poller
+  alias Sigil.GameState.MonitorSupervisor
   alias Sigil.Sui.Types.{Assembly, Character, Gate, NetworkNode, StorageUnit, Turret}
 
   @assembly_topic_prefix "assembly:"
 
   @doc """
-  Loads the requested cached assembly, subscribes for updates, and starts a linked poller.
+  Loads the requested cached assembly, subscribes for updates, and ensures a monitor is running.
   """
   @impl true
   @spec mount(map(), map(), Phoenix.LiveView.Socket.t()) :: {:ok, Phoenix.LiveView.Socket.t()}
@@ -30,12 +32,12 @@ defmodule SigilWeb.AssemblyDetailLive do
             assembly: assembly,
             assembly_type: assembly_type(assembly),
             page_title: assembly_name(assembly),
-            poller: nil,
             signing_state: :idle,
+            depletion: initial_depletion(assembly),
             is_owner: owner?(socket, assembly_id)
           )
           |> maybe_subscribe(assembly_id)
-          |> maybe_start_poller(assembly_id)
+          |> maybe_ensure_monitor(assembly_id)
 
         {:ok, socket}
 
@@ -106,7 +108,6 @@ defmodule SigilWeb.AssemblyDetailLive do
      |> assign(signing_state: :idle)}
   end
 
-  # Ignore wallet discovery events — hook auto-connects silently
   def handle_event("wallet_detected", _params, socket), do: {:noreply, socket}
   def handle_event("wallet_error", _params, socket), do: {:noreply, socket}
 
@@ -116,12 +117,23 @@ defmodule SigilWeb.AssemblyDetailLive do
           {:noreply, Phoenix.LiveView.Socket.t()}
   def handle_info(message, socket) do
     case message do
+      {:assembly_monitor, _assembly_id, %{assembly: assembly, depletion: depletion}} ->
+        {:noreply,
+         assign(socket,
+           assembly: assembly,
+           assembly_type: assembly_type(assembly),
+           page_title: assembly_name(assembly),
+           depletion: depletion,
+           signing_state: reset_signing_state(socket.assigns.signing_state)
+         )}
+
       {:assembly_updated, assembly} ->
         {:noreply,
          assign(socket,
            assembly: assembly,
            assembly_type: assembly_type(assembly),
            page_title: assembly_name(assembly),
+           depletion: initial_depletion(assembly),
            signing_state: reset_signing_state(socket.assigns.signing_state)
          )}
 
@@ -150,22 +162,40 @@ defmodule SigilWeb.AssemblyDetailLive do
           <div>
             <p class="font-mono text-xs uppercase tracking-[0.35em] text-quantum-300">Assembly uplink</p>
             <div class="mt-4 flex flex-wrap items-center gap-3">
-              <span class="rounded-full border border-space-600/80 bg-space-800/80 px-3 py-1 font-mono text-xs uppercase tracking-[0.25em] text-quantum-300">
+              <span class={type_badge_classes(@assembly)}>
                 <%= assembly_type_label(@assembly) %>
               </span>
               <span class={status_badge_classes(@assembly)}><%= assembly_status(@assembly) %></span>
             </div>
             <h1 class="mt-4 text-4xl font-semibold text-cream"><%= assembly_name(@assembly) %></h1>
-            <p class="mt-3 break-all font-mono text-sm text-foreground"><%= @assembly.id %></p>
-            <p class="mt-4 max-w-3xl text-sm leading-6 text-space-500"><%= assembly_description(@assembly) %></p>
+            <div class="mt-3 flex items-center gap-2">
+              <p class="break-all font-mono text-sm text-foreground"><%= @assembly.id %></p>
+              <button
+                type="button"
+                class="shrink-0 rounded-full border border-space-600/80 bg-space-900/70 px-2 py-0.5 font-mono text-[0.6rem] text-space-500 transition hover:border-quantum-400/40 hover:text-quantum-300"
+                onclick={"navigator.clipboard.writeText('#{@assembly.id}').then(() => { this.textContent = 'Copied!'; setTimeout(() => { this.textContent = 'Copy'; }, 1500); })"}
+              >
+                Copy
+              </button>
+            </div>
+            <p :if={has_description?(@assembly)} class="mt-4 max-w-3xl text-sm leading-6 text-space-500"><%= assembly_description(@assembly) %></p>
           </div>
 
-          <.link
-            navigate={~p"/"}
-            class="inline-flex items-center rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-foreground transition hover:border-quantum-400 hover:text-quantum-300"
-          >
-            Back to Dashboard
-          </.link>
+          <div class="flex flex-wrap gap-2">
+            <.link
+              navigate={~p"/"}
+              class="inline-flex items-center rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-foreground transition hover:border-quantum-400 hover:text-quantum-300"
+            >
+              Dashboard
+            </.link>
+            <.link
+              :if={@active_character && @active_character.tribe_id && @active_character.tribe_id > 0}
+              navigate={~p"/tribe/#{@active_character.tribe_id}"}
+              class="inline-flex items-center rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-foreground transition hover:border-quantum-400 hover:text-quantum-300"
+            >
+              Tribe
+            </.link>
+          </div>
         </div>
 
         <div class="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -194,12 +224,20 @@ defmodule SigilWeb.AssemblyDetailLive do
           <% :gate -> %>
             <div class="mt-8 space-y-4">
               <div class="grid gap-4 md:grid-cols-2">
-                <.detail_card
-                  title="Linked Gate ID"
-                  value={linked_gate_label(@assembly.linked_gate_id)}
-                  mono
-                  full_value={@assembly.linked_gate_id}
-                />
+                <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-4">
+                  <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Linked Gate</p>
+                  <%= if @assembly.linked_gate_id && byte_size(@assembly.linked_gate_id) > 0 do %>
+                    <.link
+                      navigate={~p"/assembly/#{@assembly.linked_gate_id}"}
+                      class="mt-3 block font-mono text-sm text-quantum-300 transition hover:text-cream"
+                      title={@assembly.linked_gate_id}
+                    >
+                      <%= truncate_id(@assembly.linked_gate_id) %>
+                    </.link>
+                  <% else %>
+                    <p class="mt-3 font-mono text-sm text-foreground">Not linked</p>
+                  <% end %>
+                </div>
                 <.detail_card
                   title="Extension"
                   value={extension_label(@assembly.extension)}
@@ -230,8 +268,8 @@ defmodule SigilWeb.AssemblyDetailLive do
                   <p class="mt-4 text-sm text-space-500">Empty</p>
                 <% else %>
                   <div class="mt-4 space-y-2">
-                    <p :for={inventory_key <- @assembly.inventory_keys} class="break-all font-mono text-sm text-foreground">
-                      <%= inventory_key %>
+                    <p :for={inventory_key <- @assembly.inventory_keys} class="font-mono text-sm text-foreground" title={inventory_key}>
+                      <%= truncate_id(inventory_key) %>
                     </p>
                   </div>
                 <% end %>
@@ -252,9 +290,31 @@ defmodule SigilWeb.AssemblyDetailLive do
                     <span><%= fuel_percent_label(@assembly.fuel) %></span>
                   </div>
                   <div class="mt-3 h-3 rounded-full bg-space-700">
-                    <div class="h-full rounded-full bg-quantum-400" style={"width: #{fuel_percent(@assembly.fuel)}%"}></div>
+                    <div class={["h-full rounded-full", fuel_bar_color(@assembly.fuel)]} style={"width: #{fuel_bar_width(@assembly.fuel)}%"}></div>
                   </div>
                 </div>
+
+                <%= if @depletion do %>
+                  <div class="rounded-2xl border border-space-600/80 bg-space-900/60 p-4">
+                    <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Fuel Forecast</p>
+                    <%= case @depletion do %>
+                      <% {:depletes_at, depletes_at} -> %>
+                        <p class="mt-3 text-sm text-cream">Depletes at <%= Calendar.strftime(depletes_at, "%Y-%m-%d %H:%M:%S UTC") %></p>
+                        <div
+                          id={"fuel-countdown-#{@assembly.id}"}
+                          class="mt-2 text-sm text-space-500"
+                          phx-hook="FuelCountdown"
+                          data-depletes-at={DateTime.to_iso8601(depletes_at)}
+                        >
+                          in <%= relative_depletion_label(depletes_at) %>
+                        </div>
+                      <% :not_burning -> %>
+                        <p class="mt-3 text-sm text-space-500">Not burning</p>
+                      <% :no_fuel -> %>
+                        <p class="mt-3 text-sm text-space-500">No fuel</p>
+                    <% end %>
+                  </div>
+                <% end %>
 
                 <div class="grid gap-4 md:grid-cols-2">
                   <.detail_card title="Burn Rate" value={format_burn_rate(@assembly.fuel.burn_rate_in_ms)} mono />
@@ -287,9 +347,13 @@ defmodule SigilWeb.AssemblyDetailLive do
                     <p class="mt-4 text-sm text-space-500">No connections</p>
                   <% else %>
                     <div class="mt-4 space-y-2">
-                      <p :for={assembly_id <- @assembly.connected_assembly_ids} class="break-all font-mono text-sm text-foreground">
-                        <%= assembly_id %>
-                      </p>
+                      <.link
+                        :for={assembly_id <- @assembly.connected_assembly_ids}
+                        navigate={~p"/assembly/#{assembly_id}"}
+                        class="block break-all font-mono text-sm text-quantum-300 transition hover:text-cream"
+                      >
+                        <%= truncate_id(assembly_id) %>
+                      </.link>
                     </div>
                   <% end %>
                 </div>
@@ -309,58 +373,6 @@ defmodule SigilWeb.AssemblyDetailLive do
     """
   end
 
-  attr :assembly, :map, required: true
-  attr :active_character, :map, default: nil
-
-  defp gate_extension_panel(assigns) do
-    ~H"""
-    <div class="rounded-2xl border border-quantum-400/30 bg-space-800/70 p-5">
-      <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Sigil Extension</p>
-
-          <%= if extension_active?(@assembly.extension) do %>
-            <p class="mt-3 text-sm font-semibold text-cream">Extension Active</p>
-            <p class="mt-2 break-all font-mono text-sm text-foreground"><%= @assembly.extension %></p>
-          <% else %>
-            <p class="mt-3 text-sm text-space-500">No extension configured</p>
-          <% end %>
-        </div>
-
-        <div class="flex flex-col items-start gap-3">
-          <%= if @active_character do %>
-            <button
-              type="button"
-              phx-click="authorize_extension"
-              class="inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
-            >
-              Authorize Sigil Extension
-            </button>
-          <% else %>
-            <p class="text-sm text-space-500">Reconnect your wallet</p>
-          <% end %>
-        </div>
-      </div>
-    </div>
-    """
-  end
-
-  attr :title, :string, required: true
-  attr :value, :string, required: true
-  attr :full_value, :string, default: nil
-  attr :mono, :boolean, default: false
-
-  defp detail_card(assigns) do
-    ~H"""
-    <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-4">
-      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300"><%= @title %></p>
-      <p class={["mt-3 break-all text-sm text-cream", @mono && "font-mono text-foreground"]} title={@full_value || @value}>
-        <%= @value %>
-      </p>
-    </div>
-    """
-  end
-
   @spec maybe_subscribe(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_subscribe(socket, assembly_id) do
     if connected?(socket) do
@@ -370,18 +382,25 @@ defmodule SigilWeb.AssemblyDetailLive do
     socket
   end
 
-  @spec maybe_start_poller(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
-  defp maybe_start_poller(
-         %{assigns: %{cache_tables: tables, pubsub: pubsub}} = socket,
-         assembly_id
-       ) do
-    if connected?(socket) and is_map(tables) do
-      {:ok, poller} =
-        Poller.start_link(assembly_ids: [assembly_id], tables: tables, pubsub: pubsub)
+  @spec maybe_ensure_monitor(Phoenix.LiveView.Socket.t(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  defp maybe_ensure_monitor(socket, assembly_id) do
+    with true <- connected?(socket),
+         {:ok, supervisor, registry} <- monitor_dependencies(socket),
+         true <- is_map(socket.assigns[:cache_tables]) do
+      :ok =
+        MonitorSupervisor.ensure_monitors(
+          supervisor,
+          [assembly_id],
+          registry: registry,
+          tables: socket.assigns.cache_tables,
+          pubsub: socket.assigns.pubsub
+        )
 
-      assign(socket, poller: poller)
-    else
       socket
+    else
+      _other ->
+        socket
     end
   end
 
@@ -427,7 +446,9 @@ defmodule SigilWeb.AssemblyDetailLive do
   defp assembly_name(%{metadata: %{name: name}}) when is_binary(name) and byte_size(name) > 0,
     do: name
 
-  defp assembly_name(%{id: _assembly_id}), do: "Unnamed"
+  defp assembly_name(assembly) do
+    "#{assembly_type_label(assembly)} #{truncate_id(assembly.id)}"
+  end
 
   @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   defp enter_signing(socket, tx_bytes) do

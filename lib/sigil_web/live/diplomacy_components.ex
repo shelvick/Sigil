@@ -21,8 +21,9 @@ defmodule SigilWeb.DiplomacyLive.Components do
     ~H"""
     <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
       <h2 class="text-2xl font-semibold text-cream">No Standings Table</h2>
-      <p class="mt-4 text-sm text-space-500">
-        Your tribe doesn&#39;t have a Standings Table yet. Create one to manage diplomatic standings with other tribes.
+      <p class="mt-4 max-w-2xl text-sm leading-6 text-space-500">
+        A Standings Table is an on-chain Sui object that controls how your tribe&rsquo;s infrastructure
+        treats other players. Set standings once &mdash; every gate with the Sigil extension enforces them automatically.
       </p>
       <button
         type="button"
@@ -31,6 +32,29 @@ defmodule SigilWeb.DiplomacyLive.Components do
       >
         Create Standings Table
       </button>
+
+      <div class="mt-8 grid gap-4 md:grid-cols-5">
+        <div class="rounded-xl border border-warning/30 bg-warning/5 p-3 text-center">
+          <p class="font-mono text-xs font-semibold uppercase text-warning">Hostile</p>
+          <p class="mt-1 text-xs text-space-500">Gates deny access</p>
+        </div>
+        <div class="rounded-xl border border-quantum-600/30 bg-quantum-600/5 p-3 text-center">
+          <p class="font-mono text-xs font-semibold uppercase text-quantum-600">Unfriendly</p>
+          <p class="mt-1 text-xs text-space-500">Cautious treatment</p>
+        </div>
+        <div class="rounded-xl border border-space-500/30 bg-space-500/5 p-3 text-center">
+          <p class="font-mono text-xs font-semibold uppercase text-space-500">Neutral</p>
+          <p class="mt-1 text-xs text-space-500">Default standing</p>
+        </div>
+        <div class="rounded-xl border border-success/30 bg-success/5 p-3 text-center">
+          <p class="font-mono text-xs font-semibold uppercase text-success">Friendly</p>
+          <p class="mt-1 text-xs text-space-500">Full gate access</p>
+        </div>
+        <div class="rounded-xl border border-quantum-300/30 bg-quantum-300/5 p-3 text-center">
+          <p class="font-mono text-xs font-semibold uppercase text-quantum-300">Allied</p>
+          <p class="mt-1 text-xs text-space-500">Full access + trust</p>
+        </div>
+      </div>
     </div>
     """
   end

@@ -31,24 +31,37 @@ defmodule Mix.Tasks.Sigil.PopulateStaticData do
   @doc "Runs the static data population task."
   @impl Mix.Task
   @spec run([String.t()]) :: :ok
-  def run(args) do
+  def run(args), do: run(args, [])
+
+  @doc """
+  Runs the task with injectable options for test isolation.
+
+  Accepts `:output_dir` and `:world_client` to avoid reading global
+  Application env, enabling in-process testing without subprocesses.
+  """
+  @spec run([String.t()], keyword()) :: :ok
+  def run(args, opts) do
     selected_tables = parse_args!(args)
 
     {:ok, _apps} = Application.ensure_all_started(:req)
 
     output_dir =
-      Application.get_env(
-        :sigil,
-        :static_data_dir,
-        Application.app_dir(:sigil, "priv/static_data")
-      )
+      Keyword.get_lazy(opts, :output_dir, fn ->
+        Application.get_env(
+          :sigil,
+          :static_data_dir,
+          Application.app_dir(:sigil, "priv/static_data")
+        )
+      end)
+
+    client = Keyword.get_lazy(opts, :world_client, fn -> world_client() end)
 
     File.mkdir_p!(output_dir)
 
     Mix.shell().info("Sigil Static Data Population")
     Mix.shell().info("==================================")
 
-    results = Enum.map(selected_tables, &populate_table(&1, output_dir, world_client()))
+    results = Enum.map(selected_tables, &populate_table(&1, output_dir, client))
     success_count = Enum.count(results, &match?({_, {:ok, _}}, &1))
 
     Mix.shell().info("==================================")

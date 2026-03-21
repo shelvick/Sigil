@@ -6,13 +6,14 @@
 - `SigilWeb.Endpoint` (`endpoint.ex`) — Bandit HTTP server, LiveView socket, static assets, session config
 - `SigilWeb.Router` (`router.ex`) — Browser + API pipelines, `live_session :wallet_session` with `WalletSession` on_mount, session controller routes, health check, dev LiveDashboard
 - `SigilWeb.WalletSession` (`wallet_session.ex`) — LiveView on_mount hook: resolves cache_tables, pubsub, current_account, active_character (from session cookie)
-- `SigilWeb.CacheResolver` (`cache_resolver.ex`) — Shared supervisor lookup for Cache tables (used by WalletSession + SessionController)
+- `SigilWeb.CacheResolver` (`cache_resolver.ex`) — Shared supervisor lookup for Cache tables and MonitorSupervisor PID (used by WalletSession + SessionController + LiveViews)
+- `SigilWeb.MonitorHelpers` (`monitor_helpers.ex`) — Shared helpers: monitor_dependencies/1 (resolve supervisor + registry), initial_depletion/1 (compute depletion for mount), relative_depletion_label/1 (format countdown text)
 - `SigilWeb.AssemblyHelpers` (`assembly_helpers.ex`) — Shared display helpers: type labels, names, status badges, fuel gauges, ID truncation, descriptions, extension labels, location hashes, burn rates, timestamps, energy labels
 - `SigilWeb.Layouts` (`components/layouts.ex`) — Root + app layout templates, `truncate_wallet/1`, `character_display_name/1`, `character_tribe_label/1`
 - `SigilWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session + PUT /session/character/:id: zkLogin-verified wallet auth, active character switching, friendly error messages
-- `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: multi-account wallet connect (unauth), character-scoped assembly manifest (auth), character picker, PubSub subscriptions, linked StatePoller
+- `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: multi-account wallet connect (unauth), character-scoped assembly manifest (auth), character picker, PubSub subscriptions, monitor-driven updates via ensure_monitors
 - `SigilWeb.DashboardLive.Components` (`live/dashboard_components.ex`) — Template components: authenticated_view (with character picker), assembly_manifest, wallet_connect_view, wallet_state_panel (idle/connecting/account_selection/signing/error)
-- `SigilWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering (Gate/Turret/StorageUnit/NetworkNode/Assembly), fuel/energy/connection panels, gate extension management (authorize via wallet signing), PubSub updates
+- `SigilWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering (Gate/Turret/StorageUnit/NetworkNode/Assembly), fuel/energy/connection panels, fuel depletion prediction with FuelCountdown JS hook, gate extension management (authorize via wallet signing), monitor-driven PubSub updates
 - `SigilWeb.TribeOverviewLive` (`live/tribe_overview_live.ex`) — Tribe overview at `/tribe/:tribe_id`: member list (connected vs chain-only), assembly aggregation, standings summary, PubSub updates
 - `SigilWeb.DiplomacyLive` (`live/diplomacy_live.ex`) — Diplomacy editor at `/tribe/:tribe_id/diplomacy`: page state machine, standings CRUD, wallet tx signing flow, PubSub updates
 - `SigilWeb.DiplomacyLive.Components` (`live/diplomacy_components.ex`) — Extracted template components: no_table_view, select_table_view, signing_overlay, tribe_standings_section, pilot_overrides_section, default_standing_section + display helpers
@@ -28,6 +29,7 @@
 
 ### CacheResolver (cache_resolver.ex)
 - `application_cache_tables/0`: Supervisor.which_children lookup for Cache PID → Cache.tables/1
+- `application_monitor_supervisor/0`: Supervisor.which_children lookup for MonitorSupervisor PID → pid | nil
 
 ### AssemblyHelpers (assembly_helpers.ex)
 - `assembly_type_label/1`: Struct → "Gate"/"Turret"/"NetworkNode"/"StorageUnit"/"Assembly"
@@ -52,7 +54,7 @@
 - `friendly_error/1`: Maps error atoms/tuples to user-facing messages
 
 ### DashboardLive (live/dashboard_live.ex)
-- `mount/3`: assign_base_state → maybe_load_assemblies (character-scoped) → maybe_subscribe → maybe_start_poller
+- `mount/3`: assign_base_state → maybe_load_assemblies (character-scoped) → maybe_subscribe → maybe_ensure_monitors
 - `handle_event("wallet_detected")`: Store wallets, auto-connect if single, ignore during active auth/account_selection
 - `handle_event("wallet_accounts")`: Multi-account → store accounts, set :account_selection state
 - `handle_event("select_account")`: Push select_account to JS hook with chosen index
@@ -70,12 +72,13 @@
 - `active_character_name/2`, `active_character_tribe_label/1`, `character_name/1`, `character_tribe_label/1`: Display helpers
 
 ### AssemblyDetailLive (live/assembly_detail_live.ex)
-- `mount/3`: fetch_assembly from cache → assign (incl. signing_state, is_owner) → subscribe → start poller (or redirect if not found)
+- `mount/3`: fetch_assembly from cache → assign (incl. signing_state, is_owner, depletion) → subscribe → ensure_monitors (or redirect if not found)
 - `handle_event("authorize_extension")`: Build gate extension tx → push request_sign_transaction → set signing_state
 - `handle_event("transaction_signed")`: Submit signed tx → flash success → push report_transaction_effects
 - `handle_event("transaction_error")`: Reset signing_state → flash error
 - `handle_event("wallet_detected"|"wallet_error")`: No-op handlers for hook discovery events
-- `handle_info({:assembly_updated, assembly})`: Replace assembly assigns, reset signing_state if :submitted
+- `handle_info({:assembly_monitor, _id, payload})`: Replace assembly + depletion assigns from monitor payload, reset signing_state if :submitted
+- `handle_info({:assembly_updated, assembly})`: Replace assembly assigns, reset signing_state if :submitted (non-monitor paths)
 
 ### TribeOverviewLive (live/tribe_overview_live.ex)
 - `mount/3`: authorize → load tribe/members/assemblies/standings → subscribe "tribes"+"diplomacy"
@@ -93,7 +96,7 @@
 ## Patterns
 
 - Session DI: on_mount checks session for "cache_tables"/"pubsub" (test injection) before CacheResolver fallback
-- LiveView connected? guard: PubSub subscribe + poller start only on connected mount
+- LiveView connected? guard: PubSub subscribe + ensure_monitors only on connected mount
 - Disconnected mount: pre-populate from ETS cache for fast static render
 - Row navigation: `phx-click={JS.navigate(...)}` on table rows
 - EVE Frontier theme tokens: quantum-* (accents), space-* (backgrounds), success/warning (status), cream/foreground (text)
@@ -106,9 +109,11 @@
 - `Sigil.Sui.ZkLoginVerifier` — challenge nonce generation + zkLogin verification
 - `Sigil.Diplomacy` — standings CRUD, tx building, tribe name resolution
 - `Sigil.Tribes` — tribe member discovery + assembly aggregation
-- `Sigil.GameState.Poller` — linked assembly polling
+- `Sigil.GameState.MonitorSupervisor` — persistent assembly monitoring (ensure_monitors)
+- `Sigil.GameState.FuelAnalytics` — fuel depletion computation (initial_depletion)
 - `Phoenix.PubSub` — real-time updates
 
 ## JS Hooks
 
 - `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, multi-account selection (pendingAccounts + select_account), signPersonalMessage (auth), signTransaction (diplomacy + gate extension), reportTransactionEffects (wallet cache update), wallet change detection, hidden form POST. Registered in `assets/js/app.js`.
+- `assets/js/hooks/fuel_countdown.js` — FuelCountdown hook: reads `data-depletes-at` ISO timestamp, runs `setInterval(1000)` countdown displaying "Xh Ym Zs", handles updated/destroyed lifecycle, sentinel values for not-burning/no-fuel. Registered in `assets/js/app.js`.

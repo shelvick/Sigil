@@ -548,7 +548,7 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     # Should show type counts in aggregate
     assert html =~ "Gate"
     assert html =~ "Turret"
-    assert html =~ "NetworkNode"
+    assert html =~ "Network Node"
     refute html =~ "No assemblies found"
   end
 

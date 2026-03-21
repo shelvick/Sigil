@@ -60,7 +60,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
              )
 
     assert html =~ "Create Standings Table"
-    assert html =~ "doesn&#39;t have a Standings Table"
+    assert html =~ "on-chain Sui object"
+    assert html =~ "Hostile"
+    assert html =~ "Allied"
     refute html =~ "Manage Standings"
   end
 

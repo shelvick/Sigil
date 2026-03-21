@@ -8,8 +8,10 @@ defmodule SigilWeb.DashboardLive do
   import SigilWeb.DashboardLive.Components
 
   alias Sigil.Assemblies
-  alias Sigil.GameState.Poller
+  alias Sigil.GameState.MonitorSupervisor
   alias Sigil.Sui.ZkLoginVerifier
+
+  import SigilWeb.MonitorHelpers, only: [monitor_dependencies: 1]
 
   @owner_topic_prefix "assemblies:"
   @assembly_topic_prefix "assembly:"
@@ -25,7 +27,7 @@ defmodule SigilWeb.DashboardLive do
       |> assign_base_state(params)
       |> maybe_load_assemblies()
       |> maybe_subscribe()
-      |> maybe_start_poller()
+      |> maybe_ensure_monitors()
 
     {:ok, socket}
   end
@@ -33,16 +35,21 @@ defmodule SigilWeb.DashboardLive do
   @doc false
   @impl true
   @spec handle_info(
-          {:assemblies_discovered, [Assemblies.assembly()]},
+          {:assemblies_discovered, [Assemblies.assembly()]}
+          | {:assembly_monitor, String.t(), %{assembly: Assemblies.assembly()}}
+          | {:assembly_updated, Assemblies.assembly()},
           Phoenix.LiveView.Socket.t()
-        ) ::
-          {:noreply, Phoenix.LiveView.Socket.t()}
+        ) :: {:noreply, Phoenix.LiveView.Socket.t()}
   def handle_info({:assemblies_discovered, assemblies}, socket) when is_list(assemblies) do
     {:noreply,
      socket
-     |> assign(assemblies: assemblies, discovery_error: false)
+     |> assign(assemblies: sort_assemblies(assemblies), discovery_error: false)
      |> subscribe_to_assembly_topics(assemblies)
-     |> maybe_update_poller(assemblies)}
+     |> maybe_ensure_monitors_for(assemblies)}
+  end
+
+  def handle_info({:assembly_monitor, _assembly_id, %{assembly: assembly}}, socket) do
+    {:noreply, assign(socket, assemblies: replace_assembly(socket.assigns.assemblies, assembly))}
   end
 
   @doc false
@@ -194,9 +201,15 @@ defmodule SigilWeb.DashboardLive do
             </p>
             <h1 class="mt-3 text-4xl font-semibold text-cream sm:text-5xl">Command Deck</h1>
           </div>
-          <div class="hidden rounded-full border border-quantum-600/60 bg-quantum-700/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.25em] text-quantum-300 md:block">
-            Waiting for capsuleer
-          </div>
+          <%= if @current_account do %>
+            <div class="hidden rounded-full border border-success/40 bg-success/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.25em] text-success md:block">
+              Uplink active
+            </div>
+          <% else %>
+            <div class="hidden rounded-full border border-quantum-600/60 bg-quantum-700/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.25em] text-quantum-300 md:block">
+              Waiting for capsuleer
+            </div>
+          <% end %>
         </div>
 
         <%= if @current_account do %>
@@ -226,7 +239,6 @@ defmodule SigilWeb.DashboardLive do
       page_title: "Connect Wallet",
       assemblies: [],
       loading: false,
-      poller: nil,
       discovery_error: false,
       wallet_state: :idle,
       wallet_address: nil,
@@ -244,7 +256,6 @@ defmodule SigilWeb.DashboardLive do
       page_title: "Dashboard",
       assemblies: [],
       loading: false,
-      poller: nil,
       discovery_error: false
     )
   end
@@ -264,7 +275,7 @@ defmodule SigilWeb.DashboardLive do
              socket.assigns[:pubsub]
            ) do
         {:ok, assemblies} ->
-          assign(socket, assemblies: assemblies, discovery_error: false)
+          assign(socket, assemblies: sort_assemblies(assemblies), discovery_error: false)
 
         {:error, _reason} ->
           socket
@@ -273,7 +284,7 @@ defmodule SigilWeb.DashboardLive do
       end
     else
       assign(socket,
-        assemblies: list_assemblies(address, socket.assigns[:cache_tables]),
+        assemblies: sort_assemblies(list_assemblies(address, socket.assigns[:cache_tables])),
         discovery_error: false
       )
     end
@@ -293,35 +304,34 @@ defmodule SigilWeb.DashboardLive do
     end
   end
 
-  @spec maybe_start_poller(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  defp maybe_start_poller(%{assigns: %{current_account: nil}} = socket), do: socket
+  @spec maybe_ensure_monitors(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp maybe_ensure_monitors(%{assigns: %{current_account: nil}} = socket), do: socket
 
-  defp maybe_start_poller(
-         %{assigns: %{assemblies: assemblies, cache_tables: tables, pubsub: pubsub}} = socket
-       ) do
-    if connected?(socket) and is_map(tables) do
-      {:ok, poller} =
-        Poller.start_link(
-          assembly_ids: Enum.map(assemblies, & &1.id),
-          tables: tables,
-          pubsub: pubsub
+  defp maybe_ensure_monitors(%{assigns: %{assemblies: assemblies}} = socket) do
+    maybe_ensure_monitors_for(socket, assemblies)
+  end
+
+  @spec maybe_ensure_monitors_for(Phoenix.LiveView.Socket.t(), [Assemblies.assembly()]) ::
+          Phoenix.LiveView.Socket.t()
+  defp maybe_ensure_monitors_for(socket, assemblies) when is_list(assemblies) do
+    with true <- connected?(socket),
+         {:ok, supervisor, registry} <- monitor_dependencies(socket),
+         true <- is_map(socket.assigns[:cache_tables]) do
+      :ok =
+        MonitorSupervisor.ensure_monitors(
+          supervisor,
+          Enum.map(assemblies, & &1.id),
+          registry: registry,
+          tables: socket.assigns.cache_tables,
+          pubsub: socket.assigns.pubsub
         )
 
-      assign(socket, poller: poller)
-    else
       socket
+    else
+      _other ->
+        socket
     end
   end
-
-  @spec maybe_update_poller(Phoenix.LiveView.Socket.t(), [Assemblies.assembly()]) ::
-          Phoenix.LiveView.Socket.t()
-  defp maybe_update_poller(%{assigns: %{poller: poller}} = socket, assemblies)
-       when is_pid(poller) do
-    :ok = Poller.update_assembly_ids(poller, Enum.map(assemblies, & &1.id))
-    socket
-  end
-
-  defp maybe_update_poller(socket, _assemblies), do: socket
 
   @spec active_character_ids(Phoenix.LiveView.Socket.t()) :: [String.t()]
   defp active_character_ids(%{assigns: %{active_character: %{id: id}}}), do: [id]
@@ -400,4 +410,13 @@ defmodule SigilWeb.DashboardLive do
 
   @spec assembly_topic(String.t()) :: String.t()
   defp assembly_topic(assembly_id), do: @assembly_topic_prefix <> assembly_id
+
+  @spec sort_assemblies([Assemblies.assembly()]) :: [Assemblies.assembly()]
+  defp sort_assemblies(assemblies) do
+    Enum.sort_by(assemblies, fn assembly ->
+      status_priority = if assembly.status.status == :offline, do: 0, else: 1
+      type_label = SigilWeb.AssemblyHelpers.assembly_type_label(assembly)
+      {status_priority, type_label}
+    end)
+  end
 end

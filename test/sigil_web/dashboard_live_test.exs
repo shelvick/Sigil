@@ -1,3 +1,47 @@
+defmodule SigilWeb.DashboardLiveIsolatedTestLive do
+  @moduledoc """
+  Test-only wrapper that mounts `SigilWeb.DashboardLive` with injectable monitor dependencies.
+  """
+
+  use SigilWeb, :live_view
+
+  on_mount SigilWeb.WalletSession
+
+  @doc false
+  @impl true
+  def mount(params, session, socket) do
+    socket =
+      socket
+      |> maybe_assign_monitor_dependency(:monitor_supervisor, session)
+      |> maybe_assign_monitor_dependency(:monitor_registry, session)
+
+    SigilWeb.DashboardLive.mount(params, session, socket)
+  end
+
+  @doc false
+  @impl true
+  def render(assigns), do: SigilWeb.DashboardLive.render(assigns)
+
+  @doc false
+  @impl true
+  def handle_info(message, socket) do
+    SigilWeb.DashboardLive.handle_info(message, socket)
+  end
+
+  @doc false
+  @impl true
+  def handle_event(event, params, socket) do
+    SigilWeb.DashboardLive.handle_event(event, params, socket)
+  end
+
+  defp maybe_assign_monitor_dependency(socket, key, session) do
+    case Map.fetch(session, Atom.to_string(key)) do
+      {:ok, value} -> Phoenix.Component.assign(socket, key, value)
+      :error -> socket
+    end
+  end
+end
+
 defmodule SigilWeb.DashboardLiveTest do
   @moduledoc """
   Covers authenticated dashboard rendering and end-to-end wallet session flow.
@@ -9,6 +53,7 @@ defmodule SigilWeb.DashboardLiveTest do
 
   alias Sigil.Cache
   alias Sigil.Accounts.Account
+  alias Sigil.GameState.MonitorSupervisor
   alias Sigil.Sui.Types.{Character, Gate, NetworkNode, Turret}
 
   @world_package_id "0x1111111111111111111111111111111111111111111111111111111111111111"
@@ -449,7 +494,7 @@ defmodule SigilWeb.DashboardLiveTest do
     assert html =~ "Jump Gate Alpha"
     assert html =~ "Node One"
     assert html =~ "Gate"
-    assert html =~ "NetworkNode"
+    assert html =~ "Network Node"
     assert html =~ "online"
     assert html =~ "50 / 5000"
   end
@@ -611,7 +656,59 @@ defmodule SigilWeb.DashboardLiveTest do
     refute updated_html =~ ">Jump Gate Alpha<"
   end
 
-  test "assemblies_discovered replaces the full list", %{
+  test "assembly list updates on monitor PubSub broadcast", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xgate-monitor-broadcast")}))
+    registry = unique_registry_name()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    expect_dashboard_discovery(wallet_address, [gate])
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    {:ok, view, html} =
+      isolated_dashboard_live(
+        conn,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
+    assert html =~ "Jump Gate Alpha"
+
+    updated_gate =
+      Gate.from_json(
+        gate_json(%{
+          "id" => uid(gate.id),
+          "metadata" => %{
+            "assembly_id" => "0xgate-metadata",
+            "name" => "Jump Gate Monitor Prime",
+            "description" => "Updated via monitor event",
+            "url" => "https://example.test/gates/monitor-prime"
+          }
+        })
+      )
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      "assembly:#{gate.id}",
+      {:assembly_monitor, gate.id, %{changes: [], assembly: updated_gate, depletion: nil}}
+    )
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Jump Gate Monitor Prime"
+    refute updated_html =~ ">Jump Gate Alpha<"
+  end
+
+  test "assemblies_discovered replaces list and ensures monitors", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -620,11 +717,23 @@ defmodule SigilWeb.DashboardLiveTest do
     account = account_fixture(wallet_address)
     gate = Gate.from_json(gate_json(%{"id" => uid("0xreplace-gate")}))
     turret = Turret.from_json(turret_json(%{"id" => uid("0xreplace-turret")}))
+    registry = unique_registry_name()
 
     Cache.put(cache_tables.accounts, wallet_address, account)
     expect_dashboard_discovery(wallet_address, [gate])
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
 
-    {:ok, view, html} = live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+    {:ok, view, html} =
+      isolated_dashboard_live(
+        conn,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
     assert html =~ "Jump Gate Alpha"
     refute html =~ "Defense Turret"
 
@@ -639,6 +748,55 @@ defmodule SigilWeb.DashboardLiveTest do
     assert updated_html =~ "Defense Turret"
     assert updated_html =~ "Turret"
     refute updated_html =~ "Jump Gate Alpha"
+    assert {:ok, _monitor} = MonitorSupervisor.get_monitor(registry, turret.id)
+  end
+
+  test "discovery triggers ensure_monitors for discovered assemblies", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xmonitor-discovery-gate")}))
+    registry = unique_registry_name()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    expect_dashboard_discovery(wallet_address, [gate])
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    {:ok, _view, _html} =
+      isolated_dashboard_live(
+        conn,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
+    assert {:ok, _monitor} = MonitorSupervisor.get_monitor(registry, gate.id)
+  end
+
+  test "discovery skips monitors when supervisor is nil", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xnil-supervisor-gate")}))
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    expect_dashboard_discovery(wallet_address, [gate])
+
+    {:ok, _view, html} =
+      isolated_dashboard_live(conn, wallet_address, cache_tables, pubsub)
+
+    assert html =~ "Jump Gate Alpha"
+    refute html =~ "Unable to refresh assemblies right now."
+    refute html =~ "No assemblies found"
   end
 
   test "shows empty state when no assemblies found", %{
@@ -836,7 +994,7 @@ defmodule SigilWeb.DashboardLiveTest do
     assert html =~ "Jump Gate Alpha"
     assert html =~ "Node One"
     assert html =~ "Gate"
-    assert html =~ "NetworkNode"
+    assert html =~ "Network Node"
     assert html =~ "online"
     assert html =~ "50 / 5000"
     assert html =~ "/assembly/#{gate.id}"
@@ -1044,25 +1202,46 @@ defmodule SigilWeb.DashboardLiveTest do
     end)
   end
 
+  defp unique_registry_name do
+    :"dashboard_live_registry_#{System.unique_integer([:positive])}"
+  end
+
   defp authenticated_conn(conn, wallet_address, cache_tables, pubsub) do
     authenticated_conn(conn, wallet_address, cache_tables, pubsub, nil)
   end
 
+  defp isolated_dashboard_live(conn, wallet_address, cache_tables, pubsub, extra_session \\ []) do
+    extra_session =
+      extra_session
+      |> Enum.map(fn {key, value} -> {to_string(key), value} end)
+      |> Map.new()
+
+    live_isolated(conn, SigilWeb.DashboardLiveIsolatedTestLive,
+      session:
+        authenticated_session(wallet_address, cache_tables, pubsub, nil)
+        |> Map.merge(extra_session)
+    )
+  end
+
   defp authenticated_conn(conn, wallet_address, cache_tables, pubsub, active_character_id) do
+    init_test_session(
+      conn,
+      authenticated_session(wallet_address, cache_tables, pubsub, active_character_id)
+    )
+  end
+
+  defp authenticated_session(wallet_address, cache_tables, pubsub, active_character_id) do
     session = %{
       "wallet_address" => wallet_address,
       "cache_tables" => cache_tables,
       "pubsub" => pubsub
     }
 
-    session =
-      if is_binary(active_character_id) do
-        Map.put(session, "active_character_id", active_character_id)
-      else
-        session
-      end
-
-    init_test_session(conn, session)
+    if is_binary(active_character_id) do
+      Map.put(session, "active_character_id", active_character_id)
+    else
+      session
+    end
   end
 
   defp assembly_json_for(%Gate{id: id, status: %{status: status}}) do

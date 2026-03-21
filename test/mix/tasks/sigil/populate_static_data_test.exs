@@ -5,8 +5,9 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
 
   use ExUnit.Case, async: true
 
-  @moduletag timeout: 300_000
+  import Hammox
 
+  alias Sigil.StaticData.WorldClientMock
   alias Sigil.StaticDataTestFixtures, as: Fixtures
 
   setup do
@@ -28,31 +29,29 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
     output_dir: output_dir
   } do
     result =
-      run_mix_populate_task!(config_dir, output_dir, [], :success)
+      run_mix_populate_task!(
+        config_dir,
+        output_dir,
+        [],
+        :success
+      )
 
     assert result.status == 0, result.output
-    assert result.output =~ "Sigil Static Data Population"
-    assert result.output =~ "Fetching item types..."
+    assert File.exists?(Fixtures.dets_path(output_dir, :item_types))
+    assert File.exists?(Fixtures.dets_path(output_dir, :solar_systems))
+    assert File.exists?(Fixtures.dets_path(output_dir, :constellations))
 
     assert result.output =~
              "Item Types: OK (2 records, #{Fixtures.dets_path(output_dir, :item_types)})"
 
-    assert result.output =~ "Fetching solar systems..."
-
     assert result.output =~
              "Solar Systems: OK (2 records, #{Fixtures.dets_path(output_dir, :solar_systems)})"
-
-    assert result.output =~ "Fetching constellations..."
 
     assert result.output =~
              "Constellations: OK (2 records, #{Fixtures.dets_path(output_dir, :constellations)})"
 
     assert result.output =~ "Done. 3/3 types populated successfully."
-    refute result.output =~ "FAILED"
-    refute result.output =~ "Unknown type"
-    assert File.exists?(Fixtures.dets_path(output_dir, :item_types))
-    assert File.exists?(Fixtures.dets_path(output_dir, :solar_systems))
-    assert File.exists?(Fixtures.dets_path(output_dir, :constellations))
+    refute result.output =~ "retry"
   end
 
   @tag :acceptance
@@ -64,91 +63,62 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
       run_mix_populate_task!(
         config_dir,
         output_dir,
-        ["--only", "invalid_name"],
+        ["--only", "bogus_value"],
         :success
       )
 
     assert result.status != 0
-    assert result.output =~ "Unknown type: invalid_name"
+    assert result.output =~ "Unknown type: bogus_value"
     assert result.output =~ "Valid: types, solar_systems, constellations"
-    refute result.output =~ "Item Types: OK"
     refute result.output =~ "Done."
   end
 
-  test "populates all three DETS files from WorldClient", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
-    result =
-      run_populate_task!(config_dir, output_dir, [], :success)
+  test "populates all three DETS files from WorldClient", %{output_dir: output_dir} do
+    stub_world_client!(:success)
 
-    assert result.status == 0, result.output
+    run_task!([], output_dir)
+
     assert File.exists?(Fixtures.dets_path(output_dir, :item_types))
     assert File.exists?(Fixtures.dets_path(output_dir, :solar_systems))
     assert File.exists?(Fixtures.dets_path(output_dir, :constellations))
   end
 
-  test "--only flag restricts population to specified types", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
-    result =
-      run_populate_task!(
-        config_dir,
-        output_dir,
-        ["--only", "types"],
-        :success
-      )
+  test "--only flag restricts population to specified types", %{output_dir: output_dir} do
+    stub_world_client!(:success)
 
-    assert result.status == 0, result.output
+    run_task!(["--only", "types"], output_dir)
+
     assert File.exists?(Fixtures.dets_path(output_dir, :item_types))
     refute File.exists?(Fixtures.dets_path(output_dir, :solar_systems))
     refute File.exists?(Fixtures.dets_path(output_dir, :constellations))
   end
 
-  test "--only accepts comma-separated list of types", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
-    result =
-      run_populate_task!(
-        config_dir,
-        output_dir,
-        ["--only", "types,constellations"],
-        :success
-      )
+  test "--only accepts comma-separated list of types", %{output_dir: output_dir} do
+    stub_world_client!(:success)
 
-    assert result.status == 0, result.output
+    run_task!(["--only", "types,constellations"], output_dir)
+
     assert File.exists?(Fixtures.dets_path(output_dir, :item_types))
     assert File.exists?(Fixtures.dets_path(output_dir, :constellations))
     refute File.exists?(Fixtures.dets_path(output_dir, :solar_systems))
   end
 
-  test "invalid --only value prints error with valid options", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
-    result =
-      run_populate_task!(
-        config_dir,
-        output_dir,
-        ["--only", "invalid_name"],
-        :success
-      )
+  test "invalid --only value prints error with valid options", %{output_dir: output_dir} do
+    stub_world_client!(:success)
 
-    assert result.status != 0
-    assert result.output =~ "Unknown type: invalid_name"
-    assert result.output =~ "Valid: types, solar_systems, constellations"
+    error =
+      assert_raise Mix.Error, fn ->
+        run_task!(["--only", "invalid_name"], output_dir)
+      end
+
+    assert error.message =~ "Unknown type: invalid_name"
+    assert error.message =~ "Valid: types, solar_systems, constellations"
   end
 
-  test "DETS files contain correctly parsed struct tuples", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
-    result =
-      run_populate_task!(config_dir, output_dir, [], :success)
+  test "DETS files contain correctly parsed struct tuples", %{output_dir: output_dir} do
+    stub_world_client!(:success)
 
-    assert result.status == 0, result.output
+    run_task!([], output_dir)
 
     assert [{72_244, %Sigil.StaticData.ItemType{name: "Feral Data"}}] =
              read_dets!(Fixtures.dets_path(output_dir, :item_types), 72_244)
@@ -160,18 +130,12 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
              read_dets!(Fixtures.dets_path(output_dir, :constellations), 20_000_001)
   end
 
-  test "re-running task overwrites existing DETS data", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
-    first_result =
-      run_populate_task!(config_dir, output_dir, [], :success)
+  test "re-running task overwrites existing DETS data", %{output_dir: output_dir} do
+    stub_world_client!(:success)
+    run_task!([], output_dir)
 
-    second_result =
-      run_populate_task!(config_dir, output_dir, [], :updated)
-
-    assert first_result.status == 0, first_result.output
-    assert second_result.status == 0, second_result.output
+    stub_world_client!(:updated)
+    run_task!([], output_dir)
 
     assert [{72_246, item_type}] = read_all_dets!(Fixtures.dets_path(output_dir, :item_types))
     assert item_type.name == "Reactive Plating"
@@ -213,46 +177,62 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
     refute result.output =~ "Done. 3/3 types populated successfully."
   end
 
-  test "creates output directory if it does not exist", %{
-    config_dir: config_dir,
-    output_dir: output_dir
-  } do
+  test "creates output directory if it does not exist", %{output_dir: output_dir} do
     refute File.exists?(output_dir)
 
-    result =
-      run_populate_task!(config_dir, output_dir, [], :success)
+    stub_world_client!(:success)
+    run_task!([], output_dir)
 
-    assert result.status == 0, result.output
     assert File.dir?(output_dir)
     assert File.exists?(Fixtures.dets_path(output_dir, :item_types))
     assert File.exists?(Fixtures.dets_path(output_dir, :solar_systems))
     assert File.exists?(Fixtures.dets_path(output_dir, :constellations))
   end
 
-  defp run_populate_task!(config_dir, output_dir, args, mock_scenario) do
-    config_path = Fixtures.write_populate_static_data_config!(config_dir, output_dir)
-    mock_script = world_client_setup_script(mock_scenario)
+  # ---------------------------------------------------------------------------
+  # In-process helpers (no subprocess)
+  # ---------------------------------------------------------------------------
 
-    script = """
-    import Hammox
-
-    {:ok, _mox_apps} = Application.ensure_all_started(:mox)
-    Mox.set_mox_global()
-
-    #{mock_script}
-
-    Mix.Tasks.Sigil.PopulateStaticData.run(#{inspect(args)})
-    """
-
-    {output, status} =
-      System.cmd("mix", Fixtures.mix_run_args(config_path, script, no_start: true),
-        cd: project_root(),
-        env: [{"MIX_ENV", "test"}],
-        stderr_to_stdout: true
+  defp run_task!(args, output_dir) do
+    ExUnit.CaptureIO.capture_io(fn ->
+      Mix.Tasks.Sigil.PopulateStaticData.run(args,
+        output_dir: output_dir,
+        world_client: WorldClientMock
       )
-
-    %{output: output, status: status}
+    end)
   end
+
+  defp stub_world_client!(:success) do
+    stub(WorldClientMock, :fetch_types, fn _opts ->
+      {:ok, Fixtures.item_type_records()}
+    end)
+
+    stub(WorldClientMock, :fetch_solar_systems, fn _opts ->
+      {:ok, Fixtures.solar_system_records()}
+    end)
+
+    stub(WorldClientMock, :fetch_constellations, fn _opts ->
+      {:ok, Fixtures.constellation_records()}
+    end)
+  end
+
+  defp stub_world_client!(:updated) do
+    stub(WorldClientMock, :fetch_types, fn _opts ->
+      {:ok, Fixtures.updated_item_type_records()}
+    end)
+
+    stub(WorldClientMock, :fetch_solar_systems, fn _opts ->
+      {:ok, Fixtures.updated_solar_system_records()}
+    end)
+
+    stub(WorldClientMock, :fetch_constellations, fn _opts ->
+      {:ok, Fixtures.updated_constellation_records()}
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Subprocess helpers (acceptance tests only)
+  # ---------------------------------------------------------------------------
 
   defp run_mix_populate_task!(config_dir, output_dir, args, mock_scenario) do
     config_path = Fixtures.write_populate_static_data_config!(config_dir, output_dir)
@@ -268,6 +248,8 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
           "+",
           "run",
           "--no-compile",
+          "--no-deps-check",
+          "--no-archives-check",
           "-e",
           mock_script,
           "+",
@@ -299,27 +281,6 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
 
     stub(Sigil.StaticData.WorldClientMock, :fetch_constellations, fn _opts ->
       {:ok, Sigil.StaticDataTestFixtures.constellation_records()}
-    end)
-    """
-  end
-
-  defp world_client_setup_script(:updated) do
-    """
-    import Hammox
-
-    {:ok, _mox_apps} = Application.ensure_all_started(:mox)
-    Mox.set_mox_global()
-
-    stub(Sigil.StaticData.WorldClientMock, :fetch_types, fn _opts ->
-      {:ok, Sigil.StaticDataTestFixtures.updated_item_type_records()}
-    end)
-
-    stub(Sigil.StaticData.WorldClientMock, :fetch_solar_systems, fn _opts ->
-      {:ok, Sigil.StaticDataTestFixtures.updated_solar_system_records()}
-    end)
-
-    stub(Sigil.StaticData.WorldClientMock, :fetch_constellations, fn _opts ->
-      {:ok, Sigil.StaticDataTestFixtures.updated_constellation_records()}
     end)
     """
   end

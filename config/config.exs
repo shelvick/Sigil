@@ -33,6 +33,8 @@ config :sigil, :eve_worlds, %{
 config :sigil, :eve_world, "stillness"
 
 config :sigil, :start_static_data, true
+config :sigil, :start_monitor_supervisor, true
+config :sigil, :monitor_registry, Sigil.GameState.MonitorRegistry
 
 config :sigil, SigilWeb.Endpoint,
   url: [host: "localhost"],

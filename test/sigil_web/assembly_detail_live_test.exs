@@ -10,6 +10,11 @@ defmodule SigilWeb.AssemblyDetailLiveIsolatedTestLive do
   @doc false
   @impl true
   def mount(_params, %{"assembly_id" => assembly_id} = session, socket) do
+    socket =
+      socket
+      |> maybe_assign_monitor_dependency(:monitor_supervisor, session)
+      |> maybe_assign_monitor_dependency(:monitor_registry, session)
+
     SigilWeb.AssemblyDetailLive.mount(%{"id" => assembly_id}, session, socket)
   end
 
@@ -28,6 +33,13 @@ defmodule SigilWeb.AssemblyDetailLiveIsolatedTestLive do
   def handle_event(event, params, socket) do
     apply(SigilWeb.AssemblyDetailLive, :handle_event, [event, params, socket])
   end
+
+  defp maybe_assign_monitor_dependency(socket, key, session) do
+    case Map.fetch(session, Atom.to_string(key)) do
+      {:ok, value} -> Phoenix.Component.assign(socket, key, value)
+      :error -> socket
+    end
+  end
 end
 
 defmodule SigilWeb.AssemblyDetailLiveTest do
@@ -39,8 +51,9 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
   import Hammox
 
-  alias Sigil.{Cache, GameState.Poller}
+  alias Sigil.Cache
   alias Sigil.Accounts.Account
+  alias Sigil.GameState.MonitorSupervisor
   alias Sigil.Sui.Types.{Character, Gate, NetworkNode, StorageUnit, Turret}
 
   @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
@@ -80,7 +93,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert html =~ gate.extension
     assert html =~ gate.owner_cap_id
     assert html =~ "Location Hash"
-    assert html =~ "Back to Dashboard"
+    assert html =~ "Dashboard"
   end
 
   test "renders turret detail with extension", %{
@@ -235,6 +248,59 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     refute html =~ "Unknown assembly type"
   end
 
+  test "detail view updates on monitor PubSub broadcast", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    turret = Turret.from_json(turret_json(%{"id" => uid("0xmonitor-turret")}))
+    registry = unique_registry_name()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, turret.id, {wallet_address, turret})
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    {:ok, view, html} =
+      isolated_detail_live(
+        conn,
+        turret.id,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
+    assert html =~ "Defense Turret"
+
+    updated_turret =
+      Turret.from_json(
+        turret_json(%{
+          "id" => uid(turret.id),
+          "metadata" => %{
+            "assembly_id" => "0xturret-metadata",
+            "name" => "Defense Turret Monitor Prime",
+            "description" => "Upgraded by monitor",
+            "url" => "https://example.test/turrets/monitor-prime"
+          }
+        })
+      )
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      "assembly:#{turret.id}",
+      {:assembly_monitor, turret.id, %{changes: [], assembly: updated_turret, depletion: nil}}
+    )
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Defense Turret Monitor Prime"
+    refute updated_html =~ ">Defense Turret<"
+  end
+
   test "detail view updates on PubSub broadcast", %{
     conn: conn,
     cache_tables: cache_tables,
@@ -310,7 +376,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
     assert {:ok, _dashboard_view, dashboard_html} =
              view
-             |> element("a", "Back to Dashboard")
+             |> element("a[data-phx-link][href='/']", "Dashboard")
              |> render_click()
              |> follow_redirect(auth_conn, "/")
 
@@ -343,8 +409,8 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert {:ok, _view, html} =
              isolated_detail_live(conn, gate.id, wallet_address, cache_tables, pubsub)
 
-    assert html =~ "Unnamed"
-    assert html =~ "No description provided"
+    assert html =~ "Gate 0x"
+    refute html =~ "No description provided"
     assert html =~ "Not linked"
     assert html =~ "None"
     assert html =~ "Not set"
@@ -430,57 +496,168 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert html =~ "2 per hour"
   end
 
-  test "poller syncs cached assembly updates sequentially", %{
+  test "NetworkNode detail shows fuel depletion prediction", %{
+    conn: conn,
     cache_tables: cache_tables,
-    pubsub: pubsub
+    pubsub: pubsub,
+    wallet_address: wallet_address
   } do
-    gate_id = "0xpoller-gate"
-    node_id = "0xpoller-node"
+    account = account_fixture(wallet_address)
+    node = NetworkNode.from_json(network_node_json(%{"id" => uid("0xdepletion-node")}))
+    registry = unique_registry_name()
 
-    Cache.put(
-      cache_tables.assemblies,
-      gate_id,
-      {unique_wallet_address(), Gate.from_json(gate_json(%{"id" => uid(gate_id)}))}
-    )
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, node.id, {wallet_address, node})
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
 
-    Cache.put(
-      cache_tables.assemblies,
-      node_id,
-      {unique_wallet_address(), NetworkNode.from_json(network_node_json(%{"id" => uid(node_id)}))}
-    )
-
-    parent = self()
-
-    sync_fun = fn assembly_id, opts ->
-      send(
-        parent,
-        {:sync_called, assembly_id, Keyword.fetch!(opts, :tables), Keyword.fetch!(opts, :pubsub)}
+    {:ok, view, html} =
+      isolated_detail_live(
+        conn,
+        node.id,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
       )
 
-      {:ok, :synced}
-    end
+    assert html =~ "Fuel Panel"
+    assert html =~ "Depletes at"
+    refute html =~ "2042-01-01 01:00:00 UTC"
 
-    {:ok, poller} =
-      Poller.start_link(
-        assembly_ids: [gate_id, node_id],
-        tables: cache_tables,
-        pubsub: pubsub,
-        interval_ms: 5,
-        sync_fun: sync_fun
+    {:ok, depletes_at, 0} = DateTime.from_iso8601("2042-01-01T01:00:00Z")
+    depletion = {:depletes_at, depletes_at}
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      "assembly:#{node.id}",
+      {:assembly_monitor, node.id, %{changes: [], assembly: node, depletion: depletion}}
+    )
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Depletes at"
+    assert updated_html =~ "in "
+    refute updated_html =~ "Not burning"
+    refute updated_html =~ "No fuel"
+  end
+
+  test "NetworkNode detail shows not burning when fuel idle", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+
+    node =
+      NetworkNode.from_json(
+        network_node_json(%{
+          "id" => uid("0xidle-fuel-node"),
+          "fuel" => %{
+            "max_capacity" => "5000",
+            "burn_rate_in_ms" => "60000",
+            "type_id" => "42",
+            "unit_volume" => "2",
+            "quantity" => "50",
+            "is_burning" => false,
+            "previous_cycle_elapsed_time" => "7",
+            "burn_start_time" => "8",
+            "last_updated" => "9"
+          }
+        })
       )
 
-    on_exit(fn ->
-      if Process.alive?(poller) do
-        try do
-          GenServer.stop(poller, :normal, :infinity)
-        catch
-          :exit, _ -> :ok
-        end
-      end
-    end)
+    registry = unique_registry_name()
 
-    assert_receive {:sync_called, ^gate_id, ^cache_tables, ^pubsub}, 200
-    assert_receive {:sync_called, ^node_id, ^cache_tables, ^pubsub}, 200
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, node.id, {wallet_address, node})
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    {:ok, view, _html} =
+      isolated_detail_live(
+        conn,
+        node.id,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      "assembly:#{node.id}",
+      {:assembly_monitor, node.id, %{changes: [], assembly: node, depletion: :not_burning}}
+    )
+
+    html = render(view)
+    assert html =~ "Not burning"
+    refute html =~ "Depletes at"
+    refute html =~ ~s(phx-hook="FuelCountdown")
+  end
+
+  test "non-NetworkNode assemblies do not show depletion", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xno-depletion-gate")}))
+    registry = unique_registry_name()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    {:ok, _view, html} =
+      isolated_detail_live(
+        conn,
+        gate.id,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
+    assert html =~ "Jump Gate Alpha"
+    refute html =~ "Depletes at"
+    refute html =~ "Not burning"
+    refute html =~ "No fuel"
+  end
+
+  test "mount ensures monitor is running for assembly", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    gate = Gate.from_json(gate_json(%{"id" => uid("0xmount-monitor-gate")}))
+    registry = unique_registry_name()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+    start_supervised!({Registry, keys: :unique, name: registry})
+    supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    {:ok, _view, _html} =
+      isolated_detail_live(
+        conn,
+        gate.id,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: supervisor,
+        monitor_registry: registry
+      )
+
+    assert {:ok, _monitor} = MonitorSupervisor.get_monitor(registry, gate.id)
   end
 
   @tag :acceptance
@@ -1092,29 +1269,42 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
   end
 
   defp authenticated_conn(conn, wallet_address, cache_tables, pubsub) do
-    init_test_session(conn, %{
+    init_test_session(conn, authenticated_session(wallet_address, cache_tables, pubsub))
+  end
+
+  defp authenticated_session(wallet_address, cache_tables, pubsub, extra_session \\ %{}) do
+    %{
       "wallet_address" => wallet_address,
       "cache_tables" => cache_tables,
       "pubsub" => pubsub
-    })
+    }
+    |> Map.merge(extra_session)
   end
 
-  defp isolated_detail_live(conn, assembly_id, wallet_address, cache_tables, pubsub) do
-    live(
-      authenticated_conn(conn, wallet_address, cache_tables, pubsub),
-      "/assembly/#{assembly_id}"
+  defp isolated_detail_live(
+         conn,
+         assembly_id,
+         wallet_address,
+         cache_tables,
+         pubsub,
+         extra_session \\ []
+       ) do
+    extra_session =
+      extra_session
+      |> Enum.map(fn {key, value} -> {to_string(key), value} end)
+      |> Map.new()
+
+    live_isolated(conn, SigilWeb.AssemblyDetailLiveIsolatedTestLive,
+      session:
+        authenticated_session(wallet_address, cache_tables, pubsub, %{
+          "assembly_id" => assembly_id
+        })
+        |> Map.merge(extra_session)
     )
   end
 
   defp isolated_gate_extension_live(conn, assembly_id, wallet_address, cache_tables, pubsub) do
-    live_isolated(conn, SigilWeb.AssemblyDetailLiveIsolatedTestLive,
-      session: %{
-        "assembly_id" => assembly_id,
-        "wallet_address" => wallet_address,
-        "cache_tables" => cache_tables,
-        "pubsub" => pubsub
-      }
-    )
+    isolated_detail_live(conn, assembly_id, wallet_address, cache_tables, pubsub)
   end
 
   defp character_type do
@@ -1239,6 +1429,10 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
   defp unique_pubsub_name do
     :"assembly_detail_pubsub_#{System.unique_integer([:positive])}"
+  end
+
+  defp unique_registry_name do
+    :"assembly_detail_registry_#{System.unique_integer([:positive])}"
   end
 
   defp unique_wallet_address do

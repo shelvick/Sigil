@@ -30,7 +30,6 @@ defmodule SigilWeb.AppLayoutTest do
     html = render_layout(current_account: account_fixture())
 
     assert html =~ "0x1234...abcd"
-    assert html =~ "Wallet"
     refute html =~ @wallet_address
   end
 

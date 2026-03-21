@@ -3,12 +3,12 @@ defmodule Sigil.Application do
   OTP Application for Sigil.
 
   Starts the supervision tree with Telemetry, Repo, PubSub, Cache, optional
-  StaticData, and Endpoint.
+  StaticData, optional GateIndexer, optional MonitorRegistry + MonitorSupervisor, and Endpoint.
   """
 
   use Application
 
-  @cache_tables [:assemblies, :characters, :standings, :accounts, :tribes, :nonces]
+  @cache_tables [:assemblies, :characters, :standings, :accounts, :tribes, :nonces, :gate_network]
 
   @doc false
   @impl true
@@ -20,7 +20,9 @@ defmodule Sigil.Application do
         Sigil.Repo,
         {Phoenix.PubSub, name: Sigil.PubSub},
         cache_child()
-      ] ++ maybe_static_data() ++ [SigilWeb.Endpoint]
+      ] ++
+        maybe_static_data() ++
+        maybe_gate_indexer() ++ maybe_monitor_supervisor() ++ [SigilWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Sigil.Supervisor]
     Supervisor.start_link(children, opts)
@@ -48,6 +50,32 @@ defmodule Sigil.Application do
         Supervisor.child_spec(
           {Sigil.StaticData, dets_dir: static_data_dir()},
           id: Sigil.StaticData
+        )
+      ]
+    else
+      []
+    end
+  end
+
+  @spec maybe_gate_indexer() :: [Supervisor.child_spec()]
+  defp maybe_gate_indexer do
+    if Application.get_env(:sigil, :start_gate_indexer, true) do
+      [Supervisor.child_spec({Sigil.GateIndexer, []}, id: Sigil.GateIndexer)]
+    else
+      []
+    end
+  end
+
+  @spec maybe_monitor_supervisor() :: [Supervisor.child_spec()]
+  defp maybe_monitor_supervisor do
+    if Application.get_env(:sigil, :start_monitor_supervisor, true) do
+      registry = Application.fetch_env!(:sigil, :monitor_registry)
+
+      [
+        Supervisor.child_spec({Registry, keys: :unique, name: registry}, id: registry),
+        Supervisor.child_spec(
+          {Sigil.GameState.MonitorSupervisor, registry: registry},
+          id: Sigil.GameState.MonitorSupervisor
         )
       ]
     else

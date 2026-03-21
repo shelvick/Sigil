@@ -73,7 +73,13 @@ defmodule SigilWeb.DiplomacyLive do
   end
 
   def handle_event("add_tribe_standing", %{"tribe_id" => tid, "standing" => s}, socket) do
-    build_set_standing(socket, String.to_integer(tid), String.to_integer(s))
+    case Integer.parse(tid) do
+      {tribe_id, ""} ->
+        build_set_standing(socket, tribe_id, String.to_integer(s))
+
+      _invalid ->
+        {:noreply, put_flash(socket, :error, "Tribe ID must be a number")}
+    end
   end
 
   def handle_event("set_standing", %{"standing" => ""}, socket) do
@@ -253,7 +259,7 @@ defmodule SigilWeb.DiplomacyLive do
           Phoenix.LiveView.Socket.t()
   defp assign_base_state(socket, tribe_id) do
     assign(socket,
-      page_title: "Diplomacy",
+      page_title: "Diplomacy — Tribe ##{tribe_id}",
       tribe_id: tribe_id,
       page_state: :loading,
       available_tables: [],

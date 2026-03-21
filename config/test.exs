@@ -28,6 +28,9 @@ config :sigil, :eve_worlds, %{
 }
 
 config :sigil, :start_static_data, false
+config :sigil, :start_gate_indexer, false
+config :sigil, :start_monitor_supervisor, false
+config :sigil, :monitor_registry, nil
 config :sigil, :world_client_retry_delay, 0
 config :sigil, :sui_client_retry_delay, 0
 

@@ -5,9 +5,11 @@ import topbar from "../vendor/topbar"
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
+import FuelCountdown from "./hooks/fuel_countdown"
 import WalletConnect from "./hooks/wallet_hook"
 
 let Hooks = {
+  FuelCountdown: FuelCountdown,
   WalletConnect: WalletConnect
 }
 

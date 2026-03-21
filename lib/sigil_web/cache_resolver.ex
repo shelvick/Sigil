@@ -18,20 +18,51 @@ defmodule SigilWeb.CacheResolver do
   """
   @spec application_cache_tables() :: map() | nil
   def application_cache_tables do
-    case Process.whereis(Sigil.Supervisor) do
-      pid when is_pid(pid) ->
-        pid
-        |> Supervisor.which_children()
-        |> Enum.find_value(fn
+    case supervisor_children() do
+      nil ->
+        nil
+
+      children ->
+        Enum.find_value(children, fn
           {Sigil.Cache, cache_pid, _kind, _modules} when is_pid(cache_pid) ->
             Cache.tables(cache_pid)
 
           _other ->
             nil
         end)
+    end
+  end
 
+  @doc """
+  Resolves the application-level monitor supervisor pid.
+  """
+  @spec application_monitor_supervisor() :: pid() | nil
+  def application_monitor_supervisor do
+    case supervisor_children() do
       nil ->
         nil
+
+      children ->
+        Enum.find_value(children, fn
+          {Sigil.GameState.MonitorSupervisor, monitor_pid, _kind, _modules}
+          when is_pid(monitor_pid) ->
+            monitor_pid
+
+          _other ->
+            nil
+        end)
+    end
+  end
+
+  @typep supervisor_child() ::
+           {term(), :restarting | :undefined | pid(), :supervisor | :worker,
+            :dynamic | [module()]}
+
+  @spec supervisor_children() :: [supervisor_child()] | nil
+  defp supervisor_children do
+    case Process.whereis(Sigil.Supervisor) do
+      pid when is_pid(pid) -> Supervisor.which_children(pid)
+      nil -> nil
     end
   end
 end

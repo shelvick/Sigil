@@ -12,6 +12,7 @@ defmodule Sigil.StaticDataTestFixtures do
           constellations: [Constellation.t()]
         }
 
+  @doc "Builds a unique temp directory path for a test probe without creating it."
   @spec temp_dir(String.t()) :: String.t()
   def temp_dir(prefix) do
     Path.join([
@@ -21,6 +22,7 @@ defmodule Sigil.StaticDataTestFixtures do
     ])
   end
 
+  @doc "Creates and returns a unique temp directory for a test probe."
   @spec ensure_tmp_dir!(String.t()) :: String.t()
   def ensure_tmp_dir!(prefix) do
     dir = temp_dir(prefix)
@@ -28,9 +30,13 @@ defmodule Sigil.StaticDataTestFixtures do
     dir
   end
 
+  @doc "Writes a config file for spawned application probe subprocesses."
   @spec write_application_probe_config!(String.t(), keyword()) :: String.t()
   def write_application_probe_config!(config_dir, opts) do
     start_static_data = Keyword.get(opts, :start_static_data, false)
+    start_gate_indexer = Keyword.get(opts, :start_gate_indexer, false)
+    start_monitor_supervisor = Keyword.get(opts, :start_monitor_supervisor, false)
+    monitor_registry = Keyword.get(opts, :monitor_registry, nil)
     static_data_dir = Keyword.fetch!(opts, :static_data_dir)
     world_client = Keyword.fetch!(opts, :world_client)
     config_path = Path.join(config_dir, "application_probe_config.exs")
@@ -41,6 +47,9 @@ defmodule Sigil.StaticDataTestFixtures do
       import Config
 
       config :sigil, :start_static_data, #{inspect(start_static_data)}
+      config :sigil, :start_gate_indexer, #{inspect(start_gate_indexer)}
+      config :sigil, :start_monitor_supervisor, #{inspect(start_monitor_supervisor)}
+      config :sigil, :monitor_registry, #{inspect(monitor_registry)}
       config :sigil, :static_data_dir, #{inspect(static_data_dir)}
       config :sigil, :world_client, #{inspect(world_client)}
       """
@@ -49,6 +58,7 @@ defmodule Sigil.StaticDataTestFixtures do
     config_path
   end
 
+  @doc "Writes a config file for spawned diplomacy probe subprocesses."
   @spec write_diplomacy_probe_config!(String.t(), keyword()) :: String.t()
   def write_diplomacy_probe_config!(config_dir, opts) do
     gas_price = Keyword.get(opts, :reference_gas_price, 1_000)
@@ -68,6 +78,7 @@ defmodule Sigil.StaticDataTestFixtures do
     config_path
   end
 
+  @doc "Writes a config file for spawned populate_static_data probe subprocesses."
   @spec write_populate_static_data_config!(String.t(), String.t()) :: String.t()
   def write_populate_static_data_config!(config_dir, output_dir) do
     config_path = Path.join(config_dir, "populate_static_data_config.exs")
@@ -89,12 +100,13 @@ defmodule Sigil.StaticDataTestFixtures do
   @spec mix_run_args(String.t(), String.t(), keyword()) :: [String.t()]
   def mix_run_args(config_path, script, opts \\ []) do
     run_flags =
-      ["--no-compile"] ++
+      ["--no-compile", "--no-deps-check", "--no-archives-check"] ++
         if Keyword.get(opts, :no_start, false), do: ["--no-start"], else: []
 
     ["do", "loadconfig", Path.expand(config_path), "+", "run"] ++ run_flags ++ ["-e", script]
   end
 
+  @doc "Writes DETS fixture files for static-data subprocess tests."
   @spec write_dets_fixture!(String.t(), static_data()) :: :ok
   def write_dets_fixture!(dets_dir, data) do
     File.mkdir_p!(dets_dir)
@@ -103,6 +115,7 @@ defmodule Sigil.StaticDataTestFixtures do
     write_rows!(dets_path(dets_dir, :constellations), data.constellations)
   end
 
+  @doc "Returns canonical static-data fixture structs used by tests."
   @spec sample_test_data() :: static_data()
   def sample_test_data do
     %{
@@ -118,6 +131,7 @@ defmodule Sigil.StaticDataTestFixtures do
     }
   end
 
+  @doc "Returns an alternate static-data fixture set for update scenarios."
   @spec updated_test_data() :: static_data()
   def updated_test_data do
     %{
@@ -127,21 +141,25 @@ defmodule Sigil.StaticDataTestFixtures do
     }
   end
 
+  @doc "Builds a solar-system fixture struct with optional field overrides."
   @spec solar_system_struct(map()) :: SolarSystem.t()
   def solar_system_struct(overrides \\ %{}) do
     struct!(SolarSystem, Map.merge(base_solar_system(), overrides))
   end
 
+  @doc "Builds an item-type fixture struct with optional field overrides."
   @spec item_type_struct(map()) :: ItemType.t()
   def item_type_struct(overrides \\ %{}) do
     struct!(ItemType, Map.merge(base_item_type(), overrides))
   end
 
+  @doc "Builds a constellation fixture struct with optional field overrides."
   @spec constellation_struct(map()) :: Constellation.t()
   def constellation_struct(overrides \\ %{}) do
     struct!(Constellation, Map.merge(base_constellation(), overrides))
   end
 
+  @doc "Returns solar system fixture rows encoded as World API-style maps."
   @spec solar_system_records() :: [map()]
   def solar_system_records do
     sample_test_data()
@@ -149,6 +167,7 @@ defmodule Sigil.StaticDataTestFixtures do
     |> Enum.map(&solar_system_json/1)
   end
 
+  @doc "Returns item type fixture rows encoded as World API-style maps."
   @spec item_type_records() :: [map()]
   def item_type_records do
     sample_test_data()
@@ -156,6 +175,7 @@ defmodule Sigil.StaticDataTestFixtures do
     |> Enum.map(&item_type_json/1)
   end
 
+  @doc "Returns constellation fixture rows encoded as World API-style maps."
   @spec constellation_records() :: [map()]
   def constellation_records do
     sample_test_data()
@@ -163,6 +183,7 @@ defmodule Sigil.StaticDataTestFixtures do
     |> Enum.map(&constellation_json/1)
   end
 
+  @doc "Returns updated solar system fixture rows for refresh scenarios."
   @spec updated_solar_system_records() :: [map()]
   def updated_solar_system_records do
     updated_test_data()
@@ -170,6 +191,7 @@ defmodule Sigil.StaticDataTestFixtures do
     |> Enum.map(&solar_system_json/1)
   end
 
+  @doc "Returns updated item type fixture rows for refresh scenarios."
   @spec updated_item_type_records() :: [map()]
   def updated_item_type_records do
     updated_test_data()
@@ -177,6 +199,7 @@ defmodule Sigil.StaticDataTestFixtures do
     |> Enum.map(&item_type_json/1)
   end
 
+  @doc "Returns updated constellation fixture rows for refresh scenarios."
   @spec updated_constellation_records() :: [map()]
   def updated_constellation_records do
     updated_test_data()
@@ -188,6 +211,7 @@ defmodule Sigil.StaticDataTestFixtures do
   @spec dets_path(String.t(), atom()) :: String.t()
   def dets_path(dir, table_name), do: DetsFile.dets_path(dir, table_name)
 
+  @doc "Encodes a solar system fixture struct as a World API-style map."
   @spec solar_system_json(SolarSystem.t()) :: map()
   def solar_system_json(%SolarSystem{} = solar_system) do
     %{
@@ -203,6 +227,7 @@ defmodule Sigil.StaticDataTestFixtures do
     }
   end
 
+  @doc "Encodes an item type fixture struct as a World API-style map."
   @spec item_type_json(ItemType.t()) :: map()
   def item_type_json(%ItemType{} = item_type) do
     %{
@@ -221,6 +246,7 @@ defmodule Sigil.StaticDataTestFixtures do
     }
   end
 
+  @doc "Encodes a constellation fixture struct as a World API-style map."
   @spec constellation_json(Constellation.t()) :: map()
   def constellation_json(%Constellation{} = constellation) do
     %{
@@ -237,7 +263,7 @@ defmodule Sigil.StaticDataTestFixtures do
   end
 
   defp write_rows!(path, rows) do
-    {:ok, dets_ref} = Sigil.StaticData.DetsFile.open_file(path)
+    {:ok, dets_ref} = DetsFile.open_file(path)
 
     :ok =
       rows
