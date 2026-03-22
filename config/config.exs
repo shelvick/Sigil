@@ -34,7 +34,9 @@ config :sigil, :eve_world, "stillness"
 
 config :sigil, :start_static_data, true
 config :sigil, :start_monitor_supervisor, true
+config :sigil, :start_alert_engine, true
 config :sigil, :monitor_registry, Sigil.GameState.MonitorRegistry
+config :sigil, :webhook_notifier, Sigil.Alerts.WebhookNotifier.Discord
 
 config :sigil, SigilWeb.Endpoint,
   url: [host: "localhost"],

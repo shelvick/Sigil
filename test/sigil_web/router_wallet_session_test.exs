@@ -95,6 +95,84 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert view.module == SigilWeb.DiplomacyLive
     end
 
+    test "/tribe/:tribe_id/intel routes to IntelLive", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      char = %Character{
+        id: "0xchar-tribe42",
+        key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+        tribe_id: 42,
+        character_address: wallet_address,
+        metadata: nil,
+        owner_cap_id: "0xowner"
+      }
+
+      account = %Account{address: wallet_address, characters: [char], tribe_id: 42}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:ok, view, _html} = live(conn, "/tribe/42/intel")
+      assert view.module == SigilWeb.IntelLive
+    end
+
+    test "tribe routes reject mismatched active character tribe even when account tribe differs",
+         %{
+           conn: conn,
+           cache_tables: cache_tables,
+           pubsub: pubsub,
+           wallet_address: wallet_address
+         } do
+      first =
+        %Character{
+          id: "0xchar-tribe42",
+          key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+          tribe_id: 42,
+          character_address: wallet_address,
+          metadata: nil,
+          owner_cap_id: "0xowner-1"
+        }
+
+      second =
+        %Character{
+          id: "0xchar-no-tribe",
+          key: %Sigil.Sui.Types.TenantItemId{item_id: 2, tenant: "test"},
+          tribe_id: nil,
+          character_address: wallet_address,
+          metadata: nil,
+          owner_cap_id: "0xowner-2"
+        }
+
+      account = %Account{address: wallet_address, characters: [first, second], tribe_id: 42}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "active_character_id" => second.id,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:error, {:redirect, %{to: "/", flash: %{"error" => "Not your tribe"}}}} =
+               live(conn, "/tribe/42")
+
+      assert {:error,
+              {:redirect, %{to: "/", flash: %{"error" => "Tribe Custodian access denied"}}}} =
+               live(conn, "/tribe/42/diplomacy")
+
+      assert {:error, {:redirect, %{to: "/", flash: %{"error" => "Not your tribe"}}}} =
+               live(conn, "/tribe/42/intel")
+    end
+
     test "/assembly/:id routes to AssemblyDetailLive", %{
       conn: conn,
       cache_tables: cache_tables,

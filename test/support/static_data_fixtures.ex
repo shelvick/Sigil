@@ -36,6 +36,7 @@ defmodule Sigil.StaticDataTestFixtures do
     start_static_data = Keyword.get(opts, :start_static_data, false)
     start_gate_indexer = Keyword.get(opts, :start_gate_indexer, false)
     start_monitor_supervisor = Keyword.get(opts, :start_monitor_supervisor, false)
+    start_alert_engine = Keyword.get(opts, :start_alert_engine, false)
     monitor_registry = Keyword.get(opts, :monitor_registry, nil)
     static_data_dir = Keyword.fetch!(opts, :static_data_dir)
     world_client = Keyword.fetch!(opts, :world_client)
@@ -49,6 +50,7 @@ defmodule Sigil.StaticDataTestFixtures do
       config :sigil, :start_static_data, #{inspect(start_static_data)}
       config :sigil, :start_gate_indexer, #{inspect(start_gate_indexer)}
       config :sigil, :start_monitor_supervisor, #{inspect(start_monitor_supervisor)}
+      config :sigil, :start_alert_engine, #{inspect(start_alert_engine)}
       config :sigil, :monitor_registry, #{inspect(monitor_registry)}
       config :sigil, :static_data_dir, #{inspect(static_data_dir)}
       config :sigil, :world_client, #{inspect(world_client)}

@@ -30,8 +30,16 @@ defmodule Sigil.ApplicationTest do
     enabled = configured_application_snapshot!(start_static_data: true, start_gate_indexer: true)
 
     assert enabled.static_data_running
+    assert enabled.static_data_resolved
     assert enabled.gate_indexer_running
     assert enabled.gate_network_table_valid
+  end
+
+  test "CacheResolver finds StaticData pid when enabled" do
+    snapshot = configured_application_snapshot!(start_static_data: true)
+
+    assert snapshot.static_data_running
+    assert snapshot.static_data_resolved
   end
 
   test "StaticData and GateIndexer absent when config flags disabled" do
@@ -85,12 +93,62 @@ defmodule Sigil.ApplicationTest do
              index_of(child_ids_in_start_order, inspect(SigilWeb.Endpoint))
   end
 
+  test "supervision tree includes AlertEngine when enabled" do
+    snapshot =
+      configured_application_snapshot!(start_monitor_supervisor: false, start_alert_engine: true)
+
+    assert snapshot.alert_engine_running
+    assert inspect(Sigil.Alerts.Engine) in snapshot.child_ids
+  end
+
+  test "MonitorRegistry and MonitorSupervisor precede AlertEngine when enabled" do
+    snapshot =
+      configured_application_snapshot!(start_monitor_supervisor: true, start_alert_engine: true)
+
+    # which_children returns reverse start order: higher index = started earlier
+    assert is_integer(snapshot.alert_engine_index)
+    assert snapshot.monitor_registry_index > snapshot.alert_engine_index
+    assert snapshot.monitor_supervisor_index > snapshot.alert_engine_index
+  end
+
+  test "AlertEngine precedes Endpoint when enabled" do
+    snapshot =
+      configured_application_snapshot!(start_monitor_supervisor: true, start_alert_engine: true)
+
+    # which_children returns reverse start order: higher index = started earlier
+    assert is_integer(snapshot.alert_engine_index)
+    assert snapshot.alert_engine_index > snapshot.endpoint_index
+  end
+
   test "Cache includes gate_network table" do
     tables = application_cache_tables!()
     gate_network_table = Map.fetch!(tables, :gate_network)
 
     assert :gate_network in Map.keys(tables)
     assert :ets.info(gate_network_table) != :undefined
+  end
+
+  test "AlertEngine excluded when config is false" do
+    # First verify the enabled case works (ensures this test fails when feature is missing)
+    enabled_snapshot =
+      configured_application_snapshot!(start_monitor_supervisor: true, start_alert_engine: true)
+
+    assert enabled_snapshot.alert_engine_running
+
+    # Then verify the disabled case excludes it
+    disabled_snapshot =
+      configured_application_snapshot!(start_monitor_supervisor: true, start_alert_engine: false)
+
+    refute disabled_snapshot.alert_engine_running
+    refute inspect(Sigil.Alerts.Engine) in disabled_snapshot.child_ids
+  end
+
+  test "Cache includes intel table" do
+    tables = application_cache_tables!()
+    intel_table = Map.fetch!(tables, :intel)
+
+    assert :intel in Map.keys(tables)
+    assert :ets.info(intel_table) != :undefined
   end
 
   test "application cache includes nonce table" do
@@ -150,6 +208,15 @@ defmodule Sigil.ApplicationTest do
     children = Supervisor.which_children(Sigil.Supervisor)
     monitor_registry = Application.get_env(:sigil, :monitor_registry)
 
+    static_data_pid =
+      case Enum.find(children, fn
+             {Sigil.StaticData, child_pid, _kind, _modules} -> is_pid(child_pid)
+             _other -> false
+           end) do
+        {Sigil.StaticData, child_pid, _kind, _modules} -> child_pid
+        nil -> nil
+      end
+
     snapshot = %{
       child_ids:
         Enum.map(children, fn {id, _child_pid, _kind, _modules} -> inspect(id) end),
@@ -161,8 +228,18 @@ defmodule Sigil.ApplicationTest do
           _other ->
             false
         end),
+      static_data_resolved:
+        is_pid(static_data_pid) and SigilWeb.CacheResolver.application_static_data() == static_data_pid,
       gate_indexer_running: gate_indexer_running,
       gate_network_table_valid: gate_network_table_valid,
+      alert_engine_running:
+        Enum.any?(children, fn
+          {Sigil.Alerts.Engine, child_pid, _kind, _modules} ->
+            is_pid(child_pid) and Process.alive?(child_pid)
+
+          _other ->
+            false
+        end),
       monitor_registry_running:
         Enum.any?(children, fn
           {^monitor_registry, child_pid, _kind, _modules} ->
@@ -189,6 +266,11 @@ defmodule Sigil.ApplicationTest do
           {Sigil.GameState.MonitorSupervisor, child_pid, _kind, _modules} -> is_pid(child_pid)
           _other -> false
         end),
+      alert_engine_index:
+        Enum.find_index(children, fn
+          {Sigil.Alerts.Engine, child_pid, _kind, _modules} -> is_pid(child_pid)
+          _other -> false
+        end),
       endpoint_index:
         Enum.find_index(children, fn
           {SigilWeb.Endpoint, child_pid, _kind, _modules} -> is_pid(child_pid)
@@ -201,14 +283,17 @@ defmodule Sigil.ApplicationTest do
     """
 
     {output, status} =
-      System.cmd("mix", Fixtures.mix_run_args(config_path, script, no_start: true),
-        cd: project_root(),
-        env: [
-          {"MIX_ENV", "test"},
-          {"ELIXIR_CLI_NO_VALIDATE_COMPILE_ENV", "1"}
-        ],
-        stderr_to_stdout: true
-      )
+      Task.async(fn ->
+        System.cmd("mix", Fixtures.mix_run_args(config_path, script, no_start: true),
+          cd: project_root(),
+          env: [
+            {"MIX_ENV", "test"},
+            {"ELIXIR_CLI_NO_VALIDATE_COMPILE_ENV", "1"}
+          ],
+          stderr_to_stdout: true
+        )
+      end)
+      |> Task.await(120_000)
 
     assert status == 0, output
 
@@ -220,12 +305,15 @@ defmodule Sigil.ApplicationTest do
     %{
       child_ids: decoded["child_ids"],
       static_data_running: decoded["static_data_running"],
+      static_data_resolved: decoded["static_data_resolved"],
       gate_indexer_running: decoded["gate_indexer_running"],
       gate_network_table_valid: decoded["gate_network_table_valid"],
+      alert_engine_running: decoded["alert_engine_running"],
       monitor_registry_running: decoded["monitor_registry_running"],
       monitor_registry_index: decoded["monitor_registry_index"],
       monitor_supervisor_running: decoded["monitor_supervisor_running"],
       monitor_supervisor_index: decoded["monitor_supervisor_index"],
+      alert_engine_index: decoded["alert_engine_index"],
       endpoint_index: decoded["endpoint_index"]
     }
   end

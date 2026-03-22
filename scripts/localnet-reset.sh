@@ -156,8 +156,10 @@ step "Publishing Sigil contracts"
 
 sudo docker exec "$CONTAINER" rm -rf /workspace/sigil-contracts 2>/dev/null || true
 sudo docker cp "$SIGIL_DIR/contracts" "$CONTAINER:/workspace/sigil-contracts"
+# Remove lock/build/deps artifacts that pin testnet dependency paths
+sudo docker exec "$CONTAINER" bash -c \
+  "cd /workspace/sigil-contracts && rm -rf deps build Move.lock Published.toml Pub.*.toml" 2>/dev/null || true
 
-CHAIN_ID=$(sudo docker exec "$CONTAINER" sui client chain-identifier 2>/dev/null)
 sudo docker exec "$CONTAINER" bash -c "cd /workspace/sigil-contracts && cat > Move.toml << MOVEEOF
 [package]
 name = \"sigil\"
@@ -165,18 +167,31 @@ edition = \"2024\"
 
 [dependencies]
 world = { local = \"/workspace/world-contracts/contracts/world\" }
-
-[environments]
-localnet = \"$CHAIN_ID\"
 MOVEEOF"
 
+# Link sigil against the already-published world package via --pubfile-path.
+# The world deploy script uses --build-env testnet (system env), so we match that.
+# Copy the world Pub file and strip any previous sigil entries (test-publish appends to it).
+WORLD_PUBFILE="/workspace/world-contracts/contracts/world/Pub.localnet.toml"
+sudo docker exec "$CONTAINER" bash -c "
+  python3 << 'PYEOF'
+text = open('$WORLD_PUBFILE').read()
+parts = text.split('[[published]]')
+if len(parts) >= 2:
+    with open('/tmp/world-pub.toml', 'w') as f:
+        f.write(parts[0] + '[[published]]' + parts[1])
+else:
+    import shutil; shutil.copy('$WORLD_PUBFILE', '/tmp/world-pub.toml')
+PYEOF"
+
 sudo docker exec "$CONTAINER" bash -c \
-  "cd /workspace/sigil-contracts && sui client test-publish --build-env localnet --gas-budget 5000000000 --with-unpublished-dependencies" \
+  "cd /workspace/sigil-contracts && sui client test-publish --build-env testnet --gas-budget 5000000000 --pubfile-path /tmp/world-pub.toml" \
   2>&1 | grep -E '(Transaction Digest|BUILDING|Error)' || true
 
+# Extract sigil package ID from the pubfile (test-publish appends the sigil entry)
 SIGIL_PKG=$(sudo docker exec "$CONTAINER" bash -c \
-  "cat /workspace/sigil-contracts/Pub.localnet.toml 2>/dev/null" \
-  | grep 'published-at' | head -1 | sed 's/.*= "//' | sed 's/"//')
+  "grep 'published-at' /tmp/world-pub.toml | tail -1" \
+  | sed 's/.*= "//' | sed 's/"//')
 [ -n "$SIGIL_PKG" ] || fail "Sigil publish failed"
 ok "Sigil package: $SIGIL_PKG"
 

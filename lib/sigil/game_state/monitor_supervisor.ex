@@ -9,6 +9,9 @@ defmodule Sigil.GameState.MonitorSupervisor do
 
   alias Sigil.GameState.AssemblyMonitor
 
+  @default_pubsub Sigil.PubSub
+  @monitor_lifecycle_topic "monitors:lifecycle"
+
   @typedoc "Options accepted by the monitor supervisor."
   @type option() :: {:registry, atom()}
 
@@ -27,7 +30,14 @@ defmodule Sigil.GameState.MonitorSupervisor do
   """
   @spec start_monitor(pid(), keyword()) :: DynamicSupervisor.on_start_child()
   def start_monitor(supervisor, opts) when is_pid(supervisor) and is_list(opts) do
-    DynamicSupervisor.start_child(supervisor, {AssemblyMonitor, opts})
+    case DynamicSupervisor.start_child(supervisor, {AssemblyMonitor, opts}) do
+      {:ok, _monitor} = result ->
+        maybe_broadcast_monitor_started(opts)
+        result
+
+      other ->
+        other
+    end
   end
 
   @doc """
@@ -89,6 +99,16 @@ defmodule Sigil.GameState.MonitorSupervisor do
       [{monitor, _value}] -> {:ok, monitor}
       [] -> {:error, :not_found}
     end
+  end
+
+  @spec maybe_broadcast_monitor_started(keyword()) :: :ok
+  defp maybe_broadcast_monitor_started(opts) do
+    with assembly_id when is_binary(assembly_id) <- Keyword.get(opts, :assembly_id) do
+      pubsub = Keyword.get(opts, :pubsub, @default_pubsub)
+      Phoenix.PubSub.broadcast(pubsub, @monitor_lifecycle_topic, {:monitor_started, assembly_id})
+    end
+
+    :ok
   end
 
   @doc """

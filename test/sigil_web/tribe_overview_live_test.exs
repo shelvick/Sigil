@@ -1,8 +1,8 @@
 defmodule SigilWeb.TribeOverviewLiveTest do
   @moduledoc """
-  Covers the UI_TribeOverviewLive specification (R1-R14) from Packet 4.
+  Covers the UI_TribeOverviewLive specification (R1-R16) from Packet 3.
   Tests tribe overview page: member list, assembly aggregation, standings summary,
-  PubSub updates, authorization, and navigation.
+  custodian existence checks, PubSub updates, authorization, and navigation.
   """
 
   use Sigil.ConnCase, async: true
@@ -10,7 +10,9 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   import Hammox
 
   alias Sigil.Cache
+  alias Sigil.Repo
   alias Sigil.Accounts.Account
+  alias Sigil.Intel.IntelReport
   alias Sigil.Sui.Types.{Character, Gate, NetworkNode, Turret}
   alias Sigil.Tribes.{Tribe, TribeMember}
 
@@ -21,12 +23,14 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   setup do
     cache_pid =
       start_supervised!(
-        {Cache, tables: [:accounts, :characters, :assemblies, :nonces, :tribes, :standings]}
+        {Cache,
+         tables: [:accounts, :characters, :assemblies, :nonces, :tribes, :standings, :intel]}
       )
 
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
+    stub(Sigil.StaticData.WorldClientMock, :fetch_tribes, fn _opts -> {:ok, []} end)
 
     {:ok,
      cache_tables: Cache.tables(cache_pid),
@@ -54,8 +58,8 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     Cache.put(cache_tables.tribes, @tribe_id, tribe)
 
     # Seed standings data
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 0)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # Seed tribe name
     Cache.put(cache_tables.standings, {:world_tribe, @tribe_id}, %{
@@ -215,13 +219,13 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     Cache.put(cache_tables.tribes, @tribe_id, tribe)
 
     # Seed standings data: 2 hostile, 1 friendly
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 0)
-    Cache.put(cache_tables.standings, {:tribe_standing, 43}, 0)
-    Cache.put(cache_tables.standings, {:tribe_standing, 44}, 3)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 43}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 44}, 3)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # Mark that standings table exists
-    Cache.put(cache_tables.standings, {:active_table, wallet_address}, %{
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
       object_id: "0x" <> String.duplicate("ab", 32),
       object_id_bytes: :binary.copy(<<0xAB>>, 32),
       initial_shared_version: 1,
@@ -235,9 +239,10 @@ defmodule SigilWeb.TribeOverviewLiveTest do
              )
 
     # Should display counts per tier
+    assert html =~ "Tribe Custodian"
     assert html =~ "Hostile"
     assert html =~ "Friendly"
-    refute html =~ "No standings table"
+    refute html =~ "No Tribe Custodian configured"
   end
 
   # ---------------------------------------------------------------------------
@@ -259,10 +264,10 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     Cache.put(cache_tables.tribes, @tribe_id, tribe)
 
     # Set default standing to neutral (NRDS)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # Mark that standings table exists
-    Cache.put(cache_tables.standings, {:active_table, wallet_address}, %{
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
       object_id: "0x" <> String.duplicate("cd", 32),
       object_id_bytes: :binary.copy(<<0xCD>>, 32),
       initial_shared_version: 1,
@@ -275,15 +280,16 @@ defmodule SigilWeb.TribeOverviewLiveTest do
                "/tribe/#{@tribe_id}"
              )
 
+    assert html =~ "Tribe Custodian"
     assert html =~ "NRDS"
-    refute html =~ "No standings table"
+    refute html =~ "No Tribe Custodian configured"
   end
 
   # ---------------------------------------------------------------------------
-  # R8: No standings table message [INTEGRATION]
+  # R8: No custodian message with setup link [INTEGRATION]
   # ---------------------------------------------------------------------------
 
-  test "shows no standings table message when none exists", %{
+  test "shows no custodian message with setup link when none exists", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -297,15 +303,15 @@ defmodule SigilWeb.TribeOverviewLiveTest do
 
     Cache.put(cache_tables.tribes, @tribe_id, tribe)
 
-    # No active table or standings data seeded
-
     assert {:ok, _view, html} =
              live(
                authenticated_conn(conn, wallet_address, cache_tables, pubsub),
                "/tribe/#{@tribe_id}"
              )
 
-    assert html =~ "No standings table"
+    assert html =~ "No Tribe Custodian configured"
+    assert html =~ "Set Up Diplomacy"
+    assert html =~ "/tribe/#{@tribe_id}/diplomacy"
     refute html =~ "Manage Standings"
   end
 
@@ -328,14 +334,14 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     Cache.put(cache_tables.tribes, @tribe_id, tribe)
 
     # Mark standings table as existing
-    Cache.put(cache_tables.standings, {:active_table, wallet_address}, %{
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
       object_id: "0x" <> String.duplicate("de", 32),
       object_id_bytes: :binary.copy(<<0xDE>>, 32),
       initial_shared_version: 1,
       owner: wallet_address
     })
 
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     assert {:ok, _view, html} =
              live(
@@ -343,9 +349,10 @@ defmodule SigilWeb.TribeOverviewLiveTest do
                "/tribe/#{@tribe_id}"
              )
 
+    assert html =~ "Tribe Custodian"
     assert html =~ "Manage Standings"
     assert html =~ "/tribe/#{@tribe_id}/diplomacy"
-    refute html =~ "No standings table"
+    refute html =~ "No Tribe Custodian configured"
   end
 
   # ---------------------------------------------------------------------------
@@ -388,7 +395,41 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   end
 
   # ---------------------------------------------------------------------------
-  # R11: PubSub updates member list [INTEGRATION]
+  # R11: Direct entry resolves custodian before fallback CTA [INTEGRATION]
+  # ---------------------------------------------------------------------------
+
+  test "direct entry discovers custodian before showing setup link", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-direct", "Leader", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    # No custodian cached — page should use discovery, not immediately show fallback
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    # After discovery confirms no custodian, shows the custodian-specific setup message
+    assert html =~ "No Tribe Custodian configured"
+    assert html =~ "Set Up Diplomacy"
+    refute html =~ "No standings table configured"
+  end
+
+  # ---------------------------------------------------------------------------
+  # R12: PubSub updates member list [INTEGRATION]
   # ---------------------------------------------------------------------------
 
   test "tribe discovery broadcast updates member list", %{
@@ -443,10 +484,10 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     Cache.put(cache_tables.tribes, @tribe_id, tribe)
 
     # Start with one hostile standing
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 0)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
-    Cache.put(cache_tables.standings, {:active_table, wallet_address}, %{
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
       object_id: "0x" <> String.duplicate("ef", 32),
       object_id_bytes: :binary.copy(<<0xEF>>, 32),
       initial_shared_version: 1,
@@ -457,7 +498,7 @@ defmodule SigilWeb.TribeOverviewLiveTest do
       live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/tribe/#{@tribe_id}")
 
     # Add a new standing via cache and broadcast
-    Cache.put(cache_tables.standings, {:tribe_standing, 43}, 4)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 43}, 4)
 
     Phoenix.PubSub.broadcast(
       pubsub,
@@ -467,8 +508,48 @@ defmodule SigilWeb.TribeOverviewLiveTest do
 
     updated_html = render(view)
 
+    assert updated_html =~ "Tribe Custodian"
     assert updated_html =~ "Allied"
     refute updated_html =~ "Standing update failed"
+  end
+
+  test "custodian lifecycle broadcast refreshes diplomacy panel", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-custodian", "Leader", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    {:ok, view, initial_html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/tribe/#{@tribe_id}")
+
+    assert initial_html =~ "No Tribe Custodian configured"
+    assert initial_html =~ "Set Up Diplomacy"
+    refute initial_html =~ "Manage Standings"
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0xFE),
+      object_id_bytes: :binary.copy(<<0xFE>>, 32),
+      initial_shared_version: 11,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id
+    })
+
+    Phoenix.PubSub.broadcast(pubsub, "diplomacy", {:custodian_created, %{tribe_id: @tribe_id}})
+    updated_html = render(view)
+
+    assert updated_html =~ "Manage Standings"
+    refute updated_html =~ "No Tribe Custodian configured"
   end
 
   # ---------------------------------------------------------------------------
@@ -553,6 +634,156 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   end
 
   # ---------------------------------------------------------------------------
+  # R15-R18: Intel summary integration [Packet 3]
+  # ---------------------------------------------------------------------------
+
+  test "intel summary shows report counts", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-intel", "Scout Lead", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+    seed_default_standings(cache_tables)
+    seed_location_report!(%{tribe_id: @tribe_id, assembly_id: "0xintel-location-1"})
+    seed_location_report!(%{tribe_id: @tribe_id, assembly_id: "0xintel-location-2"})
+    seed_scouting_report!(%{tribe_id: @tribe_id, notes: "Hostile scouts in system"})
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "2 assemblies with known locations"
+    assert html =~ "1 scouting reports"
+    refute html =~ "0 assemblies with known locations"
+  end
+
+  test "View Intel link navigates to intel page", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-intel-link", "Scout Lead", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+    seed_default_standings(cache_tables)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "View Intel"
+    assert html =~ "/tribe/#{@tribe_id}/intel"
+    refute html =~ "/tribe/#{@tribe_id}/diplomacy\">View Intel"
+  end
+
+  test "intel summary updates on PubSub intel broadcasts", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-intel-refresh", "Scout Lead", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+    seed_default_standings(cache_tables)
+
+    {:ok, view, initial_html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/tribe/#{@tribe_id}")
+
+    assert initial_html =~ "0 assemblies with known locations"
+    assert initial_html =~ "0 scouting reports"
+
+    scouting =
+      seed_scouting_report!(%{
+        tribe_id: @tribe_id,
+        notes: "Fresh scouting ping",
+        reported_by: wallet_address,
+        reported_by_character_id: hd(account.characters).id
+      })
+
+    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_updated, scouting})
+
+    scouting_html = render(view)
+    assert scouting_html =~ "1 scouting reports"
+
+    location =
+      seed_location_report!(%{
+        tribe_id: @tribe_id,
+        assembly_id: "0xintel-refresh-location",
+        reported_by: wallet_address,
+        reported_by_character_id: hd(account.characters).id
+      })
+
+    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_updated, location})
+
+    location_html = render(view)
+    assert location_html =~ "1 assemblies with known locations"
+
+    Repo.delete!(scouting)
+    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_deleted, scouting})
+
+    deleted_html = render(view)
+    assert deleted_html =~ "0 scouting reports"
+  end
+
+  @tag :acceptance
+  test "tribe overview shows intel summary and entry point", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-intel-acceptance", "Scout Lead", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+    seed_default_standings(cache_tables)
+    seed_location_report!(%{tribe_id: @tribe_id, assembly_id: "0xintel-acceptance-location"})
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "1 assemblies with known locations"
+    assert html =~ "View Intel"
+    refute html =~ "Not your tribe"
+    refute html =~ "Connect Your Wallet"
+  end
+
+  # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
 
@@ -592,7 +823,47 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   end
 
   defp seed_default_standings(cache_tables) do
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+  end
+
+  defp seed_location_report!(attrs) do
+    %IntelReport{}
+    |> IntelReport.location_changeset(
+      Map.merge(
+        %{
+          tribe_id: @tribe_id,
+          assembly_id: "0xtribe-location",
+          solar_system_id: 30_000_001,
+          label: "Forward base",
+          notes: "Location report",
+          reported_by: "0xabc123",
+          reported_by_name: "Scout Prime",
+          reported_by_character_id: "0xcharacter"
+        },
+        attrs
+      )
+    )
+    |> Repo.insert!()
+  end
+
+  defp seed_scouting_report!(attrs) do
+    %IntelReport{}
+    |> IntelReport.scouting_changeset(
+      Map.merge(
+        %{
+          tribe_id: @tribe_id,
+          assembly_id: nil,
+          solar_system_id: 30_000_001,
+          label: "Scout patrol",
+          notes: "Scouting report",
+          reported_by: "0xabc123",
+          reported_by_name: "Scout Prime",
+          reported_by_character_id: "0xcharacter"
+        },
+        attrs
+      )
+    )
+    |> Repo.insert!()
   end
 
   defp unique_pubsub_name do
@@ -611,6 +882,10 @@ defmodule SigilWeb.TribeOverviewLiveTest do
 
   defp character_type do
     "0x1111111111111111111111111111111111111111111111111111111111111111::character::Character"
+  end
+
+  defp table_id(byte) do
+    "0x" <> Base.encode16(:binary.copy(<<byte>>, 32), case: :lower)
   end
 
   defp character_json(overrides \\ %{}) do

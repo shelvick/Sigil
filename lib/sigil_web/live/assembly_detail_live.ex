@@ -6,14 +6,14 @@ defmodule SigilWeb.AssemblyDetailLive do
   use SigilWeb, :live_view
 
   import SigilWeb.AssemblyHelpers, except: [assembly_name: 1]
-  import SigilWeb.DiplomacyLive.Components, only: [signing_overlay: 1]
   import SigilWeb.TransactionHelpers, only: [localnet?: 0, sui_chain: 0]
 
-  import SigilWeb.MonitorHelpers,
-    only: [monitor_dependencies: 1, initial_depletion: 1, relative_depletion_label: 1]
+  import SigilWeb.MonitorHelpers, only: [monitor_dependencies: 1, initial_depletion: 1]
 
-  alias Sigil.Assemblies
+  alias Sigil.{Assemblies, Intel, StaticData}
+  alias SigilWeb.AssemblyDetailLive.IntelHelpers
   alias Sigil.GameState.MonitorSupervisor
+  alias Sigil.Intel.IntelReport
   alias Sigil.Sui.Types.{Assembly, Character, Gate, NetworkNode, StorageUnit, Turret}
 
   @assembly_topic_prefix "assembly:"
@@ -36,6 +36,7 @@ defmodule SigilWeb.AssemblyDetailLive do
             depletion: initial_depletion(assembly),
             is_owner: owner?(socket, assembly_id)
           )
+          |> assign_intel_state()
           |> maybe_subscribe(assembly_id)
           |> maybe_ensure_monitor(assembly_id)
 
@@ -108,6 +109,10 @@ defmodule SigilWeb.AssemblyDetailLive do
      |> assign(signing_state: :idle)}
   end
 
+  def handle_event("set_location", %{"location" => params}, socket) do
+    {:noreply, persist_location(socket, params)}
+  end
+
   def handle_event("wallet_detected", _params, socket), do: {:noreply, socket}
   def handle_event("wallet_error", _params, socket), do: {:noreply, socket}
 
@@ -136,6 +141,14 @@ defmodule SigilWeb.AssemblyDetailLive do
            depletion: initial_depletion(assembly),
            signing_state: reset_signing_state(socket.assigns.signing_state)
          )}
+
+      {:intel_updated, %IntelReport{report_type: :location, assembly_id: assembly_id} = report}
+      when assembly_id == socket.assigns.assembly.id ->
+        {:noreply, assign_location_report(socket, report)}
+
+      {:intel_deleted, %IntelReport{report_type: :location, assembly_id: assembly_id}}
+      when assembly_id == socket.assigns.assembly.id ->
+        {:noreply, assign_location_report(socket, nil)}
 
       _other ->
         {:noreply, socket}
@@ -220,154 +233,22 @@ defmodule SigilWeb.AssemblyDetailLive do
           />
         </div>
 
-        <%= case @assembly_type do %>
-          <% :gate -> %>
-            <div class="mt-8 space-y-4">
-              <div class="grid gap-4 md:grid-cols-2">
-                <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-4">
-                  <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Linked Gate</p>
-                  <%= if @assembly.linked_gate_id && byte_size(@assembly.linked_gate_id) > 0 do %>
-                    <.link
-                      navigate={~p"/assembly/#{@assembly.linked_gate_id}"}
-                      class="mt-3 block font-mono text-sm text-quantum-300 transition hover:text-cream"
-                      title={@assembly.linked_gate_id}
-                    >
-                      <%= truncate_id(@assembly.linked_gate_id) %>
-                    </.link>
-                  <% else %>
-                    <p class="mt-3 font-mono text-sm text-foreground">Not linked</p>
-                  <% end %>
-                </div>
-                <.detail_card
-                  title="Extension"
-                  value={extension_label(@assembly.extension)}
-                  mono
-                  full_value={@assembly.extension}
-                />
-              </div>
+        <SigilWeb.AssemblyDetailLive.Components.location_panel
+          :if={@location_visible}
+          location_name={@location_name}
+          can_edit_location={@can_edit_location}
+          form={@location_form}
+          solar_systems={@solar_systems}
+        />
 
-              <.gate_extension_panel
-                :if={@is_owner}
-                assembly={@assembly}
-                active_character={@active_character}
-              />
-
-              <.signing_overlay :if={@signing_state == :signing_tx} />
-            </div>
-
-          <% :turret -> %>
-            <div class="mt-8 grid gap-4 md:grid-cols-2">
-              <.detail_card title="Extension" value={extension_label(@assembly.extension)} mono full_value={@assembly.extension} />
-            </div>
-
-          <% :storage_unit -> %>
-            <div class="mt-8 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-              <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
-                <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Inventory Keys</p>
-                <%= if @assembly.inventory_keys == [] do %>
-                  <p class="mt-4 text-sm text-space-500">Empty</p>
-                <% else %>
-                  <div class="mt-4 space-y-2">
-                    <p :for={inventory_key <- @assembly.inventory_keys} class="font-mono text-sm text-foreground" title={inventory_key}>
-                      <%= truncate_id(inventory_key) %>
-                    </p>
-                  </div>
-                <% end %>
-              </div>
-              <div class="grid gap-4">
-                <.detail_card title="Item Count" value={Integer.to_string(length(@assembly.inventory_keys))} mono />
-                <.detail_card title="Extension" value={extension_label(@assembly.extension)} mono full_value={@assembly.extension} />
-              </div>
-            </div>
-
-          <% :network_node -> %>
-            <div class="mt-8 grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-              <div class="space-y-4 rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
-                <div>
-                  <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Fuel Panel</p>
-                  <div class="mt-4 flex items-center justify-between gap-3 font-mono text-xs uppercase tracking-[0.15em] text-space-500">
-                    <span><%= fuel_label(@assembly.fuel) %></span>
-                    <span><%= fuel_percent_label(@assembly.fuel) %></span>
-                  </div>
-                  <div class="mt-3 h-3 rounded-full bg-space-700">
-                    <div class={["h-full rounded-full", fuel_bar_color(@assembly.fuel)]} style={"width: #{fuel_bar_width(@assembly.fuel)}%"}></div>
-                  </div>
-                </div>
-
-                <%= if @depletion do %>
-                  <div class="rounded-2xl border border-space-600/80 bg-space-900/60 p-4">
-                    <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Fuel Forecast</p>
-                    <%= case @depletion do %>
-                      <% {:depletes_at, depletes_at} -> %>
-                        <p class="mt-3 text-sm text-cream">Depletes at <%= Calendar.strftime(depletes_at, "%Y-%m-%d %H:%M:%S UTC") %></p>
-                        <div
-                          id={"fuel-countdown-#{@assembly.id}"}
-                          class="mt-2 text-sm text-space-500"
-                          phx-hook="FuelCountdown"
-                          data-depletes-at={DateTime.to_iso8601(depletes_at)}
-                        >
-                          in <%= relative_depletion_label(depletes_at) %>
-                        </div>
-                      <% :not_burning -> %>
-                        <p class="mt-3 text-sm text-space-500">Not burning</p>
-                      <% :no_fuel -> %>
-                        <p class="mt-3 text-sm text-space-500">No fuel</p>
-                    <% end %>
-                  </div>
-                <% end %>
-
-                <div class="grid gap-4 md:grid-cols-2">
-                  <.detail_card title="Burn Rate" value={format_burn_rate(@assembly.fuel.burn_rate_in_ms)} mono />
-                  <.detail_card title="Is Burning" value={yes_no(@assembly.fuel.is_burning)} mono />
-                  <.detail_card title="Fuel Type ID" value={optional_integer(@assembly.fuel.type_id)} mono />
-                  <.detail_card title="Unit Volume" value={optional_integer(@assembly.fuel.unit_volume)} mono />
-                  <.detail_card title="Burn Start Time" value={format_timestamp(@assembly.fuel.burn_start_time, @assembly.fuel.is_burning)} mono />
-                  <.detail_card title="Last Updated" value={format_timestamp(@assembly.fuel.last_updated, true)} mono />
-                </div>
-              </div>
-
-              <div class="space-y-4">
-                <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
-                  <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Energy Panel</p>
-                  <div class="mt-4 grid gap-4">
-                    <.detail_card title="Max Energy Production" value={Integer.to_string(@assembly.energy_source.max_energy_production)} mono />
-                    <.detail_card title="Current Energy Production" value={energy_current_label(@assembly.energy_source)} mono />
-                    <.detail_card title="Total Reserved Energy" value={Integer.to_string(@assembly.energy_source.total_reserved_energy)} mono />
-                    <.detail_card title="Available Energy" value={Integer.to_string(available_energy(@assembly.energy_source))} mono />
-                  </div>
-                </div>
-
-                <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
-                  <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Connections</p>
-                  <div class="mt-4 flex items-center justify-between gap-3">
-                    <p class="text-sm text-space-500">Connection Count</p>
-                    <p class="font-mono text-sm text-foreground"><%= length(@assembly.connected_assembly_ids) %></p>
-                  </div>
-                  <%= if @assembly.connected_assembly_ids == [] do %>
-                    <p class="mt-4 text-sm text-space-500">No connections</p>
-                  <% else %>
-                    <div class="mt-4 space-y-2">
-                      <.link
-                        :for={assembly_id <- @assembly.connected_assembly_ids}
-                        navigate={~p"/assembly/#{assembly_id}"}
-                        class="block break-all font-mono text-sm text-quantum-300 transition hover:text-cream"
-                      >
-                        <%= truncate_id(assembly_id) %>
-                      </.link>
-                    </div>
-                  <% end %>
-                </div>
-              </div>
-            </div>
-
-          <% :assembly -> %>
-            <div class="mt-8 rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
-              <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Unknown assembly type</p>
-              <p class="mt-4 text-sm leading-6 text-space-500">
-                No type-specific telemetry is available for this assembly yet.
-              </p>
-            </div>
-        <% end %>
+        <SigilWeb.AssemblyDetailLive.Components.type_specific_section
+          assembly={@assembly}
+          assembly_type={@assembly_type}
+          active_character={@active_character}
+          depletion={@depletion}
+          is_owner={@is_owner}
+          signing_state={@signing_state}
+        />
       </div>
     </section>
     """
@@ -377,6 +258,10 @@ defmodule SigilWeb.AssemblyDetailLive do
   defp maybe_subscribe(socket, assembly_id) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(socket.assigns.pubsub, assembly_topic(assembly_id))
+
+      if is_integer(socket.assigns[:tribe_id]) do
+        Phoenix.PubSub.subscribe(socket.assigns.pubsub, intel_topic(socket.assigns.tribe_id))
+      end
     end
 
     socket
@@ -404,6 +289,112 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
+  @spec assign_intel_state(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp assign_intel_state(socket) do
+    tribe_id =
+      IntelHelpers.current_tribe_id(
+        socket.assigns[:active_character],
+        socket.assigns[:current_account]
+      )
+
+    static_data_pid = socket.assigns[:static_data]
+    intel_enabled? = IntelHelpers.intel_enabled?(socket.assigns[:cache_tables], tribe_id)
+
+    can_edit_location =
+      intel_enabled? and is_pid(static_data_pid) and
+        match?(
+          %Character{tribe_id: tribe_id} when is_integer(tribe_id) and tribe_id > 0,
+          socket.assigns[:active_character]
+        )
+
+    location_report = load_location_report(socket, tribe_id, intel_enabled?)
+    location_visible = is_integer(tribe_id)
+
+    socket
+    |> assign(
+      tribe_id: tribe_id,
+      location_visible: location_visible,
+      static_data_pid: static_data_pid,
+      solar_systems: load_solar_systems(socket, static_data_pid, can_edit_location),
+      can_edit_location: can_edit_location,
+      location_form: to_form(%{}, as: :location)
+    )
+    |> assign_location_report(location_report)
+  end
+
+  @spec load_location_report(Phoenix.LiveView.Socket.t(), integer() | nil, boolean()) ::
+          IntelReport.t() | nil
+  defp load_location_report(socket, tribe_id, true) when is_integer(tribe_id) do
+    Intel.get_location(
+      tribe_id,
+      socket.assigns.assembly.id,
+      IntelHelpers.intel_opts(socket.assigns.cache_tables, socket.assigns.pubsub, tribe_id)
+    )
+  end
+
+  defp load_location_report(_socket, _tribe_id, _intel_enabled?), do: nil
+
+  @spec load_solar_systems(Phoenix.LiveView.Socket.t(), pid() | nil, boolean()) :: list()
+  defp load_solar_systems(socket, static_data_pid, true) when is_pid(static_data_pid) do
+    if connected?(socket), do: StaticData.list_solar_systems(static_data_pid), else: []
+  end
+
+  defp load_solar_systems(_socket, _static_data_pid, _can_edit_location), do: []
+
+  @spec assign_location_report(Phoenix.LiveView.Socket.t(), IntelReport.t() | nil) ::
+          Phoenix.LiveView.Socket.t()
+  defp assign_location_report(socket, report) do
+    assign(socket,
+      location_report: report,
+      location_name: IntelHelpers.resolve_location_name(socket.assigns[:static_data_pid], report),
+      location_form: to_form(%{}, as: :location)
+    )
+  end
+
+  @spec persist_location(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  defp persist_location(socket, %{"solar_system_name" => solar_system_name} = params) do
+    with true <- socket.assigns.can_edit_location,
+         static_data_pid when is_pid(static_data_pid) <- socket.assigns.static_data_pid,
+         tribe_id when is_integer(tribe_id) <- socket.assigns.tribe_id,
+         %Character{} = active_character <- socket.assigns.active_character,
+         %{} = solar_system <-
+           StaticData.get_solar_system_by_name(static_data_pid, solar_system_name),
+         {:ok, report} <-
+           Intel.report_location(
+             %{
+               tribe_id: tribe_id,
+               assembly_id: socket.assigns.assembly.id,
+               solar_system_id: solar_system.id,
+               label: assembly_name(socket.assigns.assembly),
+               notes: "Assembly location update",
+               reported_by: socket.assigns.current_account.address,
+               reported_by_name: IntelHelpers.character_name(active_character),
+               reported_by_character_id: active_character.id
+             },
+             IntelHelpers.intel_opts(socket.assigns.cache_tables, socket.assigns.pubsub, tribe_id)
+           ) do
+      socket
+      |> put_flash(:info, "Location saved")
+      |> assign_location_report(report)
+    else
+      false ->
+        put_flash(socket, :error, "Unknown or ambiguous solar system")
+
+      nil ->
+        put_flash(socket, :error, "Unknown or ambiguous solar system")
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        put_flash(socket, :error, inspect(changeset.errors))
+
+      _other ->
+        put_flash(socket, :error, "Unknown or ambiguous solar system")
+    end
+    |> assign(:location_form, to_form(params, as: :location))
+  end
+
+  defp persist_location(socket, _params),
+    do: put_flash(socket, :error, "Unknown or ambiguous solar system")
+
   @spec fetch_assembly(String.t(), map() | nil) ::
           {:ok, Assemblies.assembly()} | {:error, :not_found}
   defp fetch_assembly(assembly_id, cache_tables)
@@ -423,11 +414,6 @@ defmodule SigilWeb.AssemblyDetailLive do
       _other ->
         false
     end
-  end
-
-  @spec assembly_opts(Phoenix.LiveView.Socket.t()) :: Assemblies.options()
-  defp assembly_opts(socket) do
-    [tables: socket.assigns.cache_tables, pubsub: socket.assigns.pubsub]
   end
 
   @spec reset_signing_state(atom()) :: atom()
@@ -477,6 +463,14 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
+  @spec assembly_opts(Phoenix.LiveView.Socket.t()) :: Assemblies.options()
+  defp assembly_opts(socket) do
+    [tables: socket.assigns.cache_tables, pubsub: socket.assigns.pubsub]
+  end
+
   @spec assembly_topic(String.t()) :: String.t()
   defp assembly_topic(assembly_id), do: @assembly_topic_prefix <> assembly_id
+
+  @spec intel_topic(integer()) :: String.t()
+  defp intel_topic(tribe_id), do: "intel:" <> Integer.to_string(tribe_id)
 end
