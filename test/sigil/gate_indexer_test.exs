@@ -304,8 +304,10 @@ defmodule Sigil.GateIndexerTest do
         fn _filters, [] -> {:ok, page([gate_json("0xgate-a")])} end
       ])
 
-      _pid = start_gate_indexer!(tables: tables, pubsub: pubsub, interval_ms: 30)
+      _pid = start_gate_indexer!(tables: tables, pubsub: pubsub, interval_ms: 100)
 
+      # The client call message can arrive before the PubSub update under load.
+      assert_receive {:get_objects_called, 1, nil}, 1_000
       assert_receive {:gates_updated, %{count: 1, added: 1, removed: 0}}, 1_000
       assert Sigil.GateIndexer.get_gate("0xgate-a", tables: tables)
 

@@ -12,8 +12,9 @@ defmodule SigilWeb.AssemblyDetailLiveIsolatedTestLive do
   def mount(_params, %{"assembly_id" => assembly_id} = session, socket) do
     socket =
       socket
-      |> maybe_assign_monitor_dependency(:monitor_supervisor, session)
-      |> maybe_assign_monitor_dependency(:monitor_registry, session)
+      |> maybe_assign_dependency(:monitor_supervisor, session)
+      |> maybe_assign_dependency(:monitor_registry, session)
+      |> maybe_assign_dependency(:static_data, session)
 
     SigilWeb.AssemblyDetailLive.mount(%{"id" => assembly_id}, session, socket)
   end
@@ -34,7 +35,7 @@ defmodule SigilWeb.AssemblyDetailLiveIsolatedTestLive do
     apply(SigilWeb.AssemblyDetailLive, :handle_event, [event, params, socket])
   end
 
-  defp maybe_assign_monitor_dependency(socket, key, session) do
+  defp maybe_assign_dependency(socket, key, session) do
     case Map.fetch(session, Atom.to_string(key)) do
       {:ok, value} -> Phoenix.Component.assign(socket, key, value)
       :error -> socket
@@ -49,26 +50,35 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
   use Sigil.ConnCase, async: true
 
+  import Ecto.Query
   import Hammox
 
   alias Sigil.Cache
+  alias Sigil.Repo
   alias Sigil.Accounts.Account
   alias Sigil.GameState.MonitorSupervisor
+  alias Sigil.Intel.IntelReport
+  alias Sigil.StaticData
+  alias Sigil.StaticDataTestFixtures, as: StaticDataFixtures
   alias Sigil.Sui.Types.{Character, Gate, NetworkNode, StorageUnit, Turret}
 
   @zklogin_sig Base.encode64(<<0x05, 0::size(320)>>)
 
   setup :verify_on_exit!
 
-  setup do
-    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies, :nonces]})
+  setup %{sandbox_owner: sandbox_owner} do
+    cache_pid =
+      start_supervised!({Cache, tables: [:accounts, :characters, :assemblies, :nonces, :intel]})
+
     pubsub = unique_pubsub_name()
+    static_data = start_static_data!(sandbox_owner)
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
     {:ok,
      cache_tables: Cache.tables(cache_pid),
      pubsub: pubsub,
+     static_data: static_data,
      wallet_address: unique_wallet_address()}
   end
 
@@ -993,7 +1003,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
     assert html =~ gate.extension
     assert html =~ "Extension Active"
-    assert html =~ "Authorize Sigil Extension"
+    assert html =~ "Re-authorize Extension"
     refute html =~ "No extension configured"
     refute html =~ "Reconnect your wallet"
   end
@@ -1258,6 +1268,375 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert html =~ "Extension authorized successfully"
   end
 
+  describe "intel location integration" do
+    test "assembly detail shows reported location from tribe intel", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-location-gate")}))
+
+      report =
+        insert_location_report!(%{
+          tribe_id: account.tribe_id,
+          assembly_id: gate.id,
+          solar_system_id: 30_000_001,
+          reported_by: wallet_address,
+          reported_by_character_id: hd(account.characters).id,
+          reported_by_name: "Captain Frontier"
+        })
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+      Cache.put(cache_tables.intel, {:location, account.tribe_id, gate.id}, report)
+
+      assert {:ok, _view, html} =
+               isolated_detail_live(
+                 conn,
+                 gate.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      assert html =~ "Location"
+      assert html =~ "A 2560"
+      refute html =~ "Location unknown"
+    end
+
+    test "location form visible for tribe members", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-form-gate"), "extension" => nil}))
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      assert {:ok, _view, html} =
+               isolated_detail_live(
+                 conn,
+                 gate.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      assert html =~ "Set Location"
+      assert html =~ "Solar system name"
+      assert html =~ "solar-systems"
+      refute html =~ "Solar system data not available"
+    end
+
+    test "Set Location creates intel report and updates display", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-submit-gate"), "extension" => nil}))
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      {:ok, view, _html} =
+        isolated_detail_live(
+          conn,
+          gate.id,
+          wallet_address,
+          cache_tables,
+          pubsub,
+          static_data: static_data
+        )
+
+      html =
+        view
+        |> form("#set-location-form", %{"location" => %{"solar_system_name" => "A 2560"}})
+        |> render_submit()
+
+      assert html =~ "A 2560"
+      assert html =~ "Location saved"
+      refute html =~ "Location unknown"
+
+      persisted_report =
+        Repo.one(
+          from report in IntelReport,
+            where: report.assembly_id == ^gate.id and report.report_type == :location
+        )
+
+      assert %IntelReport{tribe_id: 314, solar_system_id: 30_000_001} = persisted_report
+      assert persisted_report.assembly_id == gate.id
+    end
+
+    test "Set Location hidden for users without tribe", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account =
+        %Account{
+          address: wallet_address,
+          characters: [Character.from_json(character_json(%{"tribe_id" => "0"}))],
+          tribe_id: nil
+        }
+
+      gate =
+        Gate.from_json(gate_json(%{"id" => uid("0xintel-no-tribe-gate"), "extension" => nil}))
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      assert {:ok, _view, html} =
+               isolated_detail_live(
+                 conn,
+                 gate.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      refute html =~ "Set Location"
+      refute html =~ "Update Location"
+      refute html =~ "Location unknown"
+    end
+
+    test "location card updates only for location intel broadcast", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-broadcast-gate")}))
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      {:ok, view, _html} =
+        isolated_detail_live(
+          conn,
+          gate.id,
+          wallet_address,
+          cache_tables,
+          pubsub,
+          static_data: static_data
+        )
+
+      scouting = %IntelReport{
+        id: Ecto.UUID.generate(),
+        tribe_id: account.tribe_id,
+        assembly_id: gate.id,
+        solar_system_id: 30_000_001,
+        report_type: :scouting,
+        notes: "Scouts spotted",
+        reported_by: wallet_address,
+        reported_by_character_id: hd(account.characters).id,
+        inserted_at: DateTime.utc_now(),
+        updated_at: DateTime.utc_now()
+      }
+
+      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_updated, scouting})
+      # Scouting broadcast should not populate the location card
+      assert render(view) =~ "Location unknown"
+
+      location = %IntelReport{
+        scouting
+        | report_type: :location,
+          solar_system_id: 30_000_002,
+          notes: "Updated location"
+      }
+
+      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_updated, location})
+
+      html = render(view)
+      assert html =~ "B 31337"
+      refute html =~ "Location unknown"
+    end
+
+    test "location card clears only on location intel deletion", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-delete-gate")}))
+
+      report =
+        insert_location_report!(%{
+          tribe_id: account.tribe_id,
+          assembly_id: gate.id,
+          solar_system_id: 30_000_001,
+          reported_by: wallet_address,
+          reported_by_character_id: hd(account.characters).id,
+          reported_by_name: "Captain Frontier"
+        })
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+      Cache.put(cache_tables.intel, {:location, account.tribe_id, gate.id}, report)
+
+      {:ok, view, _html} =
+        isolated_detail_live(
+          conn,
+          gate.id,
+          wallet_address,
+          cache_tables,
+          pubsub,
+          static_data: static_data
+        )
+
+      assert render(view) =~ "A 2560"
+
+      scouting = %{report | id: Ecto.UUID.generate(), report_type: :scouting}
+      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_deleted, scouting})
+      assert render(view) =~ "A 2560"
+
+      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_deleted, report})
+
+      html = render(view)
+      assert html =~ "Location unknown"
+      refute html =~ "Forward staging"
+    end
+
+    @tag :acceptance
+    test "tribe member sets location from detail page", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      gate =
+        Gate.from_json(gate_json(%{"id" => uid("0xacceptance-intel-gate"), "extension" => nil}))
+
+      account = account_fixture(wallet_address)
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      {:ok, view, _html} =
+        live(
+          authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data: static_data),
+          "/assembly/#{gate.id}"
+        )
+
+      html =
+        view
+        |> form("#set-location-form", %{"location" => %{"solar_system_name" => "A 2560"}})
+        |> render_submit()
+
+      assert html =~ "A 2560"
+      refute html =~ "Location unknown"
+      refute html =~ "Unknown or ambiguous solar system"
+    end
+
+    test "detail Set Location rejects invalid system name", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-invalid-gate"), "extension" => nil}))
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      {:ok, view, _html} =
+        isolated_detail_live(
+          conn,
+          gate.id,
+          wallet_address,
+          cache_tables,
+          pubsub,
+          static_data: static_data
+        )
+
+      html =
+        view
+        |> form("#set-location-form", %{"location" => %{"solar_system_name" => "Z 9999"}})
+        |> render_submit()
+
+      assert html =~ "Unknown or ambiguous solar system"
+      assert html =~ "Z 9999"
+      # "A 2560" appears in the datalist but location card should still say unknown
+      assert html =~ "Location unknown"
+    end
+
+    test "detail hides location editor without active character", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_without_characters_fixture(wallet_address)
+
+      gate =
+        Gate.from_json(gate_json(%{"id" => uid("0xintel-no-character-gate"), "extension" => nil}))
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      assert {:ok, _view, html} =
+               isolated_detail_live(
+                 conn,
+                 gate.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      refute html =~ "Set Location"
+      refute html =~ "Update Location"
+      assert html =~ "Location unknown"
+      assert html =~ "Jump Gate Alpha"
+    end
+
+    test "detail hides location editor without StaticData", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      account = account_fixture(wallet_address)
+
+      gate =
+        Gate.from_json(
+          gate_json(%{"id" => uid("0xintel-no-static-data-gate"), "extension" => nil})
+        )
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+
+      assert {:ok, _view, html} =
+               isolated_detail_live(conn, gate.id, wallet_address, cache_tables, pubsub)
+
+      refute html =~ "Set Location"
+      refute html =~ "Update Location"
+      assert html =~ "Jump Gate Alpha"
+    end
+  end
+
   defp expect_empty_dashboard_discovery(_wallet_address) do
     owner_cap_type = owner_cap_type()
     character_id = "0xcharacter-detail"
@@ -1268,17 +1647,20 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     end)
   end
 
-  defp authenticated_conn(conn, wallet_address, cache_tables, pubsub) do
-    init_test_session(conn, authenticated_session(wallet_address, cache_tables, pubsub))
+  defp authenticated_conn(conn, wallet_address, cache_tables, pubsub, extra_session \\ %{}) do
+    init_test_session(
+      conn,
+      authenticated_session(wallet_address, cache_tables, pubsub, extra_session)
+    )
   end
 
-  defp authenticated_session(wallet_address, cache_tables, pubsub, extra_session \\ %{}) do
+  defp authenticated_session(wallet_address, cache_tables, pubsub, extra_session) do
     %{
       "wallet_address" => wallet_address,
       "cache_tables" => cache_tables,
       "pubsub" => pubsub
     }
-    |> Map.merge(extra_session)
+    |> Map.merge(normalize_session(extra_session))
   end
 
   defp isolated_detail_live(
@@ -1289,10 +1671,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
          pubsub,
          extra_session \\ []
        ) do
-    extra_session =
-      extra_session
-      |> Enum.map(fn {key, value} -> {to_string(key), value} end)
-      |> Map.new()
+    extra_session = normalize_session(extra_session)
 
     live_isolated(conn, SigilWeb.AssemblyDetailLiveIsolatedTestLive,
       session:
@@ -1426,6 +1805,14 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
   end
 
   defp hex_to_bytes("0x" <> hex), do: Base.decode16!(hex, case: :mixed)
+
+  defp normalize_session(extra_session) when is_map(extra_session), do: extra_session
+
+  defp normalize_session(extra_session) do
+    extra_session
+    |> Enum.map(fn {key, value} -> {to_string(key), value} end)
+    |> Map.new()
+  end
 
   defp unique_pubsub_name do
     :"assembly_detail_pubsub_#{System.unique_integer([:positive])}"
@@ -1571,6 +1958,32 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
   defp location_hash do
     :binary.copy(<<7>>, 32)
+  end
+
+  defp start_static_data!(sandbox_owner) do
+    start_supervised!(
+      {StaticData, test_data: StaticDataFixtures.sample_test_data(), mox_owner: sandbox_owner}
+    )
+  end
+
+  defp insert_location_report!(attrs) do
+    %IntelReport{}
+    |> IntelReport.location_changeset(
+      Map.merge(
+        %{
+          tribe_id: 314,
+          assembly_id: "0xassembly-location",
+          solar_system_id: 30_000_001,
+          label: "Forward position",
+          notes: "Scout-confirmed location",
+          reported_by: "0xabc123",
+          reported_by_name: "Scout Prime",
+          reported_by_character_id: "0xcharacter-detail"
+        },
+        attrs
+      )
+    )
+    |> Repo.insert!()
   end
 
   # Base64-encoded bytes starting with zkLogin scheme byte (0x05)

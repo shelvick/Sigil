@@ -33,6 +33,7 @@ defmodule SigilWeb.Router do
       live "/", DashboardLive
       live "/assembly/:id", AssemblyDetailLive
       live "/tribe/:tribe_id", TribeOverviewLive
+      live "/tribe/:tribe_id/intel", IntelLive
       live "/tribe/:tribe_id/diplomacy", DiplomacyLive
     end
   end

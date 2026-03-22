@@ -43,6 +43,11 @@ defmodule Sigil.Sui.Client.HTTP do
       }
       nodes {
         address
+        owner {
+          ... on Shared {
+            initialSharedVersion
+          }
+        }
         asMoveObject {
           contents {
             json
@@ -309,9 +314,9 @@ defmodule Sigil.Sui.Client.HTTP do
   defp extract_object_data(nodes) do
     reduced_nodes =
       Enum.reduce_while(nodes, {:ok, []}, fn
-        %{"asMoveObject" => %{"contents" => %{"json" => object_json}}}, {:ok, acc}
+        %{"asMoveObject" => %{"contents" => %{"json" => object_json}}} = node, {:ok, acc}
         when is_map(object_json) ->
-          {:cont, {:ok, [object_json | acc]}}
+          {:cont, {:ok, [merge_owner_metadata(object_json, node) | acc]}}
 
         %{"asMoveObject" => nil}, {:ok, acc} ->
           {:cont, {:ok, acc}}

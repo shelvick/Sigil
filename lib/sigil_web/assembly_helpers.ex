@@ -330,7 +330,7 @@ defmodule SigilWeb.AssemblyHelpers do
               phx-click="authorize_extension"
               class="inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
             >
-              Authorize Sigil Extension
+              <%= if extension_active?(@assembly.extension), do: "Re-authorize Extension", else: "Authorize Sigil Extension" %>
             </button>
           <% else %>
             <p class="text-sm text-space-500">Reconnect your wallet</p>

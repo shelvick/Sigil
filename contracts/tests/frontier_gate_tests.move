@@ -3,7 +3,7 @@ module sigil::frontier_gate_tests;
 
 use std::{bcs, string::utf8};
 use sui::{clock, test_scenario as ts};
-use sigil::{frontier_gate, standings_table};
+use sigil::{frontier_gate, tribe_custodian};
 use world::{
     access::{AdminACL, OwnerCap, ServerAddressRegistry},
     character::{Self, Character},
@@ -50,6 +50,9 @@ fun setup(ts: &mut ts::Scenario) {
     gate::init_for_testing(ts.ctx());
 
     ts::next_tx(ts, admin());
+    tribe_custodian::init_for_testing(ts.ctx());
+
+    ts::next_tx(ts, admin());
     {
         let admin_acl = ts::take_shared<AdminACL>(ts);
         let mut gate_config = ts::take_shared<GateConfig>(ts);
@@ -57,9 +60,6 @@ fun setup(ts: &mut ts::Scenario) {
         ts::return_shared(gate_config);
         ts::return_shared(admin_acl);
     };
-
-    ts::next_tx(ts, user_a());
-    standings_table::create(ts.ctx());
 }
 
 fun create_character(ts: &mut ts::Scenario, tribe_id: u32, item_id: u32): ID {
@@ -243,30 +243,47 @@ fun authorize_frontier_gate_extension(
     };
 }
 
-fun set_standing(ts: &mut ts::Scenario, tribe_id: u32, standing: u8) {
+fun create_custodian(ts: &mut ts::Scenario, character_id: ID) {
     ts::next_tx(ts, user_a());
     {
-        let mut table = ts::take_shared<standings_table::StandingsTable>(ts);
-        standings_table::set_standing(&mut table, tribe_id, standing, ts.ctx());
-        ts::return_shared(table);
+        let mut registry = ts::take_shared<tribe_custodian::TribeCustodianRegistry>(ts);
+        let character = ts::take_shared_by_id<Character>(ts, character_id);
+        tribe_custodian::create_custodian(&mut registry, &character, ts.ctx());
+        ts::return_shared(character);
+        ts::return_shared(registry);
     };
 }
 
-fun set_default_standing(ts: &mut ts::Scenario, standing: u8) {
+fun set_standing(ts: &mut ts::Scenario, character_id: ID, tribe_id: u32, standing: u8) {
     ts::next_tx(ts, user_a());
     {
-        let mut table = ts::take_shared<standings_table::StandingsTable>(ts);
-        standings_table::set_default_standing(&mut table, standing, ts.ctx());
-        ts::return_shared(table);
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        let character = ts::take_shared_by_id<Character>(ts, character_id);
+        tribe_custodian::set_standing(&mut custodian, &character, tribe_id, standing, ts.ctx());
+        ts::return_shared(character);
+        ts::return_shared(custodian);
     };
 }
 
-fun set_pilot_standing(ts: &mut ts::Scenario, standing: u8) {
+fun set_default_standing(ts: &mut ts::Scenario, character_id: ID, standing: u8) {
     ts::next_tx(ts, user_a());
     {
-        let mut table = ts::take_shared<standings_table::StandingsTable>(ts);
-        standings_table::set_pilot_standing(&mut table, user_a(), standing, ts.ctx());
-        ts::return_shared(table);
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        let character = ts::take_shared_by_id<Character>(ts, character_id);
+        tribe_custodian::set_default_standing(&mut custodian, &character, standing, ts.ctx());
+        ts::return_shared(character);
+        ts::return_shared(custodian);
+    };
+}
+
+fun set_pilot_standing(ts: &mut ts::Scenario, character_id: ID, standing: u8) {
+    ts::next_tx(ts, user_a());
+    {
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        let character = ts::take_shared_by_id<Character>(ts, character_id);
+        tribe_custodian::set_pilot_standing(&mut custodian, &character, user_a(), standing, ts.ctx());
+        ts::return_shared(character);
+        ts::return_shared(custodian);
     };
 }
 
@@ -274,6 +291,7 @@ fun setup_permit_scenario(ts: &mut ts::Scenario, tribe_id: u32, character_item_i
     setup(ts);
 
     let character_id = create_character(ts, tribe_id, character_item_id);
+    create_custodian(ts, character_id);
     let network_node_id = create_network_node(ts, character_id);
     let source_gate_id = create_gate(ts, character_id, network_node_id, GATE_ITEM_ID_1);
     let destination_gate_id = create_gate(ts, character_id, network_node_id, GATE_ITEM_ID_2);
@@ -289,13 +307,13 @@ fun request_permit(ts: &mut ts::Scenario, character_id: ID, source_gate_id: ID, 
     ts::next_tx(ts, user_a());
     {
         let clock = clock::create_for_testing(ts.ctx());
-        let table = ts::take_shared<standings_table::StandingsTable>(ts);
+        let custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
         let source_gate = ts::take_shared_by_id<Gate>(ts, source_gate_id);
         let destination_gate = ts::take_shared_by_id<Gate>(ts, destination_gate_id);
         let character = ts::take_shared_by_id<Character>(ts, character_id);
 
         frontier_gate::request_permit(
-            &table,
+            &custodian,
             &source_gate,
             &destination_gate,
             &character,
@@ -306,7 +324,7 @@ fun request_permit(ts: &mut ts::Scenario, character_id: ID, source_gate_id: ID, 
         ts::return_shared(character);
         ts::return_shared(source_gate);
         ts::return_shared(destination_gate);
-        ts::return_shared(table);
+        ts::return_shared(custodian);
         clock.destroy_for_testing();
     };
 }
@@ -345,7 +363,7 @@ fun test_friendly_gets_permit() {
         101,
     );
 
-    set_standing(&mut ts, FRIENDLY_TRIBE, FRIENDLY);
+    set_standing(&mut ts, character_id, FRIENDLY_TRIBE, FRIENDLY);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -360,7 +378,7 @@ fun test_hostile_denied() {
         102,
     );
 
-    set_standing(&mut ts, HOSTILE_TRIBE, HOSTILE);
+    set_standing(&mut ts, character_id, HOSTILE_TRIBE, HOSTILE);
     request_permit(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -375,7 +393,7 @@ fun test_unfriendly_gets_permit() {
         103,
     );
 
-    set_standing(&mut ts, UNFRIENDLY_TRIBE, UNFRIENDLY);
+    set_standing(&mut ts, character_id, UNFRIENDLY_TRIBE, UNFRIENDLY);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -390,7 +408,7 @@ fun test_neutral_gets_permit() {
         104,
     );
 
-    set_standing(&mut ts, NEUTRAL_TRIBE, NEUTRAL);
+    set_standing(&mut ts, character_id, NEUTRAL_TRIBE, NEUTRAL);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -405,7 +423,7 @@ fun test_allied_gets_permit() {
         105,
     );
 
-    set_standing(&mut ts, ALLIED_TRIBE, ALLIED);
+    set_standing(&mut ts, character_id, ALLIED_TRIBE, ALLIED);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -420,8 +438,8 @@ fun test_pilot_override_allows_hostile_tribe_member() {
         106,
     );
 
-    set_standing(&mut ts, HOSTILE_TRIBE, HOSTILE);
-    set_pilot_standing(&mut ts, FRIENDLY);
+    set_standing(&mut ts, character_id, HOSTILE_TRIBE, HOSTILE);
+    set_pilot_standing(&mut ts, character_id, FRIENDLY);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -436,8 +454,8 @@ fun test_pilot_override_denies_friendly_tribe_member() {
         107,
     );
 
-    set_standing(&mut ts, FRIENDLY_TRIBE, FRIENDLY);
-    set_pilot_standing(&mut ts, HOSTILE);
+    set_standing(&mut ts, character_id, FRIENDLY_TRIBE, FRIENDLY);
+    set_pilot_standing(&mut ts, character_id, HOSTILE);
     request_permit(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -452,7 +470,7 @@ fun test_nbsi_denies_unknown() {
         108,
     );
 
-    set_default_standing(&mut ts, HOSTILE);
+    set_default_standing(&mut ts, character_id, HOSTILE);
     request_permit(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);
@@ -467,7 +485,7 @@ fun test_nrds_allows_unknown() {
         109,
     );
 
-    set_default_standing(&mut ts, NEUTRAL);
+    set_default_standing(&mut ts, character_id, NEUTRAL);
     request_permit_and_consume(&mut ts, character_id, source_gate_id, destination_gate_id);
 
     ts::end(ts);

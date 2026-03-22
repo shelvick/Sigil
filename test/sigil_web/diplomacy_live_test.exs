@@ -1,8 +1,9 @@
 defmodule SigilWeb.DiplomacyLiveTest do
   @moduledoc """
-  Covers the UI_DiplomacyLive specification (R1-R20) from Packet 4.
-  Tests diplomacy editor: page states, standings CRUD, pilot overrides,
-  transaction signing flow, PubSub updates, and full user journey.
+  Covers the UI_DiplomacyLive specification (R1-R26) from Packet 3.
+  Tests diplomacy editor: custodian page states, leader/non-leader paths,
+  standings CRUD, pilot overrides, transaction signing flow, PubSub updates,
+  and full user journey.
   """
 
   use Sigil.ConnCase, async: true
@@ -14,8 +15,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
   alias Sigil.Sui.Types.Character
 
   @tribe_id 314
-  @standings_package_id "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1"
-  @standings_table_type "#{@standings_package_id}::standings_table::StandingsTable"
+  @custodian_type "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1::tribe_custodian::Custodian"
+  @character_id "0x" <> String.duplicate("cc", 32)
 
   setup :verify_on_exit!
 
@@ -29,17 +30,24 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
-    {:ok,
-     cache_tables: Cache.tables(cache_pid),
-     pubsub: pubsub,
-     wallet_address: unique_wallet_address()}
+    cache_tables = Cache.tables(cache_pid)
+
+    stub(Sigil.StaticData.WorldClientMock, :fetch_tribes, fn _opts -> {:ok, []} end)
+
+    # Seed character ref so load_standings can resolve it without chain calls
+    Cache.put(cache_tables.standings, {:character_ref, @character_id}, %{
+      object_id: :binary.copy(<<0xCC>>, 32),
+      initial_shared_version: 100
+    })
+
+    {:ok, cache_tables: cache_tables, pubsub: pubsub, wallet_address: unique_wallet_address()}
   end
 
   # ---------------------------------------------------------------------------
-  # R1: No table state shows create CTA [INTEGRATION]
+  # R1: No custodian state shows create CTA [INTEGRATION]
   # ---------------------------------------------------------------------------
 
-  test "no table state shows create standings table button", %{
+  test "no custodian state shows create custodian button", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -48,9 +56,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    # Mock table discovery returning empty
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @standings_table_type], [] ->
-      {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+    stub(Sigil.Sui.ClientMock, :get_objects, fn
+      [type: @custodian_type], [] ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
     end)
 
     assert {:ok, _view, html} =
@@ -59,18 +67,18 @@ defmodule SigilWeb.DiplomacyLiveTest do
                "/tribe/#{@tribe_id}/diplomacy"
              )
 
-    assert html =~ "Create Standings Table"
-    assert html =~ "on-chain Sui object"
+    assert html =~ "Your tribe doesn't have a Tribe Custodian yet"
+    assert html =~ "Create Tribe Custodian"
     assert html =~ "Hostile"
     assert html =~ "Allied"
-    refute html =~ "Manage Standings"
+    refute html =~ "Create Standings Table"
   end
 
   # ---------------------------------------------------------------------------
-  # R2: Create table triggers wallet signing [INTEGRATION]
+  # R2: Create custodian triggers wallet signing [INTEGRATION]
   # ---------------------------------------------------------------------------
 
-  test "create table click builds tx and pushes sign event", %{
+  test "create custodian click starts approval flow", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -79,12 +87,15 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    # Mock table discovery returning empty
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @standings_table_type], [] ->
-      {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+    stub(Sigil.Sui.ClientMock, :get_objects, fn
+      [type: @custodian_type], [] ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
     end)
 
-    # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
+    Cache.put(cache_tables.standings, {:registry_ref}, %{
+      object_id: :binary.copy(<<0xDD>>, 32),
+      initial_shared_version: 50
+    })
 
     {:ok, view, _html} =
       live(
@@ -92,53 +103,24 @@ defmodule SigilWeb.DiplomacyLiveTest do
         "/tribe/#{@tribe_id}/diplomacy"
       )
 
-    # Click the create table button
     view
-    |> element("button", "Create Standings Table")
+    |> element("button", "Create Tribe Custodian")
     |> render_click()
 
-    # Should push sign event to JS hook
     assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
     assert is_binary(tx_bytes)
     assert byte_size(tx_bytes) > 0
-  end
 
-  # ---------------------------------------------------------------------------
-  # R3: Table selection when multiple exist [INTEGRATION]
-  # ---------------------------------------------------------------------------
-
-  test "multiple tables shows selection list", %{
-    conn: conn,
-    cache_tables: cache_tables,
-    pubsub: pubsub,
-    wallet_address: wallet_address
-  } do
-    account = account_fixture(wallet_address, @tribe_id)
-    Cache.put(cache_tables.accounts, wallet_address, account)
-
-    table_one = table_object_json(table_id(0x11), wallet_address, 17)
-    table_two = table_object_json(table_id(0x22), wallet_address, 23)
-
-    # Mock table discovery returning multiple
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @standings_table_type], [] ->
-      {:ok, %{data: [table_one, table_two], has_next_page: false, end_cursor: nil}}
-    end)
-
-    assert {:ok, _view, html} =
-             live(
-               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
-               "/tribe/#{@tribe_id}/diplomacy"
-             )
-
-    assert html =~ "Multiple Standings Tables"
+    html = render(view)
+    assert html =~ "Approve in your wallet"
     refute html =~ "Create Standings Table"
   end
 
   # ---------------------------------------------------------------------------
-  # R4: Active state shows standings editor [INTEGRATION]
+  # R3/R4: Leader and non-leader state split [INTEGRATION]
   # ---------------------------------------------------------------------------
 
-  test "active state renders full standings editor", %{
+  test "leader and non-leader see different diplomacy controls", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -147,30 +129,74 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-
-    # Single table — auto-selected
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @standings_table_type], [] ->
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
       {:ok,
        %{
-         data: [table_object_json(table_id(0x33), wallet_address, 41)],
+         data: [custodian_object_json(table_id(0x11), wallet_address, @tribe_id, 17)],
          has_next_page: false,
          end_cursor: nil
        }}
     end)
 
+    assert {:ok, _leader_view, leader_html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert leader_html =~ "Add Pilot Override"
+    refute leader_html =~ "Only the tribe leader can modify standings"
+
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok,
+       %{
+         data: [custodian_object_json(table_id(0x22), unique_wallet_address(), @tribe_id, 23)],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    assert {:ok, _readonly_view, readonly_html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert readonly_html =~ "Only the tribe leader can modify standings"
+    refute readonly_html =~ "Add Pilot Override"
+    refute readonly_html =~ "Create Standings Table"
+    refute readonly_html =~ "Change..."
+  end
+
+  # ---------------------------------------------------------------------------
+  # R3: Active state shows standings editor for leader [INTEGRATION]
+  # ---------------------------------------------------------------------------
+
+  test "leader sees full standings editor with edit controls", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
     assert {:ok, _view, html} =
              live(
                authenticated_conn(conn, wallet_address, cache_tables, pubsub),
                "/tribe/#{@tribe_id}/diplomacy"
              )
 
-    # Editor sections should be visible
     assert html =~ "Tribe Standings"
     assert html =~ "Pilot Overrides"
     assert html =~ "Default Standing"
-    refute html =~ "Create Standings Table"
-    refute html =~ "Multiple Standings Tables"
+    assert html =~ "Add Pilot Override"
+    assert html =~ "Tribe Custodian"
+    refute html =~ "Only the tribe leader can modify standings"
+    refute html =~ "Create Tribe Custodian"
   end
 
   # ---------------------------------------------------------------------------
@@ -186,12 +212,12 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     # Seed tribe standings
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 0)
-    Cache.put(cache_tables.standings, {:tribe_standing, 271}, 4)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 271}, 4)
 
     # Seed tribe names
     Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
@@ -212,6 +238,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
                "/tribe/#{@tribe_id}/diplomacy"
              )
 
+    assert html =~ "Tribe Custodian"
     assert html =~ "Hostile Corp"
     assert html =~ "Frontier Defense Union"
     assert html =~ "Hostile"
@@ -232,8 +259,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     # Seed world tribes for dropdown
     Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
@@ -244,11 +271,13 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert html =~ "Tribe Custodian"
 
     # Submit add standing form
     view
@@ -273,11 +302,11 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     # Seed existing standing
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 2)
 
     Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
       id: 42,
@@ -287,11 +316,13 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert html =~ "Tribe Custodian"
 
     # Trigger inline edit event
     render_click(view, "set_standing", %{"tribe_id" => "42", "standing" => "0"})
@@ -312,20 +343,22 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     # Seed existing standings
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 2)
-    Cache.put(cache_tables.standings, {:tribe_standing, 43}, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 43}, 2)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert html =~ "Tribe Custodian"
 
     # Trigger batch set event
     render_click(view, "batch_set_standings", %{
@@ -351,8 +384,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     # Seed world tribes
     Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
@@ -367,11 +400,13 @@ defmodule SigilWeb.DiplomacyLiveTest do
       short_name: "BI"
     })
 
-    {:ok, view, _html} =
+    {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert html =~ "Tribe Custodian"
 
     # Type in search filter
     filtered_html = render_change(view, "filter_tribes", %{"query" => "Alpha"})
@@ -393,11 +428,11 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     pilot_address = "0x" <> String.duplicate("ab", 32)
-    Cache.put(cache_tables.standings, {:pilot_standing, pilot_address}, 0)
+    Cache.put(cache_tables.standings, {:pilot_standing, @tribe_id, pilot_address}, 0)
 
     assert {:ok, _view, html} =
              live(
@@ -406,6 +441,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
              )
 
     # Should show truncated pilot address and standing
+    assert html =~ "Tribe Custodian"
     assert html =~ "0xabab"
     assert html =~ "Hostile"
     refute html =~ "No pilot overrides"
@@ -424,18 +460,20 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     pilot_address = "0x" <> String.duplicate("cd", 32)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert html =~ "Tribe Custodian"
 
     view
     |> form("#add-pilot-override-form", %{"pilot_address" => pilot_address, "standing" => "1"})
@@ -457,14 +495,16 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
-    {:ok, view, _html} =
+    {:ok, view, mount_html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert mount_html =~ "Tribe Custodian"
 
     html =
       view
@@ -491,17 +531,19 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert html =~ "Tribe Custodian"
 
     render_click(view, "set_default_standing", %{"standing" => "0"})
 
@@ -521,11 +563,11 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
     # Set default to hostile (NBSI)
-    Cache.put(cache_tables.standings, :default_standing, 0)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 0)
 
     assert {:ok, _view, html} =
              live(
@@ -533,6 +575,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
                "/tribe/#{@tribe_id}/diplomacy"
              )
 
+    assert html =~ "Tribe Custodian"
     assert html =~ "NBSI"
     refute html =~ "NRDS"
   end
@@ -550,17 +593,19 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, mount_html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert mount_html =~ "Tribe Custodian"
 
     # Trigger a standings change to enter signing state
     render_click(view, "set_default_standing", %{"standing" => "4"})
@@ -582,9 +627,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
@@ -599,11 +644,13 @@ defmodule SigilWeb.DiplomacyLiveTest do
        }}
     end)
 
-    {:ok, view, _html} =
+    {:ok, view, mount_html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert mount_html =~ "Tribe Custodian"
 
     # Trigger standing change
     render_click(view, "set_default_standing", %{"standing" => "4"})
@@ -633,9 +680,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
@@ -644,11 +691,13 @@ defmodule SigilWeb.DiplomacyLiveTest do
       {:error, {:graphql_errors, [%{"message" => "execution aborted"}]}}
     end)
 
-    {:ok, view, _html} =
+    {:ok, view, mount_html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert mount_html =~ "Tribe Custodian"
 
     render_click(view, "set_default_standing", %{"standing" => "4"})
 
@@ -677,17 +726,19 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # No gas coin mocking needed — wallet handles gas via Transaction.fromKind()
 
-    {:ok, view, _html} =
+    {:ok, view, mount_html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
+
+    assert mount_html =~ "Tribe Custodian"
 
     render_click(view, "set_default_standing", %{"standing" => "4"})
 
@@ -713,12 +764,12 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_table(cache_tables, wallet_address)
-    seed_single_table_discovery(wallet_address)
-    Cache.put(cache_tables.standings, :default_standing, 2)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
 
     # Seed initial standing
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 2)
 
     Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
       id: 42,
@@ -732,10 +783,11 @@ defmodule SigilWeb.DiplomacyLiveTest do
         "/tribe/#{@tribe_id}/diplomacy"
       )
 
+    assert html =~ "Tribe Custodian"
     assert html =~ "Neutral"
 
     # Update standing via cache and broadcast
-    Cache.put(cache_tables.standings, {:tribe_standing, 42}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
 
     Phoenix.PubSub.broadcast(
       pubsub,
@@ -750,11 +802,10 @@ defmodule SigilWeb.DiplomacyLiveTest do
   end
 
   # ---------------------------------------------------------------------------
-  # R20: Full standings management flow [SYSTEM]
+  # R20: Hook discovery events are safe no-ops [INTEGRATION]
   # ---------------------------------------------------------------------------
 
-  @tag :acceptance
-  test "full flow: visit diplomacy → add hostile standing → see updated table", %{
+  test "wallet hook discovery events are ignored safely", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -763,11 +814,89 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    # Step 1: Table discovery — single table auto-selects
-    table = table_object_json(table_id(0x99), wallet_address, 31)
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
 
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @standings_table_type], [] ->
-      {:ok, %{data: [table], has_next_page: false, end_cursor: nil}}
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    render_hook(view, "wallet_detected", %{"wallets" => ["EVE Vault"]})
+    html = render_hook(view, "wallet_error", %{"reason" => "ignored"})
+
+    assert html =~ "Tribe Custodian"
+    assert html =~ "Tribe Standings"
+    refute html =~ "Transaction cancelled"
+  end
+
+  # ---------------------------------------------------------------------------
+  # R21: Successful submission reports effects when available [INTEGRATION]
+  # ---------------------------------------------------------------------------
+
+  test "successful diplomacy tx reports effects to wallet hook", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      {:ok,
+       %{
+         "bcs" => "effects-bcs-data",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "effects-digest"}
+       }}
+    end)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    render_click(view, "set_default_standing", %{"standing" => "4"})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => "signed-tx-bytes",
+      "signature" => "wallet-signature"
+    })
+
+    html = render(view)
+    assert html =~ "Tribe Custodian"
+    assert_push_event(view, "report_transaction_effects", %{effects: "effects-bcs-data"})
+  end
+
+  # ---------------------------------------------------------------------------
+  # R22: Full standings management flow [SYSTEM]
+  # ---------------------------------------------------------------------------
+
+  @tag :acceptance
+  test "leader adds hostile standing and sees updated table", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    # Step 1: Custodian discovery — single custodian with wallet_address as leader
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok,
+       %{
+         data: [custodian_object_json(table_id(0x99), wallet_address, @tribe_id, 31)],
+         has_next_page: false,
+         end_cursor: nil
+       }}
     end)
 
     # Seed tribe names
@@ -777,27 +906,26 @@ defmodule SigilWeb.DiplomacyLiveTest do
       short_name: "ET"
     })
 
-    # Step 2: Transaction submission (no gas coin mocking — wallet handles gas)
+    # Step 2: Transaction submission
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
          "bcs" => "dGVzdC1lZmZlY3Rz",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "acceptance-flow-digest"},
-         "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
+         "transaction" => %{"digest" => "acceptance-flow-digest"}
        }}
     end)
 
-    # Visit diplomacy page
+    # Visit diplomacy page — custodian discovered, leader sees editor
     {:ok, view, html} =
       live(
         authenticated_conn(conn, wallet_address, cache_tables, pubsub),
         "/tribe/#{@tribe_id}/diplomacy"
       )
 
-    # Should show editor (single table auto-selected)
-    refute html =~ "Create Standings Table"
-    refute html =~ "Table discovery failed"
+    assert html =~ "Tribe Custodian"
+    refute html =~ "Create Tribe Custodian"
+    refute html =~ "Only the tribe leader can modify standings"
 
     # Add a hostile standing for tribe 42
     view
@@ -822,6 +950,38 @@ defmodule SigilWeb.DiplomacyLiveTest do
   end
 
   # ---------------------------------------------------------------------------
+  # R24: Authorization guard redirects invalid visitors [INTEGRATION]
+  # ---------------------------------------------------------------------------
+
+  test "invalid or unauthorized diplomacy visit redirects with custodian-aware error", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    # Invalid tribe_id (not a number)
+    assert {:error, {:redirect, %{to: "/", flash: %{"error" => invalid_error}}}} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/not-a-number/diplomacy"
+             )
+
+    assert invalid_error =~ "Tribe Custodian"
+
+    # Wrong tribe_id (not the user's tribe)
+    assert {:error, {:redirect, %{to: "/", flash: %{"error" => unauthorized_error}}}} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/999/diplomacy"
+             )
+
+    assert unauthorized_error =~ "Tribe Custodian"
+  end
+
+  # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
 
@@ -833,28 +993,172 @@ defmodule SigilWeb.DiplomacyLiveTest do
     })
   end
 
-  defp account_fixture(wallet_address, tribe_id) do
+  defp account_fixture(wallet_address, tribe_id, character_overrides \\ %{}) do
     %Account{
       address: wallet_address,
-      characters: [Character.from_json(character_json())],
+      characters: [
+        Character.from_json(
+          character_json(Map.put(character_overrides, "character_address", wallet_address))
+        )
+      ],
       tribe_id: tribe_id
     }
   end
 
-  defp seed_active_table(cache_tables, wallet_address) do
-    Cache.put(cache_tables.standings, {:active_table, wallet_address}, %{
+  test "custodian discovery failure shows retry path", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    stub(Sigil.Sui.ClientMock, :get_objects, fn
+      [type: @custodian_type], [] -> {:error, :timeout}
+    end)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "Custodian discovery failed"
+    assert html =~ "Retry discovery"
+    refute html =~ "Create Tribe Custodian"
+  end
+
+  test "missing character ref blocks signing", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id, %{"id" => uid("0xmissing-character")})
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    stub(Sigil.Sui.ClientMock, :get_objects, fn
+      [type: @custodian_type], [] ->
+        {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object_with_ref, fn "0xmissing-character", [] ->
+      {:error, :not_found}
+    end)
+
+    Cache.put(cache_tables.standings, {:registry_ref}, %{
+      object_id: :binary.copy(<<0xDD>>, 32),
+      initial_shared_version: 50
+    })
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button", "Create Tribe Custodian")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Active character reference unavailable"
+    refute html =~ "Approve in your wallet"
+  end
+
+  @tag :acceptance
+  test "member creates custodian and reaches active editor", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    # Initially no custodian — mount shows create CTA
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+    end)
+
+    Cache.put(cache_tables.standings, {:registry_ref}, %{
+      object_id: :binary.copy(<<0xDD>>, 32),
+      initial_shared_version: 50
+    })
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      # Seed the custodian in cache to simulate on-chain creation
+      Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+        object_id: table_id(0xFE),
+        object_id_bytes: :binary.copy(<<0xFE>>, 32),
+        initial_shared_version: 99,
+        current_leader: wallet_address,
+        tribe_id: @tribe_id
+      })
+
+      {:ok,
+       %{
+         "bcs" => "created-custodian-effects",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "created-custodian"}
+       }}
+    end)
+
+    # After creation, re-discovery finds the new custodian
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok,
+       %{
+         data: [custodian_object_json(table_id(0xFE), wallet_address, @tribe_id, 99)],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    {:ok, view, html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert html =~ "Create Tribe Custodian"
+    refute html =~ "Only the tribe leader can modify standings"
+
+    view
+    |> element("button", "Create Tribe Custodian")
+    |> render_click()
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => "signed-tx-bytes",
+      "signature" => "wallet-signature"
+    })
+
+    final_html = render(view)
+    assert final_html =~ "Tribe Standings"
+    assert final_html =~ "Add Pilot Override"
+    refute final_html =~ "Create Tribe Custodian"
+    refute final_html =~ "Only the tribe leader can modify standings"
+    refute final_html =~ "Transaction failed"
+  end
+
+  defp seed_active_custodian(cache_tables, wallet_address) do
+    custodian = %{
       object_id: table_id(0x33),
       object_id_bytes: :binary.copy(<<0x33>>, 32),
       initial_shared_version: 41,
-      owner: wallet_address
-    })
+      owner: wallet_address,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id
+    }
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, custodian)
   end
 
-  defp seed_single_table_discovery(wallet_address) do
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @standings_table_type], [] ->
+  defp seed_single_custodian_discovery(wallet_address) do
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
       {:ok,
        %{
-         data: [table_object_json(table_id(0x33), wallet_address, 41)],
+         data: [custodian_object_json(table_id(0x33), wallet_address, @tribe_id, 41)],
          has_next_page: false,
          end_cursor: nil
        }}
@@ -879,20 +1183,21 @@ defmodule SigilWeb.DiplomacyLiveTest do
     "0x" <> Base.encode16(:binary.copy(<<byte>>, 32), case: :lower)
   end
 
-  defp table_object_json(object_id, owner, initial_shared_version) do
+  defp custodian_object_json(object_id, current_leader, tribe_id, initial_shared_version) do
     %{
       "id" => object_id,
       "address" => object_id,
-      "owner" => owner,
+      "current_leader" => current_leader,
+      "tribe_id" => tribe_id,
       "initialSharedVersion" => Integer.to_string(initial_shared_version),
       "shared" => %{"initialSharedVersion" => Integer.to_string(initial_shared_version)}
     }
   end
 
-  defp character_json(overrides \\ %{}) do
+  defp character_json(overrides) do
     Map.merge(
       %{
-        "id" => uid("0xcharacter-diplomacy"),
+        "id" => uid(@character_id),
         "key" => %{"item_id" => "1", "tenant" => "0xcharacter-tenant"},
         "tribe_id" => "#{@tribe_id}",
         "character_address" => "0xcharacter-address",

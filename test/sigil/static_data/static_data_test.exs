@@ -42,6 +42,77 @@ defmodule Sigil.StaticDataTest do
              |> Enum.sort() == [30_000_001, 30_000_002]
     end
 
+    test "search_solar_systems finds systems by name prefix" do
+      pid =
+        start_static_data!(
+          test_data: %{
+            solar_systems: [
+              Fixtures.solar_system_struct(%{id: 30_000_001, name: "A 2560"}),
+              Fixtures.solar_system_struct(%{id: 30_000_002, name: "A 2561"}),
+              Fixtures.solar_system_struct(%{id: 30_000_003, name: "B 31337"})
+            ]
+          }
+        )
+
+      assert pid
+             |> StaticData.search_solar_systems("A 25")
+             |> Enum.map(& &1.name) == ["A 2560", "A 2561"]
+    end
+
+    test "search_solar_systems respects limit parameter" do
+      pid =
+        start_static_data!(
+          test_data: %{
+            solar_systems: [
+              Fixtures.solar_system_struct(%{id: 30_000_011, name: "A 2500"}),
+              Fixtures.solar_system_struct(%{id: 30_000_012, name: "A 2510"}),
+              Fixtures.solar_system_struct(%{id: 30_000_013, name: "A 2520"})
+            ]
+          }
+        )
+
+      assert pid
+             |> StaticData.search_solar_systems("A 25", 2)
+             |> Enum.map(& &1.name) == ["A 2500", "A 2510"]
+    end
+
+    test "search_solar_systems returns empty list for no matches" do
+      pid = start_static_data!(test_data: Fixtures.sample_test_data())
+
+      assert StaticData.search_solar_systems(pid, "Z 9999") == []
+    end
+
+    test "search_solar_systems is case-insensitive" do
+      pid = start_static_data!(test_data: Fixtures.sample_test_data())
+
+      assert pid
+             |> StaticData.search_solar_systems("a 25")
+             |> Enum.map(& &1.name) == ["A 2560"]
+    end
+
+    test "get_solar_system_by_name returns unique exact match" do
+      pid = start_static_data!(test_data: Fixtures.sample_test_data())
+
+      assert %SolarSystem{id: 30_000_001, name: "A 2560"} =
+               StaticData.get_solar_system_by_name(pid, "a 2560")
+    end
+
+    test "get_solar_system_by_name returns nil for unknown or ambiguous name" do
+      pid =
+        start_static_data!(
+          test_data: %{
+            solar_systems: [
+              Fixtures.solar_system_struct(%{id: 30_000_021, name: "A 2560"}),
+              Fixtures.solar_system_struct(%{id: 30_000_022, name: "a 2560"}),
+              Fixtures.solar_system_struct(%{id: 30_000_023, name: "B 31337"})
+            ]
+          }
+        )
+
+      assert StaticData.get_solar_system_by_name(pid, "Z 9999") == nil
+      assert StaticData.get_solar_system_by_name(pid, "A 2560") == nil
+    end
+
     test "get_item_type/2 returns struct for existing ID" do
       pid = start_static_data!(test_data: Fixtures.sample_test_data())
 

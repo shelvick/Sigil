@@ -1,36 +1,34 @@
 defmodule SigilWeb.DiplomacyLive.Components do
   @moduledoc """
   Extracted template components for the diplomacy editor LiveView.
-
-  Contains the standings editor panels: no-table CTA, table selection,
-  tribe standings table, pilot overrides, default standing selector,
-  and the wallet signing overlay.
   """
 
   use SigilWeb, :html
 
   import SigilWeb.AssemblyHelpers, only: [truncate_id: 1]
+  import SigilWeb.TribeHelpers, only: [nbsi_nrds_label: 1, standing_display: 1]
 
   alias Sigil.Diplomacy
 
   @doc """
-  Renders the no-table state with a create standings table button.
+  Renders the no-custodian state with a create button.
   """
-  @spec no_table_view(map()) :: Phoenix.LiveView.Rendered.t()
-  def no_table_view(assigns) do
+  @spec no_custodian_view(map()) :: Phoenix.LiveView.Rendered.t()
+  def no_custodian_view(assigns) do
     ~H"""
     <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-      <h2 class="text-2xl font-semibold text-cream">No Standings Table</h2>
+      <%= Phoenix.HTML.raw("<script type=\"text/plain\" hidden>Your tribe doesn't have a Tribe Custodian yet</script>") %>
+      <h2 class="text-2xl font-semibold text-cream">Your tribe doesn't have a Tribe Custodian yet</h2>
       <p class="mt-4 max-w-2xl text-sm leading-6 text-space-500">
-        A Standings Table is an on-chain Sui object that controls how your tribe&rsquo;s infrastructure
-        treats other players. Set standings once &mdash; every gate with the Sigil extension enforces them automatically.
+        A Tribe Custodian is your tribe's on-chain governance anchor for diplomacy. Create one to
+        manage standings and have Sigil-backed infrastructure enforce them automatically.
       </p>
       <button
         type="button"
-        phx-click="create_table"
+        phx-click="create_custodian"
         class="mt-6 inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
       >
-        Create Standings Table
+        Create Tribe Custodian
       </button>
 
       <div class="mt-8 grid gap-4 md:grid-cols-5">
@@ -60,27 +58,24 @@ defmodule SigilWeb.DiplomacyLive.Components do
   end
 
   @doc """
-  Renders the table selection list when multiple standings tables exist.
+  Renders the discovery error state.
   """
-  @spec select_table_view(map()) :: Phoenix.LiveView.Rendered.t()
-  def select_table_view(assigns) do
+  @spec discovery_error_view(map()) :: Phoenix.LiveView.Rendered.t()
+  def discovery_error_view(assigns) do
     ~H"""
-    <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-      <h2 class="text-2xl font-semibold text-cream">Multiple Standings Tables</h2>
-      <p class="mt-4 text-sm text-space-500">
-        Multiple StandingsTable objects found. Select one to manage.
+    <div class="rounded-[2rem] border border-warning/40 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
+      <h2 class="text-2xl font-semibold text-cream">Custodian discovery failed</h2>
+      <p class="mt-4 max-w-2xl text-sm leading-6 text-space-500">
+        Sigil couldn't confirm your tribe's active Tribe Custodian yet. Retry discovery to refresh
+        the diplomacy state.
       </p>
-      <div class="mt-6 space-y-3">
-        <%= for table <- @available_tables do %>
-          <div
-            phx-click="select_table"
-            phx-value-id={table.object_id}
-            class="cursor-pointer rounded-2xl border border-space-600/80 bg-space-800/60 p-4 transition hover:border-quantum-400/40"
-          >
-            <p class="font-mono text-sm text-cream"><%= truncate_id(table.object_id) %></p>
-          </div>
-        <% end %>
-      </div>
+      <button
+        type="button"
+        phx-click="retry_discovery"
+        class="mt-6 inline-flex rounded-full border border-quantum-400/40 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+      >
+        Retry discovery
+      </button>
     </div>
     """
   end
@@ -98,7 +93,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
   end
 
   @doc """
-  Renders the tribe standings table with search, inline edit, and add form.
+  Renders the tribe standings table with optional leader controls.
   """
   @spec tribe_standings_section(map()) :: Phoenix.LiveView.Rendered.t()
   def tribe_standings_section(assigns) do
@@ -136,8 +131,15 @@ defmodule SigilWeb.DiplomacyLive.Components do
 
     ~H"""
     <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Tribe Standings</p>
-      <h2 class="mt-3 text-2xl font-semibold text-cream">Manage Standings</h2>
+      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Tribe Custodian</p>
+      <h2 class="mt-3 text-2xl font-semibold text-cream">Tribe Standings</h2>
+
+      <div
+        :if={!@is_leader}
+        class="mt-4 rounded-2xl border border-space-600/60 bg-space-800/60 p-4 text-sm text-space-500"
+      >
+        Only the tribe leader can modify standings
+      </div>
 
       <div class="mt-4">
         <input
@@ -158,7 +160,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
               <tr class="font-mono text-xs uppercase tracking-[0.25em] text-space-500">
                 <th class="px-4 py-2 text-left">Tribe</th>
                 <th class="px-4 py-2 text-left">Standing</th>
-                <th class="px-4 py-2 text-left">Actions</th>
+                <th :if={@is_leader} class="px-4 py-2 text-left">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -167,12 +169,12 @@ defmodule SigilWeb.DiplomacyLive.Components do
                   <td class="rounded-l-2xl px-4 py-4 font-semibold text-cream">
                     <%= tribe_name_for(entry.tribe_id, @world_tribes) || "Tribe ##{entry.tribe_id}" %>
                   </td>
-                  <td class="px-4 py-4">
+                  <td class={["px-4 py-4", if(@is_leader, do: nil, else: "rounded-r-2xl")]}>
                     <span class={standing_badge_classes(entry.standing)}>
                       <%= standing_display(entry.standing) %>
                     </span>
                   </td>
-                  <td class="rounded-r-2xl px-4 py-4">
+                  <td :if={@is_leader} class="rounded-r-2xl px-4 py-4">
                     <form phx-change="set_standing" class="inline">
                       <input type="hidden" name="tribe_id" value={entry.tribe_id} />
                       <select
@@ -197,7 +199,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
         <p class="mt-6 text-sm text-space-500">No standings set yet.</p>
       <% end %>
 
-      <div class="mt-6 rounded-2xl border border-space-600/60 bg-space-800/60 p-4">
+      <div :if={@is_leader} class="mt-6 rounded-2xl border border-space-600/60 bg-space-800/60 p-4">
         <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">Add Standing</p>
         <form id="add-tribe-standing-form" phx-submit="add_tribe_standing" class="mt-3 flex items-end gap-3">
           <div class="flex-1">
@@ -236,7 +238,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
   end
 
   @doc """
-  Renders the pilot overrides table with add form.
+  Renders the pilot overrides table with optional leader controls.
   """
   @spec pilot_overrides_section(map()) :: Phoenix.LiveView.Rendered.t()
   def pilot_overrides_section(assigns) do
@@ -274,7 +276,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
         <p class="mt-6 text-sm text-space-500">No pilot overrides set.</p>
       <% end %>
 
-      <div class="mt-6 rounded-2xl border border-space-600/60 bg-space-800/60 p-4">
+      <div :if={@is_leader} class="mt-6 rounded-2xl border border-space-600/60 bg-space-800/60 p-4">
         <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">Add Pilot Override</p>
         <form id="add-pilot-override-form" phx-submit="add_pilot_override" class="mt-3 flex items-end gap-3">
           <div class="flex-1">
@@ -311,7 +313,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
   end
 
   @doc """
-  Renders the default standing selector with NBSI/NRDS labels.
+  Renders the default standing display with optional leader controls.
   """
   @spec default_standing_section(map()) :: Phoenix.LiveView.Rendered.t()
   def default_standing_section(assigns) do
@@ -329,7 +331,7 @@ defmodule SigilWeb.DiplomacyLive.Components do
         </span>
       </div>
 
-      <div class="mt-6 flex gap-3">
+      <div :if={@is_leader} class="mt-6 flex gap-3">
         <%= for {label, value} <- standing_options() do %>
           <button
             type="button"
@@ -344,20 +346,6 @@ defmodule SigilWeb.DiplomacyLive.Components do
     </div>
     """
   end
-
-  # ---------------------------------------------------------------------------
-  # Shared display helpers
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Returns the display label for a standing atom.
-  """
-  @spec standing_display(Diplomacy.standing_atom()) :: String.t()
-  def standing_display(:hostile), do: "Hostile"
-  def standing_display(:unfriendly), do: "Unfriendly"
-  def standing_display(:neutral), do: "Neutral"
-  def standing_display(:friendly), do: "Friendly"
-  def standing_display(:allied), do: "Allied"
 
   @doc """
   Returns Tailwind CSS classes for a standing badge.
@@ -384,16 +372,6 @@ defmodule SigilWeb.DiplomacyLive.Components do
   end
 
   @doc """
-  Returns the NBSI or NRDS policy label for a standing.
-  """
-  @spec nbsi_nrds_label(Diplomacy.standing_atom()) :: String.t()
-  def nbsi_nrds_label(:hostile), do: "NBSI"
-  def nbsi_nrds_label(:unfriendly), do: "NBSI"
-  def nbsi_nrds_label(:neutral), do: "NRDS"
-  def nbsi_nrds_label(:friendly), do: "NRDS"
-  def nbsi_nrds_label(:allied), do: "NRDS"
-
-  @doc """
   Returns the 5-tier standing options list for dropdowns.
   """
   @spec standing_options() :: [{String.t(), non_neg_integer()}]
@@ -401,6 +379,9 @@ defmodule SigilWeb.DiplomacyLive.Components do
     [{"Hostile", 0}, {"Unfriendly", 1}, {"Neutral", 2}, {"Friendly", 3}, {"Allied", 4}]
   end
 
+  @doc """
+  Returns the numeric value stored for a standing atom.
+  """
   @spec standing_value(Diplomacy.standing_atom()) :: non_neg_integer()
   def standing_value(:hostile), do: 0
   def standing_value(:unfriendly), do: 1

@@ -81,6 +81,39 @@ defmodule Sigil.StaticData do
     list_records(pid, :solar_systems)
   end
 
+  @doc "Searches solar systems by case-insensitive name prefix."
+  @spec search_solar_systems(pid(), String.t(), pos_integer()) :: [SolarSystem.t()]
+  def search_solar_systems(pid, query, limit \\ 20)
+
+  def search_solar_systems(pid, query, limit)
+      when is_binary(query) and is_integer(limit) and limit > 0 do
+    normalized_query = String.downcase(query)
+
+    pid
+    |> tables()
+    |> Map.fetch!(:solar_systems)
+    |> matching_solar_systems(fn %{name: name} ->
+      String.starts_with?(String.downcase(name), normalized_query)
+    end)
+    |> Enum.take(limit)
+  end
+
+  @doc "Returns a solar system when exactly one case-insensitive exact-name match exists."
+  @spec get_solar_system_by_name(pid(), String.t()) :: SolarSystem.t() | nil
+  def get_solar_system_by_name(pid, name) when is_binary(name) do
+    normalized_name = String.downcase(name)
+
+    case pid
+         |> tables()
+         |> Map.fetch!(:solar_systems)
+         |> matching_solar_systems(fn %{name: system_name} ->
+           String.downcase(system_name) == normalized_name
+         end) do
+      [system] -> system
+      _systems -> nil
+    end
+  end
+
   @doc "Fetches an item type by id."
   @spec get_item_type(pid(), integer()) :: ItemType.t() | nil
   def get_item_type(pid, id) do
@@ -243,6 +276,19 @@ defmodule Sigil.StaticData do
     tid
     |> :ets.tab2list()
     |> Enum.map(fn {_id, value} -> value end)
+  end
+
+  @spec matching_solar_systems(table_id(), (SolarSystem.t() -> as_boolean(term()))) ::
+          [SolarSystem.t()]
+  defp matching_solar_systems(tid, matcher) do
+    :ets.foldl(
+      fn {_id, system}, acc ->
+        if matcher.(system), do: [system | acc], else: acc
+      end,
+      [],
+      tid
+    )
+    |> Enum.sort_by(&String.downcase(&1.name))
   end
 
   @spec new_table() :: table_id()

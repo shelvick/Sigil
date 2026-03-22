@@ -54,6 +54,26 @@ defmodule SigilWeb.CacheResolver do
     end
   end
 
+  @doc """
+  Resolves the application-level StaticData pid.
+  """
+  @spec application_static_data() :: pid() | nil
+  def application_static_data do
+    case supervisor_children() do
+      nil ->
+        nil
+
+      children ->
+        Enum.find_value(children, fn
+          {Sigil.StaticData, static_data_pid, _kind, _modules} when is_pid(static_data_pid) ->
+            static_data_pid
+
+          _other ->
+            nil
+        end)
+    end
+  end
+
   @typep supervisor_child() ::
            {term(), :restarting | :undefined | pid(), :supervisor | :worker,
             :dynamic | [module()]}

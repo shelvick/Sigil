@@ -26,6 +26,7 @@ defmodule SigilWeb.WalletSession do
   def on_mount(_arg, _params, session, socket) do
     cache_tables = resolve_cache_tables(session)
     pubsub = Map.get(session, "pubsub", @default_pubsub)
+    static_data = resolve_static_data(session)
     current_account = fetch_current_account(Map.get(session, "wallet_address"), cache_tables)
 
     active_character =
@@ -36,7 +37,8 @@ defmodule SigilWeb.WalletSession do
        current_account: current_account,
        active_character: active_character,
        cache_tables: cache_tables,
-       pubsub: pubsub
+       pubsub: pubsub,
+       static_data: static_data
      )}
   end
 
@@ -63,5 +65,10 @@ defmodule SigilWeb.WalletSession do
   @spec resolve_cache_tables(map()) :: map() | nil
   defp resolve_cache_tables(session) do
     Map.get(session, "cache_tables") || CacheResolver.application_cache_tables()
+  end
+
+  @spec resolve_static_data(map()) :: pid() | nil
+  defp resolve_static_data(session) do
+    Map.get(session, "static_data") || CacheResolver.application_static_data()
   end
 end

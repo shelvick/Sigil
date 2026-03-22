@@ -3,12 +3,22 @@ defmodule Sigil.Application do
   OTP Application for Sigil.
 
   Starts the supervision tree with Telemetry, Repo, PubSub, Cache, optional
-  StaticData, optional GateIndexer, optional MonitorRegistry + MonitorSupervisor, and Endpoint.
+  StaticData, optional GateIndexer, optional MonitorRegistry + MonitorSupervisor,
+  optional AlertEngine, and Endpoint.
   """
 
   use Application
 
-  @cache_tables [:assemblies, :characters, :standings, :accounts, :tribes, :nonces, :gate_network]
+  @cache_tables [
+    :assemblies,
+    :characters,
+    :standings,
+    :accounts,
+    :tribes,
+    :nonces,
+    :gate_network,
+    :intel
+  ]
 
   @doc false
   @impl true
@@ -22,7 +32,8 @@ defmodule Sigil.Application do
         cache_child()
       ] ++
         maybe_static_data() ++
-        maybe_gate_indexer() ++ maybe_monitor_supervisor() ++ [SigilWeb.Endpoint]
+        maybe_gate_indexer() ++
+        maybe_monitor_supervisor() ++ maybe_alert_engine() ++ [SigilWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Sigil.Supervisor]
     Supervisor.start_link(children, opts)
@@ -78,6 +89,15 @@ defmodule Sigil.Application do
           id: Sigil.GameState.MonitorSupervisor
         )
       ]
+    else
+      []
+    end
+  end
+
+  @spec maybe_alert_engine() :: [Supervisor.child_spec()]
+  defp maybe_alert_engine do
+    if Application.get_env(:sigil, :start_alert_engine, true) do
+      [Supervisor.child_spec({Sigil.Alerts.Engine, []}, id: Sigil.Alerts.Engine)]
     else
       []
     end

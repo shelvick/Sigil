@@ -32,6 +32,28 @@ defmodule Sigil.GameState.MonitorSupervisorTest do
     assert {:ok, ^monitor} = MonitorSupervisor.get_monitor(context.registry, assembly_id)
   end
 
+  test "start_monitor broadcasts lifecycle event", context do
+    supervisor = start_monitor_supervisor!(context.registry)
+    assembly_id = "0xassembly-lifecycle"
+    :ok = Phoenix.PubSub.subscribe(context.pubsub, "monitors:lifecycle")
+
+    assert {:ok, _monitor} =
+             MonitorSupervisor.start_monitor(supervisor, monitor_opts(context, assembly_id))
+
+    assert_receive {:monitor_started, ^assembly_id}, 1_000
+  end
+
+  test "start_monitor uses explicit pubsub for lifecycle event", context do
+    supervisor = start_monitor_supervisor!(context.registry)
+    assembly_id = "0xassembly-default-pubsub"
+    :ok = Phoenix.PubSub.subscribe(context.pubsub, "monitors:lifecycle")
+
+    opts = context |> monitor_opts(assembly_id) |> Keyword.put(:pubsub, context.pubsub)
+
+    assert {:ok, _monitor} = MonitorSupervisor.start_monitor(supervisor, opts)
+    assert_receive {:monitor_started, ^assembly_id}, 1_000
+  end
+
   test "stop_monitor terminates a specific monitor", context do
     supervisor = start_monitor_supervisor!(context.registry)
     assembly_id = "0xassembly-stop"
@@ -147,7 +169,11 @@ defmodule Sigil.GameState.MonitorSupervisorTest do
 
     on_exit(fn ->
       if Process.alive?(supervisor) do
-        GenServer.stop(supervisor, :normal, :infinity)
+        try do
+          GenServer.stop(supervisor, :normal, :infinity)
+        catch
+          :exit, _reason -> :ok
+        end
       end
     end)
 
