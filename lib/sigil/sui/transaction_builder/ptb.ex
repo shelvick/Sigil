@@ -31,7 +31,10 @@ defmodule Sigil.Sui.TransactionBuilder.PTB do
           | {:struct, binary(), String.t(), String.t(), [type_tag()]}
   @type struct_tag() :: {binary(), String.t(), String.t(), [type_tag()]}
   @type move_call() :: {binary(), String.t(), String.t(), [type_tag()], [argument()]}
-  @type command() :: {:move_call, binary(), String.t(), String.t(), [type_tag()], [argument()]}
+  @type split_coins() :: {:split_coins, argument(), [argument()]}
+  @type command() ::
+          {:move_call, binary(), String.t(), String.t(), [type_tag()], [argument()]}
+          | split_coins()
   @type programmable_transaction() :: %{inputs: [call_arg()], commands: [command()]}
   @type gas_data() :: %{
           payment: [object_ref()],
@@ -175,8 +178,14 @@ defmodule Sigil.Sui.TransactionBuilder.PTB do
 
   @doc "Encodes a programmable transaction command."
   @spec encode_command(command()) :: binary()
+  def encode_command(command)
+
   def encode_command({:move_call, package, module, function, type_arguments, arguments}) do
     <<0x00>> <> encode_move_call({package, module, function, type_arguments, arguments})
+  end
+
+  def encode_command({:split_coins, coin, amounts}) when is_list(amounts) do
+    <<0x02>> <> encode_argument(coin) <> BCS.encode_vector(amounts, &encode_argument/1)
   end
 
   @doc "Encodes a programmable transaction."

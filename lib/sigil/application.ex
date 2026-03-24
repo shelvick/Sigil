@@ -17,7 +17,8 @@ defmodule Sigil.Application do
     :tribes,
     :nonces,
     :gate_network,
-    :intel
+    :intel,
+    :intel_market
   ]
 
   @doc false

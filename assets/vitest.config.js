@@ -6,5 +6,10 @@ export default defineConfig({
     root: "js",
     include: ["**/*.test.js"],
     globals: true
+  },
+  resolve: {
+    alias: {
+      snarkjs: new URL("js/__mocks__/snarkjs.js", import.meta.url).pathname
+    }
   }
 })

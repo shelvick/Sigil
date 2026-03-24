@@ -6,11 +6,15 @@ import topbar from "../vendor/topbar"
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
 import FuelCountdown from "./hooks/fuel_countdown"
+import InfiniteScroll from "./hooks/infinite_scroll"
 import WalletConnect from "./hooks/wallet_hook"
+import ZkProofGenerator from "./hooks/zk_proof_hook"
 
 let Hooks = {
   FuelCountdown: FuelCountdown,
-  WalletConnect: WalletConnect
+  InfiniteScroll: InfiniteScroll,
+  WalletConnect: WalletConnect,
+  ZkProofGenerator: ZkProofGenerator
 }
 
 let liveSocket = new LiveSocket("/live", Socket, {

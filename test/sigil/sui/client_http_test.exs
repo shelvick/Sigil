@@ -402,6 +402,14 @@ defmodule Sigil.Sui.ClientHTTPTest do
       effects = %{
         "status" => "SUCCESS",
         "transaction" => %{"digest" => "tx-digest"},
+        "objectChanges" => [
+          %{
+            "type" => "created",
+            "objectId" => "0xlisting",
+            "objectType" => "0x2::example::Listing",
+            "version" => "7"
+          }
+        ],
         "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
       }
 
@@ -409,6 +417,7 @@ defmodule Sigil.Sui.ClientHTTPTest do
         payload = graphql_payload(conn)
 
         assert payload["query"] =~ "mutation ExecuteTransaction"
+        assert payload["query"] =~ "objectChanges"
         assert payload["variables"] == %{"sigs" => ["sig-1"], "tx" => "tx-bytes"}
 
         Req.Test.json(conn, %{

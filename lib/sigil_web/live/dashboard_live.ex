@@ -7,6 +7,7 @@ defmodule SigilWeb.DashboardLive do
 
   import SigilWeb.DashboardLive.Components
 
+  alias Sigil.Alerts
   alias Sigil.Assemblies
   alias Sigil.GameState.MonitorSupervisor
   alias Sigil.Sui.ZkLoginVerifier
@@ -26,6 +27,7 @@ defmodule SigilWeb.DashboardLive do
       socket
       |> assign_base_state(params)
       |> maybe_load_assemblies()
+      |> maybe_load_alert_summary()
       |> maybe_subscribe()
       |> maybe_ensure_monitors()
 
@@ -37,7 +39,10 @@ defmodule SigilWeb.DashboardLive do
   @spec handle_info(
           {:assemblies_discovered, [Assemblies.assembly()]}
           | {:assembly_monitor, String.t(), %{assembly: Assemblies.assembly()}}
-          | {:assembly_updated, Assemblies.assembly()},
+          | {:assembly_updated, Assemblies.assembly()}
+          | {:alert_created, Alerts.Alert.t()}
+          | {:alert_acknowledged, Alerts.Alert.t()}
+          | {:alert_dismissed, Alerts.Alert.t()},
           Phoenix.LiveView.Socket.t()
         ) :: {:noreply, Phoenix.LiveView.Socket.t()}
   def handle_info({:assemblies_discovered, assemblies}, socket) when is_list(assemblies) do
@@ -58,6 +63,18 @@ defmodule SigilWeb.DashboardLive do
           {:noreply, Phoenix.LiveView.Socket.t()}
   def handle_info({:assembly_updated, assembly}, socket) do
     {:noreply, assign(socket, assemblies: replace_assembly(socket.assigns.assemblies, assembly))}
+  end
+
+  def handle_info({:alert_created, _alert}, socket) do
+    {:noreply, socket |> refresh_alert_summary() |> load_unread_count()}
+  end
+
+  def handle_info({:alert_acknowledged, _alert}, socket) do
+    {:noreply, socket |> refresh_alert_summary() |> load_unread_count()}
+  end
+
+  def handle_info({:alert_dismissed, _alert}, socket) do
+    {:noreply, socket |> refresh_alert_summary() |> load_unread_count()}
   end
 
   @doc false
@@ -218,6 +235,8 @@ defmodule SigilWeb.DashboardLive do
             active_character={@active_character}
             assemblies={@assemblies}
             discovery_error={@discovery_error}
+            alert_summary={@alert_summary}
+            unread_count={@unread_count}
           />
         <% else %>
           <.wallet_connect_view
@@ -238,6 +257,10 @@ defmodule SigilWeb.DashboardLive do
     assign(socket,
       page_title: "Connect Wallet",
       assemblies: [],
+      alert_summary: [],
+      unread_count: 0,
+      alert_summary_limit: 3,
+      visible_alert_count: 0,
       loading: false,
       discovery_error: false,
       wallet_state: :idle,
@@ -255,6 +278,10 @@ defmodule SigilWeb.DashboardLive do
     assign(socket,
       page_title: "Dashboard",
       assemblies: [],
+      alert_summary: [],
+      unread_count: 0,
+      alert_summary_limit: 3,
+      visible_alert_count: 0,
       loading: false,
       discovery_error: false
     )
@@ -298,6 +325,7 @@ defmodule SigilWeb.DashboardLive do
        ) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(pubsub, owner_topic(address))
+      Phoenix.PubSub.subscribe(pubsub, Alerts.topic(address))
       subscribe_to_assembly_topics(socket, socket.assigns.assemblies)
     else
       socket
@@ -349,6 +377,45 @@ defmodule SigilWeb.DashboardLive do
   end
 
   defp discover_assemblies(_address, _character_ids, _cache_tables, _pubsub), do: {:ok, []}
+
+  @spec maybe_load_alert_summary(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp maybe_load_alert_summary(%{assigns: %{current_account: nil}} = socket), do: socket
+
+  defp maybe_load_alert_summary(%{assigns: %{current_account: %{address: address}}} = socket) do
+    limit = socket.assigns.alert_summary_limit
+
+    alerts =
+      Alerts.list_alerts(
+        [account_address: address, status: ["new", "acknowledged"], limit: limit],
+        []
+      )
+
+    socket
+    |> assign(alert_summary: alerts, visible_alert_count: length(alerts))
+    |> load_unread_count()
+  end
+
+  @spec refresh_alert_summary(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp refresh_alert_summary(%{assigns: %{current_account: nil}} = socket), do: socket
+
+  defp refresh_alert_summary(%{assigns: %{current_account: %{address: address}}} = socket) do
+    limit = max(socket.assigns.visible_alert_count, socket.assigns.alert_summary_limit)
+
+    alerts =
+      Alerts.list_alerts(
+        [account_address: address, status: ["new", "acknowledged"], limit: limit],
+        []
+      )
+
+    assign(socket, alert_summary: alerts, visible_alert_count: length(alerts))
+  end
+
+  @spec load_unread_count(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp load_unread_count(%{assigns: %{current_account: nil}} = socket), do: socket
+
+  defp load_unread_count(%{assigns: %{current_account: %{address: address}}} = socket) do
+    assign(socket, unread_count: Alerts.unread_count(address, []))
+  end
 
   @spec list_assemblies(String.t(), map() | nil) :: [Assemblies.assembly()]
   defp list_assemblies(address, cache_tables) when is_map(cache_tables) do

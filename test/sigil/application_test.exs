@@ -164,6 +164,14 @@ defmodule Sigil.ApplicationTest do
     assert :nonces in Map.keys(tables)
   end
 
+  test "Cache includes intel_market table" do
+    tables = application_cache_tables!()
+    intel_market_table = Map.fetch!(tables, :intel_market)
+
+    assert :intel_market in Map.keys(tables)
+    assert :ets.info(intel_market_table) != :undefined
+  end
+
   defp configured_application_snapshot!(opts) do
     config_dir = temp_dir!("application_probe")
     static_data_dir = temp_dir!("application_probe_static_data")

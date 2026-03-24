@@ -70,6 +70,12 @@ defmodule Sigil.Sui.Client.HTTP do
         transaction {
           digest
         }
+        objectChanges {
+          type
+          objectId
+          objectType
+          version
+        }
         gasEffects {
           gasSummary {
             computationCost

@@ -118,6 +118,12 @@ defmodule Sigil.Sui.TransactionBuilder.PTBTest do
                <<0x00>> <> expected_move_call(move_call)
     end
 
+    test "encodes SplitCoins command as variant 2" do
+      split_coins = {:split_coins, :gas_coin, [{:input, 1}]}
+
+      assert PTB.encode_command(split_coins) == expected_command(split_coins)
+    end
+
     test "encodes ProgrammableTransaction with inputs before commands" do
       programmable_transaction = %{
         inputs: [{:pure, <<1, 2, 3>>}],
@@ -185,6 +191,10 @@ defmodule Sigil.Sui.TransactionBuilder.PTBTest do
 
   defp expected_command({:move_call, package, module, function, type_arguments, arguments}) do
     <<0x00>> <> expected_move_call({package, module, function, type_arguments, arguments})
+  end
+
+  defp expected_command({:split_coins, coin, amounts}) do
+    <<0x02>> <> expected_argument(coin) <> encode_vector(amounts, &expected_argument/1)
   end
 
   defp expected_move_call({package, module, function, type_arguments, arguments}) do

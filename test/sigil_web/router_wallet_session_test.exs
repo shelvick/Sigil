@@ -124,6 +124,67 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert view.module == SigilWeb.IntelLive
     end
 
+    test "/alerts route resolves to AlertsLive", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      char = %Character{
+        id: "0xchar-alerts",
+        key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+        tribe_id: nil,
+        character_address: wallet_address,
+        metadata: nil,
+        owner_cap_id: "0xowner-alerts"
+      }
+
+      account = %Account{address: wallet_address, characters: [char], tribe_id: nil}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:ok, view, _html} = live(conn, "/alerts")
+      assert view.module == SigilWeb.AlertsLive
+    end
+
+    @tag :acceptance
+    test "authenticated user can reach alerts route", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      char = %Character{
+        id: "0xchar-alerts-acceptance",
+        key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+        tribe_id: nil,
+        character_address: wallet_address,
+        metadata: nil,
+        owner_cap_id: "0xowner-alerts-acceptance"
+      }
+
+      account = %Account{address: wallet_address, characters: [char], tribe_id: nil}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:ok, _view, html} = live(conn, "/alerts")
+      assert html =~ "Alerts"
+      refute html =~ "Connect Your Wallet"
+      refute html =~ "Not Found"
+    end
+
     test "tribe routes reject mismatched active character tribe even when account tribe differs",
          %{
            conn: conn,
@@ -194,6 +255,11 @@ defmodule SigilWeb.RouterWalletSessionTest do
 
       assert {:ok, view, _html} = live(conn, "/assembly/#{assembly.id}")
       assert view.module == SigilWeb.AssemblyDetailLive
+    end
+
+    test "/marketplace routes to IntelMarketLive", %{conn: conn} do
+      assert {:ok, view, _html} = live(conn, "/marketplace")
+      assert view.module == SigilWeb.IntelMarketLive
     end
 
     @tag :acceptance
