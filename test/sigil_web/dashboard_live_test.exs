@@ -51,9 +51,12 @@ defmodule SigilWeb.DashboardLiveTest do
 
   import Hammox
 
+  alias Sigil.Alerts
+  alias Sigil.Alerts.Alert
   alias Sigil.Cache
   alias Sigil.Accounts.Account
   alias Sigil.GameState.MonitorSupervisor
+  alias Sigil.Repo
   alias Sigil.Sui.Types.{Character, Gate, NetworkNode, Turret}
 
   @world_package_id "0x1111111111111111111111111111111111111111111111111111111111111111"
@@ -356,7 +359,7 @@ defmodule SigilWeb.DashboardLiveTest do
     assert html =~ "Marshal Iona"
     assert html =~ "Scout Vega"
     assert html =~ "/session/character/#{first.id}"
-    assert html =~ "/session/character/#{second.id}"
+    refute html =~ "/session/character/#{second.id}"
     refute html =~ "No characters synced"
     refute html =~ "Commander profile"
   end
@@ -887,6 +890,441 @@ defmodule SigilWeb.DashboardLiveTest do
     assert html =~ wallet_address
   end
 
+  test "authenticated dashboard shows detailed alerts summary", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "type" => "hostile_activity",
+      "severity" => "critical",
+      "message" => "Oldest hostile ping",
+      "assembly_name" => "Old Assembly"
+    })
+
+    older =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "type" => "assembly_offline",
+        "severity" => "warning",
+        "message" => "Older relay disruption",
+        "assembly_name" => "Relay Bastion"
+      })
+
+    middle =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "type" => "fuel_critical",
+        "severity" => "critical",
+        "message" => "Middle fuel breach",
+        "assembly_name" => "Citadel K-7"
+      })
+
+    newest =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "type" => "fuel_low",
+        "severity" => "warning",
+        "message" => "Newest low fuel warning",
+        "assembly_name" => "Hangar Zero"
+      })
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "View All Alerts"
+    assert html =~ newest.message
+    assert html =~ middle.message
+    assert html =~ older.message
+    assert html =~ "Fuel Low"
+    assert html =~ "Fuel Critical"
+    assert html =~ "Assembly Offline"
+    assert html =~ "Hangar Zero"
+    assert html =~ "Just now"
+    refute html =~ "Oldest hostile ping"
+    refute html =~ "No active alerts"
+  end
+
+  test "alerts summary shows empty state when no active alerts", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "No active alerts"
+    refute html =~ "View All Alerts"
+    refute html =~ "Fuel Low"
+  end
+
+  test "alerts summary distinguishes unread from acknowledged alerts", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "status" => "new",
+      "message" => "Unread summary alert"
+    })
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "status" => "acknowledged",
+      "message" => "Acknowledged summary alert"
+    })
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "Unread summary alert"
+    assert html =~ "Acknowledged summary alert"
+    assert html =~ "border-quantum-400/60 bg-space-800/90"
+    assert html =~ "border-space-600/80 bg-space-800/70"
+    refute html =~ "No active alerts"
+  end
+
+  test "alerts summary shows unread count badge", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "status" => "new",
+      "message" => "Unread one"
+    })
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "status" => "new",
+      "message" => "Unread two"
+    })
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "status" => "acknowledged",
+      "message" => "Read one"
+    })
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "2 unread"
+    refute html =~ "3 unread"
+  end
+
+  test "alerts summary includes View All Alerts link", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    insert_alert!(%{
+      "account_address" => wallet_address,
+      "message" => "Linked summary alert"
+    })
+
+    assert {:ok, _view, html} =
+             live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "View All Alerts"
+    assert html =~ ~s(href="/alerts")
+    refute html =~ "Connect Your Wallet"
+  end
+
+  test "alerts summary updates on PubSub alert_created", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    {:ok, view, initial_html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert initial_html =~ "No active alerts"
+
+    created =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "message" => "Fresh dashboard broadcast"
+      })
+
+    Phoenix.PubSub.broadcast(pubsub, Alerts.topic(wallet_address), {:alert_created, created})
+
+    html = render(view)
+    assert html =~ created.message
+    assert html =~ "1 unread"
+    refute html =~ "No active alerts"
+  end
+
+  test "alerts summary refreshes on PubSub alert_acknowledged", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    alert =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "status" => "new",
+        "message" => "Dashboard acknowledge target"
+      })
+
+    {:ok, view, _html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    replacement =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "status" => "new",
+        "message" => "Replacement after acknowledge"
+      })
+
+    assert {:ok, _acknowledged} = Alerts.acknowledge_alert(alert.id, pubsub: pubsub)
+    Phoenix.PubSub.broadcast(pubsub, Alerts.topic(wallet_address), {:alert_acknowledged, alert})
+
+    html = render(view)
+    assert html =~ replacement.message
+    assert html =~ alert.message
+    assert html =~ "1 unread"
+    refute html =~ "0 unread"
+  end
+
+  test "alerts summary refreshes on PubSub alert_dismissed", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    alert =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "status" => "new",
+        "message" => "Dashboard dismiss target"
+      })
+
+    {:ok, view, _html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    replacement =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "status" => "new",
+        "message" => "Replacement after dismiss"
+      })
+
+    assert {:ok, _dismissed} = Alerts.dismiss_alert(alert.id, pubsub: pubsub)
+    Phoenix.PubSub.broadcast(pubsub, Alerts.topic(wallet_address), {:alert_dismissed, alert})
+
+    html = render(view)
+    assert html =~ replacement.message
+    refute html =~ alert.message
+    assert html =~ "1 unread"
+    refute html =~ "0 unread"
+  end
+
+  test "alerts summary ignores foreign account alert events", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    own_alert =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "message" => "Own dashboard alert"
+      })
+
+    foreign_alert =
+      insert_alert!(%{
+        "account_address" => unique_wallet_address(),
+        "message" => "Foreign dashboard alert"
+      })
+
+    {:ok, view, html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ own_alert.message
+    refute html =~ foreign_alert.message
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Alerts.topic(foreign_alert.account_address),
+      {:alert_created, foreign_alert}
+    )
+
+    refreshed_html = render(view)
+    assert refreshed_html =~ own_alert.message
+    refute refreshed_html =~ foreign_alert.message
+  end
+
+  @tag :acceptance
+  test "dashboard alerts summary shows active alerts and updates live", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    Cache.put(cache_tables.accounts, wallet_address, account_fixture(wallet_address))
+    expect_empty_dashboard_discovery(wallet_address)
+
+    initial_alert =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "type" => "fuel_low",
+        "severity" => "warning",
+        "message" => "Initial dashboard alert",
+        "assembly_name" => "Summary Deck"
+      })
+
+    {:ok, view, html} =
+      live(authenticated_conn(conn, wallet_address, cache_tables, pubsub), "/")
+
+    assert html =~ "Initial dashboard alert"
+    assert html =~ "View All Alerts"
+    refute html =~ "No active alerts"
+    refute html =~ "Connect Your Wallet"
+
+    fresh_alert =
+      insert_alert!(%{
+        "account_address" => wallet_address,
+        "message" => "Fresh dashboard alert"
+      })
+
+    Phoenix.PubSub.broadcast(pubsub, Alerts.topic(wallet_address), {:alert_created, fresh_alert})
+
+    refreshed_html = render(view)
+    assert refreshed_html =~ fresh_alert.message
+    refute refreshed_html =~ "No active alerts"
+
+    assert {:ok, _alerts_view, alerts_html} =
+             view
+             |> element(~s(a[href="/alerts"]), "View All Alerts")
+             |> render_click()
+             |> follow_redirect(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/alerts"
+             )
+
+    assert alerts_html =~ initial_alert.message
+    refute alerts_html =~ "Connect Your Wallet"
+    refute alerts_html =~ "Not Found"
+  end
+
+  @tag :acceptance
+  test "switching active character re-scopes dashboard assemblies", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    first =
+      character_fixture(%{
+        "id" => uid("0xcharacter-rescope-alpha"),
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-rescope-alpha-meta",
+          "name" => "Scout Vega",
+          "description" => "Alpha character",
+          "url" => "https://example.test/characters/scout-vega"
+        }
+      })
+
+    second =
+      character_fixture(%{
+        "id" => uid("0xcharacter-rescope-beta"),
+        "tribe_id" => "271828",
+        "metadata" => %{
+          "assembly_id" => "0xcharacter-rescope-beta-meta",
+          "name" => "Marshal Iona",
+          "description" => "Beta character",
+          "url" => "https://example.test/characters/marshal-iona"
+        }
+      })
+
+    alpha_gate = Gate.from_json(gate_json(%{"id" => uid("0xrescope-alpha-gate")}))
+    beta_turret = Turret.from_json(turret_json(%{"id" => uid("0xrescope-beta-turret")}))
+    owner_cap_type = owner_cap_type()
+    first_id = first.id
+    second_id = second.id
+    alpha_gate_id = alpha_gate.id
+    beta_turret_id = beta_turret.id
+
+    Cache.put(
+      cache_tables.accounts,
+      wallet_address,
+      account_fixture(wallet_address, [first, second], 314)
+    )
+
+    expect(Sigil.Sui.ClientMock, :get_objects, 2, fn filters, [] ->
+      assert Keyword.get(filters, :type) == owner_cap_type
+
+      case Keyword.get(filters, :owner) do
+        ^first_id ->
+          {:ok, %{data: [owner_cap_json(alpha_gate_id)], has_next_page: false, end_cursor: nil}}
+
+        ^second_id ->
+          {:ok, %{data: [owner_cap_json(beta_turret_id)], has_next_page: false, end_cursor: nil}}
+      end
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object, 2, fn assembly_id, [] ->
+      case assembly_id do
+        ^alpha_gate_id -> {:ok, assembly_json_for(alpha_gate)}
+        ^beta_turret_id -> {:ok, assembly_json_for(beta_turret)}
+      end
+    end)
+
+    conn = authenticated_conn(conn, wallet_address, cache_tables, pubsub, first_id)
+
+    assert {:ok, _view, html} = live(conn, "/")
+    assert html =~ "Scout Vega"
+    assert html =~ "Jump Gate Alpha"
+    refute html =~ "Defense Turret"
+
+    switched_conn = put(conn, "/session/character/#{second.id}")
+    assert redirected_to(switched_conn) == "/"
+
+    assert {:ok, _switched_view, switched_html} = live(recycle(switched_conn), "/")
+    assert switched_html =~ "Marshal Iona"
+    assert switched_html =~ "Defense Turret"
+    refute switched_html =~ "Jump Gate Alpha"
+    refute switched_html =~ "Connect Your Wallet"
+  end
+
   test "wallet connect event prepares signed auth request for dashboard login", %{
     conn: conn,
     cache_tables: cache_tables,
@@ -1260,6 +1698,31 @@ defmodule SigilWeb.DashboardLiveTest do
 
   defp account_fixture(wallet_address, characters, tribe_id) do
     %Account{address: wallet_address, characters: characters, tribe_id: tribe_id}
+  end
+
+  defp insert_alert!(overrides) do
+    %Alert{}
+    |> Alert.changeset(valid_alert_attrs(overrides))
+    |> Repo.insert!()
+  end
+
+  defp valid_alert_attrs(overrides) do
+    unique = System.unique_integer([:positive])
+
+    Map.merge(
+      %{
+        "type" => "fuel_low",
+        "severity" => "warning",
+        "status" => "new",
+        "assembly_id" => "dashboard-assembly-#{unique}",
+        "assembly_name" => "Dashboard Assembly #{unique}",
+        "account_address" => unique_wallet_address(),
+        "tribe_id" => 42,
+        "message" => "Dashboard alert #{unique}",
+        "metadata" => %{"source" => "monitor"}
+      },
+      overrides
+    )
   end
 
   defp character_fixture(overrides \\ %{}) do

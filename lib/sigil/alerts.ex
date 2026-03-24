@@ -11,25 +11,24 @@ defmodule Sigil.Alerts do
   @default_cooldown_ms 14_400_000
 
   @typedoc "Options accepted by alerts context functions."
-  @type option() :: {:pubsub, atom() | module()} | {:cooldown_ms, non_neg_integer()}
+  @type option() ::
+          {:pubsub, atom() | module()}
+          | {:cooldown_ms, non_neg_integer()}
+          | {:authorized_account_address, String.t()}
   @type options() :: [option()]
 
   @doc "Creates a new alert unless an active duplicate or cooldown suppresses it."
   @spec create_alert(map(), options()) ::
           {:ok, Alert.t()} | {:ok, :duplicate} | {:ok, :cooldown} | {:error, Ecto.Changeset.t()}
   def create_alert(attrs, opts) when is_map(attrs) and is_list(opts) do
+    account_address = attr(attrs, :account_address)
     assembly_id = attr(attrs, :assembly_id)
     type = attr(attrs, :type)
 
-    case {missing_dedup_key?(assembly_id), missing_dedup_key?(type)} do
-      {true, _} ->
-        insert_alert(attrs, opts)
-
-      {_, true} ->
-        insert_alert(attrs, opts)
-
-      {false, false} ->
-        create_deduped_alert(attrs, assembly_id, type, opts)
+    if Enum.any?([account_address, assembly_id, type], &missing_dedup_key?/1) do
+      insert_alert(attrs, opts)
+    else
+      create_deduped_alert(attrs, account_address, assembly_id, type, opts)
     end
   end
 
@@ -45,14 +44,16 @@ defmodule Sigil.Alerts do
 
   @doc "Fetches a single alert by id."
   @spec get_alert(integer(), options()) :: Alert.t() | nil
-  def get_alert(id, _opts) when is_integer(id) do
-    Repo.get(Alert, id)
+  def get_alert(id, opts) when is_integer(id) and is_list(opts) do
+    id
+    |> alert_query(opts)
+    |> Repo.one()
   end
 
   @doc "Acknowledges a new alert and broadcasts the lifecycle event."
   @spec acknowledge_alert(integer(), options()) :: {:ok, Alert.t()} | {:error, :not_found}
   def acknowledge_alert(id, opts) when is_integer(id) and is_list(opts) do
-    case Repo.get(Alert, id) do
+    case get_alert(id, opts) do
       nil ->
         {:error, :not_found}
 
@@ -70,20 +71,28 @@ defmodule Sigil.Alerts do
   @doc "Dismisses an alert, preserving the first dismissal timestamp."
   @spec dismiss_alert(integer(), options()) :: {:ok, Alert.t()} | {:error, :not_found}
   def dismiss_alert(id, opts) when is_integer(id) and is_list(opts) do
-    case Repo.get(Alert, id) do
-      nil ->
-        {:error, :not_found}
+    dismissed_at = DateTime.utc_now()
 
-      %Alert{status: "dismissed"} = alert ->
-        {:ok, alert}
+    query =
+      id
+      |> alert_query(opts)
+      |> where([a], a.status in ["new", "acknowledged"])
 
-      %Alert{} = alert ->
-        dismissed_at = DateTime.utc_now()
+    case Repo.update_all(
+           query,
+           set: [status: "dismissed", dismissed_at: dismissed_at, updated_at: dismissed_at]
+         ) do
+      {1, _rows} ->
+        case get_alert(id, opts) do
+          %Alert{} = alert -> maybe_broadcast({:ok, alert}, :alert_dismissed, opts)
+          nil -> {:error, :not_found}
+        end
 
-        alert
-        |> Alert.status_changeset(%{"status" => "dismissed", "dismissed_at" => dismissed_at})
-        |> Repo.update()
-        |> maybe_broadcast(:alert_dismissed, opts)
+      {0, _rows} ->
+        case get_alert(id, opts) do
+          nil -> {:error, :not_found}
+          %Alert{} = alert -> {:ok, alert}
+        end
     end
   end
 
@@ -97,14 +106,14 @@ defmodule Sigil.Alerts do
     |> Repo.one()
   end
 
-  @doc "Returns true when an active alert exists for an assembly and type."
-  @spec active_alert_exists?(String.t(), String.t(), options()) :: boolean()
-  def active_alert_exists?(assembly_id, type, _opts)
-      when is_binary(assembly_id) and is_binary(type) do
+  @doc "Returns true when an active alert exists for an account, assembly, and type."
+  @spec active_alert_exists?(String.t(), String.t(), String.t(), options()) :: boolean()
+  def active_alert_exists?(account_address, assembly_id, type, _opts)
+      when is_binary(account_address) and is_binary(assembly_id) and is_binary(type) do
     from(a in Alert,
       where:
-        a.assembly_id == ^assembly_id and a.type == ^type and
-          a.status in ["new", "acknowledged"]
+        a.account_address == ^account_address and a.assembly_id == ^assembly_id and
+          a.type == ^type and a.status in ["new", "acknowledged"]
     )
     |> Repo.exists?()
   end
@@ -154,11 +163,15 @@ defmodule Sigil.Alerts do
     |> Repo.delete_all()
   end
 
-  @spec create_deduped_alert(map(), String.t(), String.t(), options()) ::
+  @doc "Returns the PubSub topic for a specific account's alerts."
+  @spec topic(String.t()) :: String.t()
+  def topic(account_address) when is_binary(account_address), do: "alerts:#{account_address}"
+
+  @spec create_deduped_alert(map(), String.t(), String.t(), String.t(), options()) ::
           {:ok, Alert.t()} | {:ok, :duplicate} | {:ok, :cooldown} | {:error, Ecto.Changeset.t()}
-  defp create_deduped_alert(attrs, assembly_id, type, opts) do
-    case {active_alert_exists?(assembly_id, type, opts),
-          cooldown_active?(assembly_id, type, cooldown_ms(opts))} do
+  defp create_deduped_alert(attrs, account_address, assembly_id, type, opts) do
+    case {active_alert_exists?(account_address, assembly_id, type, opts),
+          cooldown_active?(account_address, assembly_id, type, cooldown_ms(opts))} do
       {true, _} -> {:ok, :duplicate}
       {false, true} -> {:ok, :cooldown}
       {false, false} -> insert_alert(attrs, opts)
@@ -193,6 +206,13 @@ defmodule Sigil.Alerts do
     |> maybe_filter_before_id(Keyword.get(filters, :before_id))
   end
 
+  @spec alert_query(integer(), options()) :: Ecto.Query.t()
+  defp alert_query(id, opts) do
+    Alert
+    |> where([a], a.id == ^id)
+    |> maybe_scope_authorized_account(Keyword.get(opts, :authorized_account_address))
+  end
+
   @spec maybe_filter_account(Ecto.Queryable.t(), String.t() | nil) :: Ecto.Query.t()
   defp maybe_filter_account(query, nil), do: from(a in query)
 
@@ -219,6 +239,12 @@ defmodule Sigil.Alerts do
   defp maybe_filter_before_id(query, nil), do: from(a in query)
   defp maybe_filter_before_id(query, before_id), do: from(a in query, where: a.id < ^before_id)
 
+  @spec maybe_scope_authorized_account(Ecto.Queryable.t(), String.t() | nil) :: Ecto.Query.t()
+  defp maybe_scope_authorized_account(query, nil), do: from(a in query)
+
+  defp maybe_scope_authorized_account(query, account_address),
+    do: from(a in query, where: a.account_address == ^account_address)
+
   @spec maybe_broadcast(
           {:ok, Alert.t()} | {:ok, :duplicate} | {:error, Ecto.Changeset.t()},
           atom(),
@@ -227,18 +253,15 @@ defmodule Sigil.Alerts do
           {:ok, Alert.t()} | {:ok, :duplicate} | {:error, Ecto.Changeset.t()}
   defp maybe_broadcast({:ok, %Alert{} = alert} = result, event, opts) do
     pubsub = Keyword.get(opts, :pubsub, Sigil.PubSub)
-    Phoenix.PubSub.broadcast(pubsub, alert_topic(alert.account_address), {event, alert})
+    Phoenix.PubSub.broadcast(pubsub, topic(alert.account_address), {event, alert})
     result
   end
 
   defp maybe_broadcast(result, _event, _opts), do: result
 
-  @spec alert_topic(String.t()) :: String.t()
-  defp alert_topic(account_address), do: "alerts:#{account_address}"
-
-  @spec cooldown_active?(String.t(), String.t(), non_neg_integer()) :: boolean()
-  defp cooldown_active?(assembly_id, type, cooldown_ms) do
-    case latest_dismissed_at(assembly_id, type) do
+  @spec cooldown_active?(String.t(), String.t(), String.t(), non_neg_integer()) :: boolean()
+  defp cooldown_active?(account_address, assembly_id, type, cooldown_ms) do
+    case latest_dismissed_at(account_address, assembly_id, type) do
       %DateTime{} = dismissed_at ->
         DateTime.diff(DateTime.utc_now(), dismissed_at, :millisecond) < cooldown_ms
 
@@ -247,10 +270,12 @@ defmodule Sigil.Alerts do
     end
   end
 
-  @spec latest_dismissed_at(String.t(), String.t()) :: DateTime.t() | nil
-  defp latest_dismissed_at(assembly_id, type) do
+  @spec latest_dismissed_at(String.t(), String.t(), String.t()) :: DateTime.t() | nil
+  defp latest_dismissed_at(account_address, assembly_id, type) do
     from(a in Alert,
-      where: a.assembly_id == ^assembly_id and a.type == ^type and a.status == "dismissed",
+      where:
+        a.account_address == ^account_address and a.assembly_id == ^assembly_id and
+          a.type == ^type and a.status == "dismissed",
       where: not is_nil(a.dismissed_at),
       order_by: [desc: a.dismissed_at, desc: a.id],
       limit: 1,

@@ -29,6 +29,11 @@
 - `Sigil.Alerts.Engine.RuleEvaluator` (`alerts/engine/rule_evaluator.ex`) — Pure rule evaluation: fuel_low, fuel_critical, assembly_offline, extension_changed
 - `Sigil.Alerts.WebhookNotifier` (`alerts/webhook_notifier.ex`) — Behaviour: `deliver/3` callback for webhook providers
 - `Sigil.Alerts.WebhookNotifier.Discord` (`alerts/webhook_notifier/discord.ex`) — Discord webhook delivery with embed formatting and retry
+- `Sigil.IntelMarket` (`intel_market.ex`) — Intel marketplace context: discover marketplace, sync/cache listings, build unsigned create/purchase/cancel transactions, submit signed transactions with pending-op reconciliation, PubSub broadcast on `"intel_market"` topic
+- `Sigil.IntelMarket.Support` (`intel_market/support.ex`) — Shared cache table access, paginated object fetching, integer/status parsing, Sui type string resolution
+- `Sigil.IntelMarket.Listings` (`intel_market/listings.ex`) — Listing persistence (chain upsert, created listing reconciliation, status updates), ETS caching, stale listing cleanup with 30s grace window
+- `Sigil.IntelMarket.PendingOps` (`intel_market/pending_ops.ex`) — Applies create/purchase/cancel pending operations after wallet-signed transaction settlement
+- `Sigil.Intel.IntelListing` (`intel/intel_listing.ex`) — Ecto schema for `intel_listings` table: string PK (on-chain object ID), changeset/2, status_changeset/2, status enum (active/sold/cancelled)
 
 ## Key Functions
 
@@ -105,6 +110,19 @@
 - `upsert_webhook_config/3`: tribe_id × attrs × opts → {:ok, WebhookConfig.t()} | {:error, changeset}
 - `purge_old_dismissed/2`: days × opts → {count, nil}
 
+### IntelMarket (intel_market.ex)
+- `topic/0`: → `"intel_market"` PubSub topic
+- `discover_marketplace/1`: opts → `{:ok, marketplace_info() | nil} | {:error, reason}`
+- `sync_listings/1`: opts → `{:ok, [IntelListing.t()]} | {:error, term()}`
+- `list_listings/1`: opts → `[IntelListing.t()]` — active only, newest first
+- `get_listing/2`: listing_id × opts → `IntelListing.t() | nil` — ETS cache-aside
+- `build_create_listing_tx/2`: params × opts → `{:ok, %{tx_bytes, client_nonce}} | {:error, reason}`
+- `build_create_restricted_listing_tx/2`: params × opts → as above, with custodian ref
+- `build_purchase_tx/2`: listing_id × opts → `{:ok, %{tx_bytes}} | {:error, reason}`
+- `build_cancel_listing_tx/2`: listing_id × opts → `{:ok, %{tx_bytes}} | {:error, reason}`
+- `submit_signed_transaction/3`: tx_bytes × signature × opts → `{:ok, %{digest, effects_bcs}} | {:error, term()}`
+- `resolve_listing_ref/2`: listing_id × opts → `{:ok, listing_ref()} | {:error, term()}`
+
 ### Cache (cache.ex)
 - `start_link/1`: opts with tables keyword → `{:ok, pid}`
 - `tables/1`: pid → `%{table_name => tid}`
@@ -118,6 +136,9 @@
 - PubSub topics: `"accounts"`, `"assemblies:#{owner}"`, `"assembly:#{id}"`, `"tribes"`, `"diplomacy"`, `"gate_network"`, `"alerts:#{account_address}"`, `"intel:#{tribe_id}"`, `"monitors:lifecycle"`
 - Diplomacy cache keys are tribe-scoped: `{:active_custodian, tribe_id}`, `{:tribe_standing, source_tribe_id, target_tribe_id}`, `{:pilot_standing, source_tribe_id, pilot}`, `{:default_standing, source_tribe_id}`
 - Pending ops use `{:pending_tx, tx_bytes}` and are applied by `Sigil.Diplomacy.PendingOps`
+- IntelMarket follows CTX_Diplomacy pattern: options keyword list, ETS caching, pending ops, PubSub broadcast
+- PubSub topics: `"intel_market"` for all marketplace events
+- IntelMarket cache keys: `{:marketplace}`, `{:listing, id}`, `{:listing_ref, id}`, `{:pending_tx, sender, tx_bytes}`
 - Type dispatch in Assemblies via multi-clause `parse_assembly/1` with field-presence pattern matching
 - Cache values: accounts `{address, Account.t()}`, assemblies `{id, {owner, assembly()}}` + `{:pending_ext_tx, tx_bytes} -> {:authorize_gate_extension, gate_id}`, tribes `{tribe_id, Tribe.t()}`, diplomacy `{:active_custodian, tribe_id} | {:tribe_standing, source_tribe_id, target_tribe_id} | {:pilot_standing, source_tribe_id, pilot} | {:default_standing, source_tribe_id} | {:world_tribe, tribe_id} | {:pending_tx, tx_bytes} -> value`, gate_network `{gate_id, Gate.t()}` + `{:topology, topology()}` + `{:location_index, location_index()}`, intel `{:location, tribe_id, assembly_id} -> IntelReport.t()`
 

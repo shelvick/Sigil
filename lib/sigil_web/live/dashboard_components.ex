@@ -3,6 +3,7 @@ defmodule SigilWeb.DashboardLive.Components do
 
   use SigilWeb, :html
 
+  import SigilWeb.AlertsHelpers
   import SigilWeb.AssemblyHelpers
 
   alias Sigil.Accounts.Account
@@ -49,13 +50,17 @@ defmodule SigilWeb.DashboardLive.Components do
                     <p class="text-sm text-cream"><%= character_name(character) %></p>
                     <p class="font-mono text-xs text-space-500">Tribe: <%= character_tribe_label(character) %></p>
                   </div>
-                  <.link
-                    method="put"
-                    href={~p"/session/character/#{character.id}"}
-                    class="font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 hover:text-cream"
-                  >
-                    <%= if @active_character && @active_character.id == character.id, do: "Active", else: "Switch" %>
-                  </.link>
+                  <%= if @active_character && @active_character.id == character.id do %>
+                    <span class="font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">Active</span>
+                  <% else %>
+                    <.link
+                      method="put"
+                      href={~p"/session/character/#{character.id}"}
+                      class="font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 hover:text-cream"
+                    >
+                      Switch
+                    </.link>
+                  <% end %>
                 </div>
               <% end %>
             </div>
@@ -85,7 +90,57 @@ defmodule SigilWeb.DashboardLive.Components do
         </div>
       </div>
 
+      <.alerts_summary alert_summary={@alert_summary} unread_count={@unread_count} />
       <.assembly_manifest assemblies={@assemblies} discovery_error={@discovery_error} />
+    </div>
+    """
+  end
+
+  @doc """
+  Renders the authenticated dashboard alert summary.
+  """
+  @spec alerts_summary(map()) :: Phoenix.LiveView.Rendered.t()
+  def alerts_summary(assigns) do
+    ~H"""
+    <div class="rounded-3xl border border-space-600/80 bg-space-800/70 p-6">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Alert relay</p>
+          <h2 class="mt-3 text-2xl font-semibold text-cream">Active Alerts</h2>
+        </div>
+        <span class="rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
+          <%= @unread_count %> unread
+        </span>
+      </div>
+
+      <%= if @alert_summary == [] do %>
+        <div class="mt-6 rounded-2xl border border-space-600/80 bg-space-900/70 p-5">
+          <p class="text-sm text-cream">No active alerts</p>
+        </div>
+      <% else %>
+        <div class="mt-6 space-y-4">
+          <article :for={alert <- @alert_summary} class={card_classes(alert)}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center gap-3">
+                  <span class={severity_badge_classes(alert.severity)}><%= type_label(alert.type) %></span>
+                  <span :if={alert.status == "new"} class="inline-flex h-2.5 w-2.5 rounded-full bg-quantum-300"></span>
+                </div>
+                <p class="text-sm font-semibold text-cream"><%= alert.assembly_name %></p>
+                <p class={message_classes(alert.status)}><%= alert.message %></p>
+                <p class="text-xs text-space-500"><%= timestamp_label(alert) %></p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <.link
+          navigate={~p"/alerts"}
+          class="mt-6 inline-flex rounded-full border border-quantum-400/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+        >
+          View All Alerts
+        </.link>
+      <% end %>
     </div>
     """
   end

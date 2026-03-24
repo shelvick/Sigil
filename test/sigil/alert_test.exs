@@ -119,18 +119,81 @@ defmodule Sigil.Alerts.AlertTest do
       assert Repo.get(WebhookConfig, inserted_config.id).tribe_id == inserted_config.tribe_id
     end
 
-    test "partial unique index rejects duplicate active alerts" do
+    test "partial unique index rejects same-account active duplicates" do
       inserted_alert =
-        insert_alert!(%{"assembly_id" => "assembly-duplicate", "type" => "fuel_low"})
+        insert_alert!(%{
+          "assembly_id" => "assembly-duplicate",
+          "type" => "fuel_low",
+          "account_address" => "0xaccount-duplicate"
+        })
 
       assert_raise Ecto.ConstraintError, fn ->
         insert_alert!(%{
           "assembly_id" => inserted_alert.assembly_id,
           "type" => inserted_alert.type,
+          "account_address" => inserted_alert.account_address,
           "status" => "acknowledged",
           "message" => "Second active alert"
         })
       end
+    end
+
+    test "partial unique index allows same assembly alert for different accounts" do
+      inserted_alert =
+        insert_alert!(%{
+          "assembly_id" => "assembly-shared",
+          "type" => "fuel_low",
+          "account_address" => "0xaccount-one"
+        })
+
+      second_alert =
+        insert_alert!(%{
+          "assembly_id" => inserted_alert.assembly_id,
+          "type" => inserted_alert.type,
+          "account_address" => "0xaccount-two",
+          "status" => "acknowledged",
+          "message" => "Second account active alert"
+        })
+
+      assert second_alert.id != inserted_alert.id
+      assert second_alert.account_address == "0xaccount-two"
+    end
+
+    test "dismissed alerts do not block later inserts" do
+      dismissed_at = DateTime.add(DateTime.utc_now(), -300, :second)
+
+      dismissed_alert =
+        insert_alert!(%{
+          "assembly_id" => "assembly-dismissed-history",
+          "type" => "fuel_low",
+          "account_address" => "0xaccount-history",
+          "status" => "dismissed",
+          "dismissed_at" => dismissed_at
+        })
+
+      reinserted_alert =
+        insert_alert!(%{
+          "assembly_id" => dismissed_alert.assembly_id,
+          "type" => dismissed_alert.type,
+          "account_address" => dismissed_alert.account_address,
+          "status" => "new",
+          "message" => "Recreated active alert"
+        })
+
+      assert reinserted_alert.id != dismissed_alert.id
+      assert reinserted_alert.status == "new"
+    end
+
+    test "alert metadata defaults to empty map" do
+      alert =
+        insert_alert!(%{
+          "assembly_id" => "assembly-metadata-default",
+          "type" => "fuel_low",
+          "metadata" => nil
+        })
+
+      assert alert.metadata == %{}
+      refute is_nil(alert.metadata)
     end
 
     test "unique index rejects duplicate webhook tribe_id" do

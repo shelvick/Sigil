@@ -17,7 +17,7 @@ defmodule SigilWeb do
   Returns the list of static file paths served by the endpoint.
   """
   @spec static_paths() :: [String.t()]
-  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
+  def static_paths, do: ~w(assets fonts images zk favicon.ico robots.txt)
 
   @doc """
   Defines controller helpers for SigilWeb controllers.

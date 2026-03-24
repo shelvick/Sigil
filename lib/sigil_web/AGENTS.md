@@ -11,8 +11,11 @@
 - `SigilWeb.AssemblyHelpers` (`assembly_helpers.ex`) — Shared display helpers: type labels, names, status badges, fuel gauges, ID truncation, descriptions, extension labels, location hashes, burn rates, timestamps, energy labels
 - `SigilWeb.Layouts` (`components/layouts.ex`) — Root + app layout templates, `truncate_wallet/1`, `character_display_name/1`, `character_tribe_label/1`
 - `SigilWeb.SessionController` (`controllers/session_controller.ex`) — POST/DELETE /session + PUT /session/character/:id: zkLogin-verified wallet auth, active character switching, friendly error messages
-- `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: multi-account wallet connect (unauth), character-scoped assembly manifest (auth), character picker, PubSub subscriptions, monitor-driven updates via ensure_monitors
-- `SigilWeb.DashboardLive.Components` (`live/dashboard_components.ex`) — Template components: authenticated_view (with character picker), assembly_manifest, wallet_connect_view, wallet_state_panel (idle/connecting/account_selection/signing/error)
+- `SigilWeb.DashboardLive` (`live/dashboard_live.ex`) — Dashboard at `/`: multi-account wallet connect (unauth), character-scoped assembly manifest (auth), character picker, alerts summary widget, PubSub subscriptions for assemblies + alerts, monitor-driven updates via ensure_monitors
+- `SigilWeb.DashboardLive.Components` (`live/dashboard_components.ex`) — Template components: authenticated_view (with character picker), alerts_summary, assembly_manifest, wallet_connect_view, wallet_state_panel (idle/connecting/account_selection/signing/error)
+- `SigilWeb.AlertsLive` (`live/alerts_live.ex`) — Alerts at `/alerts`: account-scoped feed, acknowledge/dismiss actions, PubSub refresh, infinite scroll pagination, ownership-safe mutations
+- `SigilWeb.AlertsLive.Components` (`live/alerts_live/components.ex`) — Template components: alerts_header (unread badge, dismissed toggle), alerts_feed (card list, mutation actions, infinite-scroll sentinel), sentinel_classes
+- `SigilWeb.AlertsHelpers` (`alerts_helpers.ex`) — Shared alert display helpers: card_classes, severity_badge_classes, type_label, message_classes, timestamp_label
 - `SigilWeb.AssemblyDetailLive` (`live/assembly_detail_live.ex`) — Detail at `/assembly/:id`: type-specific rendering, fuel/energy/connection panels, fuel depletion prediction with FuelCountdown JS hook, gate extension management (authorize via wallet signing), intel location display + Set Location action, monitor-driven PubSub updates
 - `SigilWeb.AssemblyDetailLive.Components` (`live/assembly_detail_live/components.ex`) — Extracted template components: location_panel (location card + Set Location form), type_specific_section (gate/turret/storage/network_node/assembly)
 - `SigilWeb.AssemblyDetailLive.IntelHelpers` (`live/assembly_detail_live/intel_helpers.ex`) — Intel helpers: current_tribe_id/2, intel_enabled?/2, intel_opts/3, character_name/1, resolve_location_name/2
@@ -21,6 +24,10 @@
 - `SigilWeb.IntelLive` (`live/intel_live.ex`) — Intel feed at `/tribe/:tribe_id/intel`: report submission (location/scouting), solar system datalist picker, report feed with delete, PubSub real-time updates
 - `SigilWeb.IntelLive.Components` (`live/intel_live/components.ex`) — Extracted template components: report_entry_panel (form + toggle), report_feed_panel (card list + delete)
 - `SigilWeb.IntelHelpers` (`intel_helpers.ex`) — Shared intel display helpers: relative_timestamp_label/1 and /2 ("Just now", "5m ago", "2h ago", "3d ago")
+- `SigilWeb.IntelMarketLive` (`live/intel_market_live.ex`) — Marketplace page: browse listings, sell intel (ZK proof + wallet sign), my listings. PubSub real-time updates.
+  - `.State` (`live/intel_market_live/state.ex`) — State/form/filter helpers
+  - `.Transactions` (`live/intel_market_live/transactions.ex`) — Transaction workflows
+  - `.Components` (`live/intel_market_live/components.ex`) — Template components (filter_bar, listing_card, sell_form, proof_status, my_listings_panel)
 - `SigilWeb.DiplomacyLive` (`live/diplomacy_live.ex`) — Diplomacy editor at `/tribe/:tribe_id/diplomacy`: custodian discovery state machine, leader/non-leader split, standings CRUD, wallet tx signing flow, PubSub updates
 - `SigilWeb.DiplomacyLive.Components` (`live/diplomacy_components.ex`) — Extracted template components: `no_custodian_view`, `discovery_error_view`, `signing_overlay`, `tribe_standings_section`, `pilot_overrides_section`, `default_standing_section` + display helpers
 - `SigilWeb.TribeHelpers` (`tribe_helpers.ex`) — Shared tribe authorization + diplomacy display helpers: `authorize_tribe/2`, `standing_display/1`, `nbsi_nrds_label/1`
@@ -61,22 +68,43 @@
 - `friendly_error/1`: Maps error atoms/tuples to user-facing messages
 
 ### DashboardLive (live/dashboard_live.ex)
-- `mount/3`: assign_base_state → maybe_load_assemblies (character-scoped) → maybe_subscribe → maybe_ensure_monitors
+- `mount/3`: assign_base_state → maybe_load_assemblies (character-scoped) → maybe_load_alert_summary → maybe_subscribe → maybe_ensure_monitors
 - `handle_event("wallet_detected")`: Store wallets, auto-connect if single, ignore during active auth/account_selection
 - `handle_event("wallet_accounts")`: Multi-account → store accounts, set `:account_selection` state
 - `handle_event("select_account")`: Push `select_account` to JS hook with chosen index
 - `handle_event("wallet_connected")`: Generate nonce via `ZkLoginVerifier`, push `request_sign`
 - `handle_event("wallet_account_changed")`: Flash `re-authenticate to switch` notification
 - `handle_event("wallet_error")`: Flash error + set error state with retry
+- `handle_info({:alert_created, _})`, `handle_info({:alert_acknowledged, _})`, `handle_info({:alert_dismissed, _})`: Refresh alerts summary window + unread count from PubSub
 - `active_character_ids/1`: Returns `[active_character.id]` or `[]` for character-scoped discovery
 
 ### DashboardLive.Components (live/dashboard_components.ex)
-- `authenticated_view/1`: Wallet panel (active character name/tribe) + character picker + session controls + assembly manifest + `View Tribe` link (when `tribe_id` present)
+- `authenticated_view/1`: Wallet panel (active character name/tribe) + character picker + session controls + alerts summary + assembly manifest + `View Tribe` link (when `tribe_id` present)
+- `alerts_summary/1`: Dashboard alert relay widget with unread badge, active alert cards, and `View All Alerts` link
 - `assembly_manifest/1`: Assembly table with type/name/status/fuel columns
 - `wallet_connect_view/1`: Wallet connect prompt + button + state panel
 - `wallet_state_panel/1`: Multi-clause: idle/connecting/account_selection/signing/error
 - `account_display_name/1`: Label or truncated address fallback
 - `active_character_name/2`, `active_character_tribe_label/1`, `character_name/1`, `character_tribe_label/1`: Display helpers
+
+### AlertsLive (live/alerts_live.ex)
+- `mount/3`: Require authenticated account → assign base state → load paginated feed + unread count → subscribe account alert topic
+- `handle_event("acknowledge")`, `handle_event("dismiss")`: Parse alert id → perform ownership-safe lifecycle mutation via `Alerts` → refresh visible window + unread count
+- `handle_event("toggle_dismissed")`: Flip dismissed-history mode → reset feed window + unread count
+- `handle_event("load_more")`: Page older alerts using `before_id` cursor from the last loaded alert
+- `handle_info({:alert_created, _})`, `handle_info({:alert_acknowledged, _})`, `handle_info({:alert_dismissed, _})`: Refresh current window + unread count after PubSub events
+
+### AlertsLive.Components (live/alerts_live/components.ex)
+- `alerts_header/1`: Page header with unread badge + Show/Hide Dismissed toggle
+- `alerts_feed/1`: Alert cards with type/severity badges, assembly link, acknowledge/dismiss buttons, and infinite-scroll sentinel
+- `sentinel_classes/1`: Sentinel visibility classes for `InfiniteScroll`
+
+### AlertsHelpers (alerts_helpers.ex)
+- `card_classes/1`: Alert status → card chrome (`new`, `acknowledged`, `dismissed`)
+- `severity_badge_classes/1`: Severity → badge palette (`critical`, `warning`, default info)
+- `type_label/1`: Alert type → display label (`Fuel Low`, `Fuel Critical`, etc.)
+- `message_classes/1`: Alert status → body copy color
+- `timestamp_label/1`: Alert timestamp → relative label via `IntelHelpers.relative_timestamp_label/1`
 
 ### AssemblyDetailLive (live/assembly_detail_live.ex)
 - `mount/3`: fetch_assembly from cache → assign (incl. signing_state, is_owner, depletion, location_report) → subscribe assembly + intel topics → ensure_monitors (or redirect if not found)
@@ -149,6 +177,7 @@
 - `Sigil.GameState.MonitorSupervisor` — persistent assembly monitoring (ensure_monitors)
 - `Sigil.GameState.FuelAnalytics` — fuel depletion computation (initial_depletion)
 - `Sigil.Intel` — tribe-scoped intel CRUD (`report_location`, `report_scouting`, `list_intel`, `get_location`, `delete_intel`)
+- `Sigil.Alerts` — account-scoped alert listing, unread counts, acknowledge/dismiss lifecycle, PubSub topics
 - `Sigil.StaticData` — solar system name resolution + datalist population
 - `Phoenix.PubSub` — real-time updates
 
@@ -156,3 +185,4 @@
 
 - `assets/js/hooks/wallet_hook.js` — WalletConnect hook: Sui Wallet Standard discovery, EVE Vault preference, multi-account selection (`pendingAccounts` + `select_account`), `signPersonalMessage` (auth), `signTransaction` (diplomacy + gate extension), `reportTransactionEffects` (wallet cache update), wallet change detection, hidden form POST. Registered in `assets/js/app.js`.
 - `assets/js/hooks/fuel_countdown.js` — FuelCountdown hook: reads `data-depletes-at` ISO timestamp, runs `setInterval(1000)` countdown displaying `Xh Ym Zs`, handles updated/destroyed lifecycle, sentinel values for not-burning/no-fuel. Registered in `assets/js/app.js`.
+- `assets/js/hooks/infinite_scroll.js` — InfiniteScroll hook: observes the alerts feed sentinel with `IntersectionObserver`, pushes `load_more`, disconnects/rebinds on update, and stops when `data-has-more="false"`. Registered in `assets/js/app.js`.

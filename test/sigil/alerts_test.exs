@@ -43,16 +43,47 @@ defmodule Sigil.AlertsTest do
       assert_receive {:alert_created, %{__struct__: Alert, id: ^alert_id}}
     end
 
-    test "returns duplicate for active alert", %{pubsub: pubsub} do
-      attrs = valid_alert_attrs(%{"assembly_id" => "assembly-duplicate", "type" => "fuel_low"})
+    test "returns duplicate for active alert in same account", %{pubsub: pubsub} do
+      attrs =
+        valid_alert_attrs(%{
+          "account_address" => "0xaccount-duplicate",
+          "assembly_id" => "assembly-duplicate",
+          "type" => "fuel_low"
+        })
+
       insert_alert!(attrs)
 
       assert AlertsContext.create_alert(attrs, pubsub: pubsub) == {:ok, :duplicate}
     end
 
-    test "returns cooldown for recently dismissed alert", %{pubsub: pubsub} do
+    test "active alerts stay isolated across accounts", %{pubsub: pubsub} do
       attrs =
-        valid_alert_attrs(%{"assembly_id" => "assembly-cooldown", "type" => "fuel_critical"})
+        valid_alert_attrs(%{
+          "account_address" => "0xaccount-one",
+          "assembly_id" => "assembly-shared",
+          "type" => "fuel_low"
+        })
+
+      other_account_attrs = Map.put(attrs, "account_address", "0xaccount-two")
+
+      assert {:ok, %{__struct__: Alert} = first_alert} =
+               AlertsContext.create_alert(attrs, pubsub: pubsub)
+
+      assert {:ok, %{__struct__: Alert} = second_alert} =
+               AlertsContext.create_alert(other_account_attrs, pubsub: pubsub)
+
+      assert first_alert.account_address == "0xaccount-one"
+      assert second_alert.account_address == "0xaccount-two"
+      assert Repo.aggregate(Alert, :count, :id) == 2
+    end
+
+    test "returns cooldown for same account alert", %{pubsub: pubsub} do
+      attrs =
+        valid_alert_attrs(%{
+          "account_address" => "0xaccount-cooldown",
+          "assembly_id" => "assembly-cooldown",
+          "type" => "fuel_critical"
+        })
 
       insert_alert!(
         Map.merge(attrs, %{
@@ -65,9 +96,13 @@ defmodule Sigil.AlertsTest do
                {:ok, :cooldown}
     end
 
-    test "creates new alert after cooldown expires", %{pubsub: pubsub} do
+    test "creates new alert after account cooldown expires", %{pubsub: pubsub} do
       attrs =
-        valid_alert_attrs(%{"assembly_id" => "assembly-after-cooldown", "type" => "fuel_low"})
+        valid_alert_attrs(%{
+          "account_address" => "0xaccount-after-cooldown",
+          "assembly_id" => "assembly-after-cooldown",
+          "type" => "fuel_low"
+        })
 
       insert_alert!(
         Map.merge(attrs, %{
@@ -112,7 +147,7 @@ defmodule Sigil.AlertsTest do
       refute Enum.any?(alerts, &(&1.account_address == "0xother-account"))
     end
 
-    test "filters alerts by status" do
+    test "filters alerts by status or returns all statuses" do
       account = "0xaccount-status"
       insert_alert!(valid_alert_attrs(%{"account_address" => account, "status" => "new"}))
 
@@ -120,22 +155,99 @@ defmodule Sigil.AlertsTest do
         valid_alert_attrs(%{"account_address" => account, "status" => "acknowledged"})
       )
 
-      insert_alert!(valid_alert_attrs(%{"account_address" => account, "status" => "dismissed"}))
+      dismissed =
+        insert_alert!(valid_alert_attrs(%{"account_address" => account, "status" => "dismissed"}))
 
-      alerts =
+      filtered =
         AlertsContext.list_alerts([account_address: account, status: ["new", "acknowledged"]], [])
 
-      assert Enum.map(alerts, & &1.status) == ["acknowledged", "new"]
-      refute Enum.any?(alerts, &(&1.status == "dismissed"))
+      assert Enum.map(filtered, & &1.status) == ["acknowledged", "new"]
+      refute Enum.any?(filtered, &(&1.status == "dismissed"))
+
+      all_statuses = AlertsContext.list_alerts([account_address: account], [])
+      assert Enum.map(all_statuses, & &1.id) == [dismissed.id | Enum.map(filtered, & &1.id)]
+    end
+
+    test "filters alerts by type and tribe" do
+      account = "0xaccount-filter"
+
+      matching =
+        insert_alert!(
+          valid_alert_attrs(%{
+            "account_address" => account,
+            "type" => "fuel_critical",
+            "tribe_id" => 314,
+            "message" => "matching"
+          })
+        )
+
+      _wrong_type =
+        insert_alert!(
+          valid_alert_attrs(%{
+            "account_address" => account,
+            "type" => "fuel_low",
+            "tribe_id" => 314,
+            "message" => "wrong type"
+          })
+        )
+
+      _wrong_tribe =
+        insert_alert!(
+          valid_alert_attrs(%{
+            "account_address" => account,
+            "type" => "fuel_critical",
+            "tribe_id" => 999,
+            "message" => "wrong tribe"
+          })
+        )
+
+      alerts =
+        AlertsContext.list_alerts(
+          [account_address: account, type: "fuel_critical", tribe_id: 314],
+          []
+        )
+
+      assert Enum.map(alerts, & &1.id) == [matching.id]
+    end
+
+    test "list alerts paginates with before_id and limit" do
+      account = "0xaccount-pagination"
+
+      oldest =
+        insert_alert!(valid_alert_attrs(%{"account_address" => account, "message" => "oldest"}))
+
+      middle =
+        insert_alert!(valid_alert_attrs(%{"account_address" => account, "message" => "middle"}))
+
+      newest =
+        insert_alert!(valid_alert_attrs(%{"account_address" => account, "message" => "newest"}))
+
+      first_page = AlertsContext.list_alerts([account_address: account, limit: 2], [])
+      assert Enum.map(first_page, & &1.id) == [newest.id, middle.id]
+
+      second_page =
+        AlertsContext.list_alerts([account_address: account, before_id: middle.id, limit: 2], [])
+
+      assert Enum.map(second_page, & &1.id) == [oldest.id]
     end
   end
 
   describe "get_alert/2" do
-    test "returns alert by id" do
+    test "get_alert returns alert or nil by id" do
       alert = insert_alert!()
       alert_id = alert.id
 
       assert %{__struct__: Alert, id: ^alert_id} = AlertsContext.get_alert(alert.id, [])
+      assert AlertsContext.get_alert(-1, []) == nil
+    end
+
+    test "get_alert hides alert from other account" do
+      alert = insert_alert!(%{"account_address" => "0xalert-owner"})
+
+      assert AlertsContext.get_alert(alert.id, authorized_account_address: "0xalert-owner")
+
+      assert AlertsContext.get_alert(alert.id, authorized_account_address: "0xother-account") ==
+               nil
     end
   end
 
@@ -161,14 +273,16 @@ defmodule Sigil.AlertsTest do
       assert same_alert.dismissed_at == dismissed_at
     end
 
-    test "acknowledge already-acknowledged alert is idempotent", %{pubsub: pubsub} do
+    test "acknowledge already acknowledged alert", %{pubsub: pubsub} do
       alert = insert_alert!(%{"status" => "acknowledged"})
+      :ok = Phoenix.PubSub.subscribe(pubsub, "alerts:#{alert.account_address}")
 
       assert {:ok, %{__struct__: Alert} = same_alert} =
                AlertsContext.acknowledge_alert(alert.id, pubsub: pubsub)
 
       assert same_alert.id == alert.id
       assert same_alert.status == "acknowledged"
+      refute_receive {:alert_acknowledged, _}
     end
 
     test "broadcasts alert_acknowledged on account topic", %{pubsub: pubsub} do
@@ -177,6 +291,18 @@ defmodule Sigil.AlertsTest do
 
       assert {:ok, %{id: id}} = AlertsContext.acknowledge_alert(alert.id, pubsub: pubsub)
       assert_receive {:alert_acknowledged, %{__struct__: Alert, id: ^id}}
+    end
+
+    test "acknowledge does not mutate other account alert", %{pubsub: pubsub} do
+      alert = insert_alert!(%{"account_address" => "0xalert-owner", "status" => "new"})
+
+      assert AlertsContext.acknowledge_alert(
+               alert.id,
+               pubsub: pubsub,
+               authorized_account_address: "0xother-account"
+             ) == {:error, :not_found}
+
+      assert Repo.get!(Alert, alert.id).status == "new"
     end
 
     test "returns not_found for unknown alert id", %{pubsub: pubsub} do
@@ -207,12 +333,27 @@ defmodule Sigil.AlertsTest do
     test "re-dismiss preserves original dismissed_at", %{pubsub: pubsub} do
       dismissed_at = DateTime.add(DateTime.utc_now(), -600, :second)
       alert = insert_alert!(%{"status" => "dismissed", "dismissed_at" => dismissed_at})
+      :ok = Phoenix.PubSub.subscribe(pubsub, "alerts:#{alert.account_address}")
 
       assert {:ok, %{__struct__: Alert} = same_alert} =
                AlertsContext.dismiss_alert(alert.id, pubsub: pubsub)
 
       assert same_alert.status == "dismissed"
       assert same_alert.dismissed_at == dismissed_at
+      refute_receive {:alert_dismissed, _}
+    end
+
+    test "dismiss does not mutate other account alert", %{pubsub: pubsub} do
+      alert = insert_alert!(%{"account_address" => "0xalert-owner", "status" => "new"})
+
+      assert AlertsContext.dismiss_alert(
+               alert.id,
+               pubsub: pubsub,
+               authorized_account_address: "0xother-account"
+             ) == {:error, :not_found}
+
+      assert Repo.get!(Alert, alert.id).status == "new"
+      assert is_nil(Repo.get!(Alert, alert.id).dismissed_at)
     end
 
     test "returns not_found for unknown alert id", %{pubsub: pubsub} do
@@ -237,32 +378,48 @@ defmodule Sigil.AlertsTest do
       assert AlertsContext.unread_count(account, []) == 2
     end
 
-    test "active_alert_exists returns true for active alert" do
+    test "active_alert_exists checks account scoped alert" do
       assembly_id = "assembly-active-check"
       type = "fuel_low"
 
-      insert_alert!(%{"assembly_id" => assembly_id, "type" => type, "status" => "acknowledged"})
-
-      # Dismissed alert of same assembly but different type
       insert_alert!(%{
+        "account_address" => "0xaccount-owner",
+        "assembly_id" => assembly_id,
+        "type" => type,
+        "status" => "acknowledged"
+      })
+
+      insert_alert!(%{
+        "account_address" => "0xother-account",
         "assembly_id" => assembly_id,
         "type" => "fuel_critical",
         "status" => "dismissed"
       })
 
-      assert AlertsContext.active_alert_exists?(assembly_id, type, [])
-      # Different type with no alert at all → false
-      refute AlertsContext.active_alert_exists?(assembly_id, "assembly_offline", [])
-      # Dismissed same-type alert on a different assembly → false
-      dismissed_assembly = "assembly-dismissed-only"
+      assert AlertsContext.active_alert_exists?(
+               "0xaccount-owner",
+               assembly_id,
+               type,
+               []
+             )
 
-      insert_alert!(%{
-        "assembly_id" => dismissed_assembly,
-        "type" => "fuel_low",
-        "status" => "dismissed"
-      })
+      refute AlertsContext.active_alert_exists?(
+               "0xaccount-owner",
+               assembly_id,
+               "assembly_offline",
+               []
+             )
 
-      refute AlertsContext.active_alert_exists?(dismissed_assembly, "fuel_low", [])
+      refute AlertsContext.active_alert_exists?(
+               "0xother-account",
+               assembly_id,
+               type,
+               []
+             )
+    end
+
+    test "topic returns account alert topic" do
+      assert AlertsContext.topic("0xalerts-account") == "alerts:0xalerts-account"
     end
   end
 
@@ -273,6 +430,27 @@ defmodule Sigil.AlertsTest do
 
       assert %{__struct__: WebhookConfig, id: ^config_id} =
                AlertsContext.get_webhook_config(314, [])
+    end
+
+    test "gets nil when webhook config missing" do
+      assert AlertsContext.get_webhook_config(999_999, []) == nil
+    end
+
+    test "upserts webhook config creates new record" do
+      assert {:ok, %{__struct__: WebhookConfig} = config} =
+               AlertsContext.upsert_webhook_config(
+                 272,
+                 %{
+                   "webhook_url" => "https://discord.example/webhooks/new",
+                   "enabled" => true,
+                   "service_type" => "discord"
+                 },
+                 []
+               )
+
+      assert config.tribe_id == 272
+      assert config.webhook_url == "https://discord.example/webhooks/new"
+      assert config.enabled
     end
 
     test "upserts webhook config for tribe" do
@@ -326,11 +504,11 @@ defmodule Sigil.AlertsTest do
   end
 
   describe "concurrency" do
-    test "concurrent duplicate insert returns duplicate", %{
+    test "concurrent dismiss preserves first dismissed_at", %{
       pubsub: pubsub,
       sandbox_owner: sandbox_owner
     } do
-      attrs = valid_alert_attrs(%{"assembly_id" => "assembly-race", "type" => "fuel_critical"})
+      alert = insert_alert!(%{"status" => "new", "account_address" => "0xdismiss-race"})
       parent = self()
 
       tasks =
@@ -340,7 +518,55 @@ defmodule Sigil.AlertsTest do
               send(parent, {:task_ready, self()})
 
               receive do
-                :go -> AlertsContext.create_alert(attrs, pubsub: pubsub)
+                :go ->
+                  Process.flag(:trap_exit, true)
+                  AlertsContext.dismiss_alert(alert.id, pubsub: pubsub)
+              end
+            end)
+
+          Ecto.Adapters.SQL.Sandbox.allow(Repo, sandbox_owner, task.pid)
+          task_pid = task.pid
+          assert_receive {:task_ready, ^task_pid}
+          task
+        end
+
+      Enum.each(tasks, &send(&1.pid, :go))
+      task_results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+      assert Enum.all?(task_results, &match?({:ok, %Alert{status: "dismissed"}}, &1))
+
+      stored = Repo.get!(Alert, alert.id)
+      assert stored.status == "dismissed"
+      assert %DateTime{} = stored.dismissed_at
+
+      assert Enum.all?(task_results, fn {:ok, result_alert} ->
+               result_alert.dismissed_at == stored.dismissed_at
+             end)
+    end
+
+    test "concurrent duplicate insert returns duplicate", %{
+      pubsub: pubsub,
+      sandbox_owner: sandbox_owner
+    } do
+      attrs =
+        valid_alert_attrs(%{
+          "account_address" => "0xaccount-race",
+          "assembly_id" => "assembly-race",
+          "type" => "fuel_critical"
+        })
+
+      parent = self()
+
+      tasks =
+        for _ <- 1..2 do
+          task =
+            Task.async(fn ->
+              send(parent, {:task_ready, self()})
+
+              receive do
+                :go ->
+                  Process.flag(:trap_exit, true)
+                  AlertsContext.create_alert(attrs, pubsub: pubsub)
               end
             end)
 
@@ -360,8 +586,13 @@ defmodule Sigil.AlertsTest do
   end
 
   @tag :acceptance
-  test "alert lifecycle enforces active dedup and cooldown", %{pubsub: pubsub} do
-    attrs = valid_alert_attrs(%{"assembly_id" => "assembly-acceptance", "type" => "fuel_low"})
+  test "alert lifecycle enforces account scoped dedup and cooldown", %{pubsub: pubsub} do
+    attrs =
+      valid_alert_attrs(%{
+        "account_address" => "0xacceptance-account",
+        "assembly_id" => "assembly-acceptance",
+        "type" => "fuel_low"
+      })
 
     assert {:ok, %{__struct__: Alert} = first_alert} =
              AlertsContext.create_alert(attrs, pubsub: pubsub, cooldown_ms: 5_000)

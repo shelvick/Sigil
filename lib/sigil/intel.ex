@@ -155,6 +155,22 @@ defmodule Sigil.Intel do
     :ok
   end
 
+  @doc "Exports an intel report into the deterministic fields used for commitment hashing."
+  @spec export_for_commitment(IntelReport.t()) :: %{
+          report_type: 1 | 2,
+          solar_system_id: integer() | nil,
+          assembly_id: String.t(),
+          notes: String.t()
+        }
+  def export_for_commitment(%IntelReport{} = report) do
+    %{
+      report_type: export_report_type(report.report_type),
+      solar_system_id: report.solar_system_id,
+      assembly_id: normalize_assembly_id(report.assembly_id),
+      notes: report.notes || ""
+    }
+  end
+
   @spec intel_table(options()) :: Cache.table_id()
   defp intel_table(opts) do
     opts |> Keyword.fetch!(:tables) |> Map.fetch!(:intel)
@@ -197,6 +213,22 @@ defmodule Sigil.Intel do
 
   @spec location_cache_key(integer(), String.t()) :: {:location, integer(), String.t()}
   defp location_cache_key(tribe_id, assembly_id), do: {:location, tribe_id, assembly_id}
+
+  @spec export_report_type(IntelReport.report_type()) :: 1 | 2
+  defp export_report_type(:location), do: 1
+  defp export_report_type(:scouting), do: 2
+
+  @spec normalize_assembly_id(String.t() | nil) :: String.t()
+  defp normalize_assembly_id(nil), do: ""
+
+  defp normalize_assembly_id(assembly_id) do
+    normalized = String.downcase(assembly_id)
+
+    case normalized do
+      "0x" <> suffix -> "0x" <> suffix
+      _other -> "0x" <> normalized
+    end
+  end
 
   @spec broadcast(options(), integer(), term()) :: :ok | {:error, term()}
   defp broadcast(opts, tribe_id, event) do

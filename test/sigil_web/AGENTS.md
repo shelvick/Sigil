@@ -10,8 +10,10 @@
 - `tribe_overview_live_test.exs` — 19 tests for UI_TribeOverviewLive (R1-R19): auth, members, assemblies, custodian standings summary, intel summary counts, View Intel link, intel PubSub updates, acceptance
 - `diplomacy_live_test.exs` — 34 tests for UI_DiplomacyLive: custodian page states, leader/non-leader split, standings CRUD, pilot overrides, tx signing flow, PubSub, acceptance
 - `assembly_detail_live_test.exs` — 43 tests for UI_AssemblyDetailLive: all 5 type renderings, fuel/energy/connections panels, fuel depletion display, PubSub (monitor + direct), redirect, back nav, gate extension management, wallet hook handlers, monitor lifecycle, intel location display + Set Location + PubSub sync, acceptance
+- `alerts_live_test.exs` — 22 tests for UI_AlertsLive packet 1: auth/redirect, account scoping, card rendering, acknowledge/dismiss lifecycle, dismissed toggle, unread badge, PubSub refresh, InfiniteScroll pagination/sentinel contract, foreign-id mutation safety, acceptance
 - `intel_live_test.exs` — 20 tests for UI_IntelLive (R1-R16): auth/redirect, location + scouting submission, solar system resolution, delete (author + non-author), PubSub updates (upsert-aware), report type toggle, empty state, StaticData unavailable, acceptance
 - `intel_helpers_test.exs` — tests for SigilWeb.IntelHelpers: relative_timestamp_label/2 buckets (Just now, Xm ago, Xh ago, Xd ago, absolute date)
+- `intel_market_live_test.exs` — 26 tests for SigilWeb.IntelMarketLive (R1-R22 + acceptance), async: true
 
 ## Test Patterns
 
@@ -37,5 +39,7 @@
 | UI_TribeOverviewLive | 19 | R1-R19 | R1/R19 (tribe overview + intel entry) |
 | UI_DiplomacyLive | 34 | custodian-first flow | leader standings flow, custodian setup flow |
 | UI_AssemblyDetailLive | 43 | monitor + intel detail flow | R13 (wallet→detail), R22 (gate ext auth), set-location journey |
+| UI_AlertsLive | 22 | packet 1 alerts feed flow | full alerts journey (view → acknowledge → dismiss → realtime update) |
 | UI_IntelLive | 20 | R1-R16 | R1/R13 (intel page + sharing journey) |
 | IntelHelpers | — | — | — |
+| IntelMarketLive | 26 | R1-R22 | R8 (sell flow), R9 (purchase flow), R17 (restricted purchase) |

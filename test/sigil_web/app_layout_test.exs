@@ -5,8 +5,21 @@ defmodule SigilWeb.AppLayoutTest do
 
   use Sigil.ConnCase, async: true
 
+  import Hammox
+
   alias Sigil.Accounts.Account
+  alias Sigil.Cache
   alias Sigil.Sui.Types.Character
+
+  setup :verify_on_exit!
+
+  setup do
+    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :assemblies]})
+    pubsub = unique_pubsub_name()
+    start_supervised!({Phoenix.PubSub, name: pubsub})
+
+    {:ok, cache_tables: Cache.tables(cache_pid), pubsub: pubsub}
+  end
 
   @wallet_address "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd"
 
@@ -144,11 +157,9 @@ defmodule SigilWeb.AppLayoutTest do
         active_character: first
       )
 
-    # Both characters listed in the switcher
     assert html =~ "Scout Vega"
     assert html =~ "Marshal Iona"
-    # Switcher links present for both characters
-    assert html =~ "/session/character/#{first.id}"
+    refute html =~ "/session/character/#{first.id}"
     assert html =~ "/session/character/#{second.id}"
   end
 
@@ -168,8 +179,8 @@ defmodule SigilWeb.AppLayoutTest do
     refute html =~ "/session/character/"
   end
 
-  # R12: Character dropdown links to PUT /session/character/:id
-  test "character switcher links to PUT /session/character endpoint" do
+  # R12: Character dropdown links only non-active characters to PUT /session/character/:id
+  test "character switcher links non-active characters to PUT endpoint" do
     first = character_fixture("0xchar-one", "First Pilot", 314)
     second = character_fixture("0xchar-two", "Second Pilot", 271)
     third = character_fixture("0xchar-three", "Third Pilot", 159)
@@ -181,10 +192,9 @@ defmodule SigilWeb.AppLayoutTest do
         active_character: first
       )
 
-    # Each non-active character has a PUT link
     assert html =~ "/session/character/#{second.id}"
     assert html =~ "/session/character/#{third.id}"
-    # Links use PUT method
+    refute html =~ "/session/character/#{first.id}"
     assert html =~ ~s(method="put")
   end
 
@@ -198,13 +208,96 @@ defmodule SigilWeb.AppLayoutTest do
         active_character: nil
       )
 
-    # Still shows wallet and disconnect
     assert html =~ "0x1234...abcd"
     assert html =~ "Disconnect"
-    # No character name or tribe displayed
     refute html =~ "Commander"
     refute html =~ "Unaligned"
     refute html =~ "/session/character/"
+  end
+
+  # R14: Alerts nav link shown when authenticated
+  test "app layout header shows Alerts link when authenticated" do
+    html = render_layout(current_account: account_fixture())
+
+    assert html =~ ~r/>\s*Alerts\s*</
+    assert html =~ ~s(href="/alerts")
+  end
+
+  # R15: Alerts nav link hidden when unauthenticated
+  test "app layout header hides Alerts link when unauthenticated" do
+    html = render_layout(current_account: nil)
+
+    refute html =~ ~r/>\s*Alerts\s*</
+    refute html =~ ~s(href="/alerts")
+  end
+
+  # R16: Alerts pill keeps shared nav ordering and styling
+  test "app layout places alerts pill after dashboard and tribe links" do
+    character = character_fixture("0xchar-nav-order", "Nav Pilot", 314)
+    account = account_with_characters([character])
+
+    html =
+      render_layout(
+        current_account: account,
+        active_character: character
+      )
+
+    assert html =~ "Dashboard"
+    assert html =~ "Tribe"
+    assert html =~ "Alerts"
+    assert html =~ "rounded-full border border-quantum-400/40"
+
+    {dashboard_pos, _} = :binary.match(html, "Dashboard")
+    {tribe_pos, _} = :binary.match(html, "Tribe")
+    {alerts_pos, _} = :binary.match(html, "Alerts")
+
+    assert dashboard_pos < tribe_pos
+    assert tribe_pos < alerts_pos
+  end
+
+  @tag :acceptance
+  test "authenticated page renders shared shell with alerts and character controls", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub
+  } do
+    wallet_address = unique_wallet_address()
+
+    first =
+      character_fixture_for_wallet("0xchar-acceptance-one", "Scout Vega", 314, wallet_address)
+
+    second =
+      character_fixture_for_wallet(
+        "0xchar-acceptance-two",
+        "Marshal Iona",
+        271_828,
+        wallet_address
+      )
+
+    account = %Account{address: wallet_address, characters: [first, second], tribe_id: 314}
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    stub_empty_dashboard_discovery(first.id)
+
+    conn =
+      init_test_session(conn, %{
+        "wallet_address" => wallet_address,
+        "active_character_id" => first.id,
+        "cache_tables" => cache_tables,
+        "pubsub" => pubsub
+      })
+
+    assert {:ok, _view, html} = live(conn, "/")
+
+    assert html =~ "Sigil"
+    assert html =~ "Dashboard"
+    assert html =~ "Alerts"
+    assert html =~ "Scout Vega"
+    assert html =~ "Marshal Iona"
+    assert html =~ "/session/character/#{second.id}"
+    refute html =~ "/session/character/#{first.id}"
+    refute html =~ "Connect Your Wallet"
+    refute html =~ "Not Found"
   end
 
   defp render_layout(assigns) do
@@ -231,11 +324,15 @@ defmodule SigilWeb.AppLayoutTest do
   end
 
   defp character_fixture(id, name, tribe_id) do
+    character_fixture_for_wallet(id, name, tribe_id, @wallet_address)
+  end
+
+  defp character_fixture_for_wallet(id, name, tribe_id, wallet_address) do
     %Character{
       id: id,
       key: %Sigil.Sui.Types.TenantItemId{item_id: "1", tenant: "0xtenant"},
       tribe_id: tribe_id,
-      character_address: @wallet_address,
+      character_address: wallet_address,
       metadata: %Sigil.Sui.Types.Metadata{
         assembly_id: "0xmeta-#{id}",
         name: name,
@@ -255,5 +352,25 @@ defmodule SigilWeb.AppLayoutTest do
       metadata: nil,
       owner_cap_id: "0xowner-#{id}"
     }
+  end
+
+  defp stub_empty_dashboard_discovery(character_id) do
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: _type, owner: ^character_id], [] ->
+      {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+    end)
+  end
+
+  defp unique_pubsub_name do
+    :"app_layout_pubsub_#{System.unique_integer([:positive])}"
+  end
+
+  defp unique_wallet_address do
+    suffix =
+      System.unique_integer([:positive])
+      |> Integer.to_string(16)
+      |> String.downcase()
+      |> String.pad_leading(64, "0")
+
+    "0x" <> suffix
   end
 end

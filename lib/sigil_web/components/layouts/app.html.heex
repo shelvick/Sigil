@@ -18,6 +18,14 @@
           Tribe
         </.link>
       <% end %>
+      <%= if @current_account do %>
+        <.link
+          navigate={~p"/alerts"}
+          class="rounded-full border border-quantum-400/40 px-3 py-1 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+        >
+          Alerts
+        </.link>
+      <% end %>
     </div>
 
     <%= if @current_account do %>
@@ -35,14 +43,21 @@
               </summary>
               <div class="absolute right-0 top-full z-50 mt-2 w-56 rounded-2xl border border-space-600/80 bg-space-900/95 p-2 shadow-2xl backdrop-blur">
                 <%= for character <- @current_account.characters do %>
-                  <.link
-                    method="put"
-                    href={~p"/session/character/#{character.id}"}
-                    class={"block rounded-xl px-3 py-2 text-sm transition hover:bg-space-800/80 #{if @active_character.id == character.id, do: "text-quantum-300", else: "text-cream"}"}
-                  >
-                    <p><%= character_display_name(character) %></p>
-                    <p class="font-mono text-xs text-space-500"><%= character_tribe_label(character) %></p>
-                  </.link>
+                  <%= if @active_character.id == character.id do %>
+                    <div class="block rounded-xl px-3 py-2 text-sm text-quantum-300">
+                      <p><%= character_display_name(character) %></p>
+                      <p class="font-mono text-xs text-space-500"><%= character_tribe_label(character) %></p>
+                    </div>
+                  <% else %>
+                    <.link
+                      method="put"
+                      href={~p"/session/character/#{character.id}"}
+                      class="block rounded-xl px-3 py-2 text-sm text-cream transition hover:bg-space-800/80"
+                    >
+                      <p><%= character_display_name(character) %></p>
+                      <p class="font-mono text-xs text-space-500"><%= character_tribe_label(character) %></p>
+                    </.link>
+                  <% end %>
                 <% end %>
               </div>
             </details>
