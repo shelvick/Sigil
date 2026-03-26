@@ -9,6 +9,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
 
   alias Sigil.Intel.IntelListing
   alias Sigil.StaticData
+  alias SigilWeb.IntelMarketLive.SellForm
 
   @doc """
   Renders the marketplace filter bar.
@@ -71,143 +72,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
   Renders the sell-intel form.
   """
   @spec sell_form(map()) :: Phoenix.LiveView.Rendered.t()
-  def sell_form(assigns) do
-    ~H"""
-    <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/30 backdrop-blur">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Sell Intel</p>
-          <h2 class="mt-3 text-2xl font-semibold text-cream">Proof-backed listing</h2>
-        </div>
-        <span :if={@proof_status} class="rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
-          <%= @proof_status %>
-        </span>
-      </div>
-
-      <%= if @can_sell do %>
-        <.form id="sell-intel-form" for={@form} phx-change="validate_listing" phx-submit="submit_listing" class="mt-6 space-y-5">
-          <div class="flex flex-wrap gap-3">
-            <label class={entry_mode_classes(@entry_mode == "existing")}>
-              <input type="radio" name="listing[entry_mode]" value="existing" checked={@entry_mode == "existing"} class="sr-only" />
-              Select existing report
-            </label>
-            <label class={entry_mode_classes(@entry_mode == "manual")}>
-              <input type="radio" name="listing[entry_mode]" value="manual" checked={@entry_mode == "manual"} class="sr-only" />
-              Enter fresh data
-            </label>
-          </div>
-
-          <%= if @entry_mode == "existing" do %>
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Existing Intel</span>
-              <select
-                name="listing[report_id]"
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              >
-                <option value="">Select a report</option>
-                <option :for={report <- @my_reports} value={report.id} selected={selected_report?(@form.params, report.id)}>
-                  <%= report_option_label(report) %>
-                </option>
-              </select>
-            </label>
-          <% end %>
-
-          <div class="grid gap-5 md:grid-cols-2">
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Report Type</span>
-              <select
-                name="listing[report_type]"
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              >
-                <option value="1" selected={@form.params["report_type"] in [nil, "", "1"]}>Location</option>
-                <option value="2" selected={@form.params["report_type"] == "2"}>Scouting</option>
-              </select>
-            </label>
-
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Solar System</span>
-              <input
-                type="text"
-                name="listing[solar_system_name]"
-                list="seller-solar-systems"
-                value={@form.params["solar_system_name"] || ""}
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              />
-            </label>
-          </div>
-
-          <%= if solar_system_id = @form.params["solar_system_id"] do %>
-            <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-              Canonical solar system ID: <%= solar_system_id %>
-            </p>
-          <% end %>
-
-          <label class="block space-y-2">
-            <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Assembly ID</span>
-            <input
-              type="text"
-              name="listing[assembly_id]"
-              value={@form.params["assembly_id"] || ""}
-              class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-            />
-          </label>
-
-          <label class="block space-y-2">
-            <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Notes</span>
-            <textarea
-              name="listing[notes]"
-              rows="4"
-              class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-            ><%= @form.params["notes"] || "" %></textarea>
-          </label>
-
-          <div class="grid gap-5 md:grid-cols-2">
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Price (SUI)</span>
-              <input
-                type="text"
-                name="listing[price_sui]"
-                value={@form.params["price_sui"] || ""}
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              />
-            </label>
-
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Description</span>
-              <input
-                type="text"
-                name="listing[description]"
-                value={@form.params["description"] || ""}
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              />
-            </label>
-          </div>
-
-          <label :if={@tribe_id} class="flex items-center gap-3 rounded-2xl border border-space-600/80 bg-space-950/50 px-4 py-3 text-sm text-cream">
-            <input type="hidden" name="listing[restricted]" value="false" />
-            <input type="checkbox" name="listing[restricted]" value="true" checked={@form.params["restricted"] == "true"} class="h-4 w-4 rounded border-space-600 bg-space-900 text-quantum-400 focus:ring-quantum-400" />
-            Restrict to your tribe
-          </label>
-
-          <datalist id="seller-solar-systems">
-            <option :for={system <- @solar_systems} value={system.name}></option>
-          </datalist>
-
-          <button
-            type="submit"
-            class="inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
-          >
-            Create Listing
-          </button>
-        </.form>
-      <% else %>
-        <div class="mt-6 rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm leading-6 text-warning">
-          creating listings requires a tribe-backed intel record
-        </div>
-      <% end %>
-    </div>
-    """
-  end
+  defdelegate sell_form(assigns), to: SellForm
 
   @doc """
   Renders a marketplace listing card.
@@ -215,11 +80,13 @@ defmodule SigilWeb.IntelMarketLive.Components do
   @spec listing_card(map()) :: Phoenix.LiveView.Rendered.t()
   def listing_card(assigns) do
     assigns =
-      assign(
-        assigns,
+      assigns
+      |> assign(:decrypted_intel, assigns[:decrypted_intel] || %{})
+      |> assign(
         :purchase_action,
         purchase_action(assigns.listing, assigns.sender, assigns[:tribe_id])
       )
+      |> assign(:decrypt_action, decrypt_action(assigns.listing, assigns.sender))
 
     ~H"""
     <article class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-6 shadow-xl shadow-black/20 backdrop-blur">
@@ -242,12 +109,22 @@ defmodule SigilWeb.IntelMarketLive.Components do
           </p>
 
           <p class="text-sm leading-6 text-space-500">
-            Preview metadata is seller-declared; the on-chain commitment is the settlement anchor.
+            Preview metadata is seller-declared; the sealed blob and on-chain sale record gate delivery.
           </p>
 
           <div class="flex flex-wrap items-center gap-3 text-xs text-space-500">
             <span>Seller <%= truncate_id(@listing.seller_address) %></span>
             <span :if={@listing.buyer_address}>Buyer <%= truncate_id(@listing.buyer_address) %></span>
+          </div>
+
+          <div :if={present_decrypted?(@decrypted_intel)} class="rounded-2xl border border-success/30 bg-success/10 p-4 text-left text-sm text-cream">
+            <p class="font-mono text-xs uppercase tracking-[0.22em] text-success">Decrypted Intel</p>
+            <p :if={present?(decrypted_field(@decrypted_intel, "notes"))} class="mt-2 leading-6">
+              <%= decrypted_field(@decrypted_intel, "notes") %>
+            </p>
+            <p :if={present?(decrypted_field(@decrypted_intel, "assembly_id"))} class="mt-2 font-mono text-xs uppercase tracking-[0.18em] text-space-500">
+              Assembly <%= decrypted_field(@decrypted_intel, "assembly_id") %>
+            </p>
           </div>
         </div>
 
@@ -265,6 +142,15 @@ defmodule SigilWeb.IntelMarketLive.Components do
           >
             Purchase
           </button>
+          <button
+            :if={@decrypt_action.visible?}
+            type="button"
+            phx-click="decrypt_listing"
+            phx-value-listing_id={@listing.id}
+            class="inline-flex rounded-full border border-success/40 bg-success/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-success transition hover:border-success hover:bg-success/20 hover:text-cream"
+          >
+            Decrypt Intel
+          </button>
         </div>
       </div>
     </article>
@@ -272,10 +158,12 @@ defmodule SigilWeb.IntelMarketLive.Components do
   end
 
   @doc """
-  Renders the user's listing panel.
+  Renders the user's seller-owned listings and purchased intel panels.
   """
   @spec my_listings_panel(map()) :: Phoenix.LiveView.Rendered.t()
   def my_listings_panel(assigns) do
+    assigns = assign(assigns, :purchased_listings, assigns[:purchased_listings] || [])
+
     ~H"""
     <div class="space-y-4 rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/30 backdrop-blur">
       <div class="flex items-center justify-between gap-4">
@@ -284,7 +172,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
           <h2 class="mt-3 text-2xl font-semibold text-cream">Operator inventory</h2>
         </div>
         <span class="rounded-full border border-space-600/80 bg-space-950/60 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-          <%= length(@listings) %> total
+          <%= length(@listings) %> listed
         </span>
       </div>
 
@@ -317,15 +205,79 @@ defmodule SigilWeb.IntelMarketLive.Components do
           </article>
         </div>
       <% end %>
+
+      <div class="border-t border-space-600/80 pt-6">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-[0.3em] text-success">Purchased Intel</p>
+            <h3 class="mt-3 text-xl font-semibold text-cream">Decrypt after refresh</h3>
+          </div>
+          <span class="rounded-full border border-space-600/80 bg-space-950/60 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
+            <%= length(@purchased_listings) %> purchased
+          </span>
+        </div>
+
+        <%= if @purchased_listings == [] do %>
+          <p class="mt-4 text-sm text-space-500">No purchased intel available.</p>
+        <% else %>
+          <div class="mt-4 space-y-4">
+            <article :for={listing <- @purchased_listings} class="rounded-2xl border border-space-600/80 bg-space-950/60 p-5">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div class="space-y-2">
+                  <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500"><%= listing.id %></p>
+                  <p class="text-lg font-semibold text-cream"><%= listing.description || "Untitled listing" %></p>
+                  <div class="flex flex-wrap items-center gap-3 text-xs text-space-500">
+                    <span><%= system_name(@static_data, listing.solar_system_id) %></span>
+                    <span><%= price_label(listing.price_mist) %></span>
+                    <span><%= status_label(listing.status) %></span>
+                  </div>
+
+                  <div :if={present_decrypted?(Map.get(@decrypted_intel, listing.id, %{}))} class="rounded-2xl border border-success/30 bg-success/10 p-4 text-left text-sm text-cream">
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <p class="font-mono text-xs uppercase tracking-[0.22em] text-success">Decrypted Intel</p>
+                        <p :if={present?(decrypted_field(Map.get(@decrypted_intel, listing.id, %{}), "notes"))} class="mt-2 leading-6">
+                          <%= decrypted_field(Map.get(@decrypted_intel, listing.id, %{}), "notes") %>
+                        </p>
+                        <p :if={present?(decrypted_field(Map.get(@decrypted_intel, listing.id, %{}), "assembly_id"))} class="mt-2 font-mono text-xs uppercase tracking-[0.18em] text-space-500">
+                          Assembly <%= decrypted_field(Map.get(@decrypted_intel, listing.id, %{}), "assembly_id") %>
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        phx-click="dismiss_decrypted_intel"
+                        phx-value-listing_id={listing.id}
+                        class="inline-flex rounded-full border border-space-600/80 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-space-500 transition hover:border-space-500 hover:text-cream"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  phx-click="decrypt_listing"
+                  phx-value-listing_id={listing.id}
+                  class="inline-flex rounded-full border border-success/40 bg-success/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-success transition hover:border-success hover:bg-success/20 hover:text-cream"
+                >
+                  Decrypt Intel
+                </button>
+              </div>
+            </article>
+          </div>
+        <% end %>
+      </div>
     </div>
     """
   end
 
   @doc """
-  Renders the proof generation state.
+  Renders the Seal workflow state.
   """
-  @spec proof_status(map()) :: Phoenix.LiveView.Rendered.t()
-  def proof_status(assigns) do
+  @spec seal_status(map()) :: Phoenix.LiveView.Rendered.t()
+  def seal_status(assigns) do
     ~H"""
     <div :if={@status} class="rounded-2xl border border-quantum-400/40 bg-quantum-400/10 p-4 text-sm text-quantum-300">
       <%= @status %>
@@ -345,16 +297,6 @@ defmodule SigilWeb.IntelMarketLive.Components do
     """
   end
 
-  @spec report_option_label(map()) :: String.t()
-  defp report_option_label(report) do
-    [report.label || "Untitled report", report.assembly_id]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join(" · ")
-  end
-
-  @spec selected_report?(map(), String.t()) :: boolean()
-  defp selected_report?(params, report_id), do: params["report_id"] == report_id
-
   @spec report_type_label(integer() | nil) :: String.t()
   defp report_type_label(2), do: "Scouting"
   defp report_type_label(_value), do: "Location"
@@ -368,16 +310,9 @@ defmodule SigilWeb.IntelMarketLive.Components do
     "rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300"
   end
 
-  @spec entry_mode_classes(boolean()) :: String.t()
-  defp entry_mode_classes(true) do
-    "rounded-full border border-quantum-300 bg-quantum-400/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-cream"
-  end
-
-  defp entry_mode_classes(false) do
-    "rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-space-500 transition hover:border-quantum-400 hover:text-cream"
-  end
-
   @spec system_name(pid() | nil, integer() | nil) :: String.t()
+  defp system_name(_static_data, 0), do: "Location undisclosed"
+
   defp system_name(static_data, solar_system_id)
        when is_pid(static_data) and is_integer(solar_system_id) do
     case StaticData.get_solar_system(static_data, solar_system_id) do
@@ -389,7 +324,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
   defp system_name(_static_data, solar_system_id) when is_integer(solar_system_id),
     do: Integer.to_string(solar_system_id)
 
-  defp system_name(_static_data, _solar_system_id), do: "Unknown system"
+  defp system_name(_static_data, _solar_system_id), do: "Location undisclosed"
 
   @spec price_label(integer() | nil) :: String.t()
   defp price_label(price_mist) when is_integer(price_mist) and price_mist >= 0 do
@@ -444,6 +379,19 @@ defmodule SigilWeb.IntelMarketLive.Components do
     %{visible?: true, enabled?: false, reason: "Restricted to another tribe"}
   end
 
+  @spec decrypt_action(IntelListing.t(), String.t() | nil) :: %{visible?: boolean()}
+  defp decrypt_action(%IntelListing{status: :sold, seller_address: seller_address}, sender)
+       when seller_address == sender do
+    %{visible?: true}
+  end
+
+  defp decrypt_action(%IntelListing{status: :sold, buyer_address: buyer_address}, sender)
+       when buyer_address == sender and not is_nil(sender) do
+    %{visible?: true}
+  end
+
+  defp decrypt_action(%IntelListing{}, _sender), do: %{visible?: false}
+
   @spec purchase_button_classes(boolean()) :: String.t()
   defp purchase_button_classes(true) do
     "inline-flex rounded-full bg-quantum-400 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-space-950 transition hover:bg-quantum-300"
@@ -456,4 +404,17 @@ defmodule SigilWeb.IntelMarketLive.Components do
   @spec present?(String.t() | nil) :: boolean()
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(_value), do: false
+
+  @spec decrypted_field(map(), String.t()) :: String.t() | nil
+  defp decrypted_field(payload, key) when is_map(payload) do
+    case key do
+      "notes" -> Map.get(payload, "notes") || Map.get(payload, :notes)
+      "assembly_id" -> Map.get(payload, "assembly_id") || Map.get(payload, :assembly_id)
+      _other -> nil
+    end
+  end
+
+  @spec present_decrypted?(map()) :: boolean()
+  defp present_decrypted?(payload) when is_map(payload), do: map_size(payload) > 0
+  defp present_decrypted?(_payload), do: false
 end

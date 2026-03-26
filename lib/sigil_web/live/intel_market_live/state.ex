@@ -3,11 +3,10 @@ defmodule SigilWeb.IntelMarketLive.State do
   Shared state, form, and filtering helpers for the intel marketplace LiveView.
   """
 
-  import Ecto.Query
   import Phoenix.Component, only: [assign: 2, assign: 3, to_form: 2]
 
-  alias Sigil.{Diplomacy, Intel, IntelMarket, Repo, StaticData}
-  alias Sigil.Intel.{IntelListing, IntelReport}
+  alias Sigil.{Diplomacy, Intel, IntelMarket, StaticData}
+  alias Sigil.Intel.IntelReport
   alias Sigil.Sui.Types.Character
 
   @doc """
@@ -36,13 +35,16 @@ defmodule SigilWeb.IntelMarketLive.State do
       listings: [],
       filtered_listings: [],
       my_listings: [],
+      purchased_listings: [],
       my_reports: [],
       filters: default_filters(),
       entry_mode: "existing",
       pending_listing: nil,
       pending_tx: nil,
-      proof_status: nil,
-      proof_error_message: nil,
+      pending_decrypt_listing_id: nil,
+      seal_status: nil,
+      seal_error_message: nil,
+      decrypted_intel: %{},
       static_data_pid: socket.assigns[:static_data],
       solar_systems: load_solar_systems(socket.assigns[:static_data])
     )
@@ -126,6 +128,8 @@ defmodule SigilWeb.IntelMarketLive.State do
       sender: socket.assigns.sender,
       tribe_id: socket.assigns.tribe_id
     ]
+    |> maybe_put_sigil_package_id(socket.assigns[:seal_package_id_override])
+    |> maybe_put_walrus_client(socket.assigns[:walrus_client_override])
   end
 
   @doc """
@@ -170,16 +174,18 @@ defmodule SigilWeb.IntelMarketLive.State do
   def active_character_name(_character), do: nil
 
   @doc """
-  Humanizes proof generation status messages for the UI.
+  Humanizes Seal workflow status messages for the UI.
   """
-  @spec humanize_status(String.t()) :: String.t()
-  def humanize_status("loading_circuit"), do: "loading_circuit"
+  @spec humanize_seal_status(String.t()) :: String.t()
+  def humanize_seal_status("encrypting"), do: "encrypting"
   @doc false
-  def humanize_status("generating_witness"), do: "generating_witness"
+  def humanize_seal_status("uploading"), do: "uploading"
   @doc false
-  def humanize_status("generating_proof"), do: "generating_proof"
+  def humanize_seal_status("fetching"), do: "fetching"
   @doc false
-  def humanize_status(status), do: status
+  def humanize_seal_status("decrypting"), do: "decrypting"
+  @doc false
+  def humanize_seal_status(status), do: status
 
   @doc """
   Formats a changeset into a single user-facing error string.
@@ -213,12 +219,27 @@ defmodule SigilWeb.IntelMarketLive.State do
   @doc false
   def blank_to_nil(_value), do: nil
 
+  defp maybe_put_sigil_package_id(opts, sigil_package_id) when is_binary(sigil_package_id) do
+    Keyword.put(opts, :sigil_package_id, sigil_package_id)
+  end
+
+  defp maybe_put_sigil_package_id(opts, _sigil_package_id), do: opts
+
+  defp maybe_put_walrus_client(opts, walrus_client) when is_atom(walrus_client) do
+    Keyword.put(opts, :walrus_client, walrus_client)
+  end
+
+  defp maybe_put_walrus_client(opts, _walrus_client), do: opts
+
   defp load_listings(socket) do
-    all_listings = list_all_listings()
+    active_listings = IntelMarket.list_listings(market_opts(socket))
 
     assign(socket,
-      listings: all_listings,
-      my_listings: Enum.filter(all_listings, &(&1.seller_address == socket.assigns.sender))
+      listings: active_listings,
+      my_listings:
+        IntelMarket.list_seller_listings(socket.assigns.sender || "", market_opts(socket)),
+      purchased_listings:
+        IntelMarket.list_purchased_listings(socket.assigns.sender || "", market_opts(socket))
     )
   end
 
@@ -353,10 +374,6 @@ defmodule SigilWeb.IntelMarketLive.State do
   end
 
   defp solar_system_name(_pid, _solar_system_id), do: ""
-
-  defp list_all_listings do
-    Repo.all(from listing in IntelListing, order_by: [desc: listing.inserted_at])
-  end
 
   defp default_filters do
     %{

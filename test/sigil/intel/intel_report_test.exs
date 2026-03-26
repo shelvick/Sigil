@@ -20,7 +20,6 @@ defmodule Sigil.Intel.IntelReportTest do
                assembly_id: ["can't be blank"],
                reported_by: ["can't be blank"],
                reported_by_character_id: ["can't be blank"],
-               solar_system_id: ["can't be blank"],
                tribe_id: ["can't be blank"]
              }
     end
@@ -93,7 +92,7 @@ defmodule Sigil.Intel.IntelReportTest do
       assert errors_on(changeset).label == ["should be at most 120 character(s)"]
     end
 
-    test "changeset rejects non-positive solar_system_id" do
+    test "changeset allows zero solar_system_id and rejects negative" do
       zero_changeset =
         IntelReport.location_changeset(
           struct(IntelReport),
@@ -106,10 +105,12 @@ defmodule Sigil.Intel.IntelReportTest do
           valid_scouting_params(%{solar_system_id: -42})
         )
 
-      refute zero_changeset.valid?
+      assert zero_changeset.valid?
       refute negative_changeset.valid?
-      assert errors_on(zero_changeset).solar_system_id == ["must be greater than 0"]
-      assert errors_on(negative_changeset).solar_system_id == ["must be greater than 0"]
+
+      assert errors_on(negative_changeset).solar_system_id == [
+               "must be greater than or equal to 0"
+             ]
     end
   end
 

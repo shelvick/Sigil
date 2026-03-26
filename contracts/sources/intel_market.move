@@ -1,8 +1,5 @@
 module sigil::intel_market;
 
-use std::bcs;
-use sui::groth16;
-use sui::poseidon;
 use sui::coin::{Self, Coin};
 use sui::sui::SUI;
 use sigil::tribe_custodian::{Self, Custodian};
@@ -13,27 +10,21 @@ const STATUS_CANCELLED: u8 = 2;
 
 const ENotSeller: u64 = 0;
 const EListingNotActive: u64 = 1;
-const EInvalidProof: u64 = 2;
 const EWrongPayment: u64 = 3;
-const ENotAdmin: u64 = 4;
 const ENotTribeMember: u64 = 5;
 const EListingNotRestricted: u64 = 6;
 const EWrongTribe: u64 = 7;
-const ECommitmentMismatch: u64 = 8;
-const EMarketplaceUninitialized: u64 = 9;
 const ESelfPurchase: u64 = 10;
 
 public struct IntelMarketplace has key {
     id: UID,
-    pvk: Option<groth16::PreparedVerifyingKey>,
-    admin: address,
-    listing_count: u64,
 }
 
 public struct IntelListing has key {
     id: UID,
     seller: address,
-    commitment: u256,
+    seal_id: vector<u8>,
+    encrypted_blob_id: vector<u8>,
     client_nonce: u64,
     price: u64,
     report_type: u8,
@@ -53,34 +44,9 @@ public fun init_for_testing(ctx: &mut TxContext) {
     share_marketplace(ctx);
 }
 
-#[test_only]
-public fun prepared_vk_bytes_for_testing(verification_key_bytes: vector<u8>): vector<vector<u8>> {
-    let curve = groth16::bn254();
-    groth16::pvk_to_bytes(groth16::prepare_verifying_key(&curve, &verification_key_bytes))
-}
-
-public fun setup_pvk(
-    marketplace: &mut IntelMarketplace,
-    vk_gamma_abc_g1_bytes: vector<u8>,
-    alpha_g1_beta_g2_bytes: vector<u8>,
-    gamma_g2_neg_pc_bytes: vector<u8>,
-    delta_g2_neg_pc_bytes: vector<u8>,
-    ctx: &TxContext,
-) {
-    assert!(marketplace.admin == ctx.sender(), ENotAdmin);
-    marketplace.pvk = option::some(groth16::pvk_from_bytes(
-        vk_gamma_abc_g1_bytes,
-        alpha_g1_beta_g2_bytes,
-        gamma_g2_neg_pc_bytes,
-        delta_g2_neg_pc_bytes,
-    ));
-}
-
 public fun create_listing(
-    marketplace: &mut IntelMarketplace,
-    proof_points_bytes: vector<u8>,
-    public_inputs_bytes: vector<u8>,
-    commitment: u256,
+    seal_id: vector<u8>,
+    encrypted_blob_id: vector<u8>,
     client_nonce: u64,
     price: u64,
     report_type: u8,
@@ -89,10 +55,8 @@ public fun create_listing(
     ctx: &mut TxContext,
 ) {
     create_listing_internal(
-        marketplace,
-        proof_points_bytes,
-        public_inputs_bytes,
-        commitment,
+        seal_id,
+        encrypted_blob_id,
         client_nonce,
         price,
         report_type,
@@ -104,11 +68,9 @@ public fun create_listing(
 }
 
 public fun create_restricted_listing(
-    marketplace: &mut IntelMarketplace,
     custodian: &Custodian,
-    proof_points_bytes: vector<u8>,
-    public_inputs_bytes: vector<u8>,
-    commitment: u256,
+    seal_id: vector<u8>,
+    encrypted_blob_id: vector<u8>,
     client_nonce: u64,
     price: u64,
     report_type: u8,
@@ -119,10 +81,8 @@ public fun create_restricted_listing(
     assert!(tribe_custodian::is_member(custodian, ctx.sender()), ENotTribeMember);
 
     create_listing_internal(
-        marketplace,
-        proof_points_bytes,
-        public_inputs_bytes,
-        commitment,
+        seal_id,
+        encrypted_blob_id,
         client_nonce,
         price,
         report_type,
@@ -170,16 +130,16 @@ public fun cancel_listing(listing: &mut IntelListing, ctx: &TxContext) {
     listing.status = STATUS_CANCELLED;
 }
 
-public fun verify_intel(listing: &IntelListing, data: vector<u256>): bool {
-    poseidon::poseidon_bn254(&data) == listing.commitment
-}
-
 public fun seller(listing: &IntelListing): address {
     listing.seller
 }
 
-public fun commitment(listing: &IntelListing): u256 {
-    listing.commitment
+public fun seal_id(listing: &IntelListing): vector<u8> {
+    copy listing.seal_id
+}
+
+public fun encrypted_blob_id(listing: &IntelListing): vector<u8> {
+    copy listing.encrypted_blob_id
 }
 
 public fun client_nonce(listing: &IntelListing): u64 {
@@ -214,24 +174,13 @@ public fun restricted_to_tribe_id(listing: &IntelListing): Option<u32> {
     listing.restricted_to_tribe_id
 }
 
-public fun listing_count(marketplace: &IntelMarketplace): u64 {
-    marketplace.listing_count
-}
-
 fun share_marketplace(ctx: &mut TxContext) {
-    transfer::share_object(IntelMarketplace {
-        id: object::new(ctx),
-        pvk: option::none(),
-        admin: ctx.sender(),
-        listing_count: 0,
-    });
+    transfer::share_object(IntelMarketplace { id: object::new(ctx) });
 }
 
 fun create_listing_internal(
-    marketplace: &mut IntelMarketplace,
-    proof_points_bytes: vector<u8>,
-    public_inputs_bytes: vector<u8>,
-    commitment: u256,
+    seal_id: vector<u8>,
+    encrypted_blob_id: vector<u8>,
     client_nonce: u64,
     price: u64,
     report_type: u8,
@@ -240,27 +189,11 @@ fun create_listing_internal(
     restricted_to_tribe_id: Option<u32>,
     ctx: &mut TxContext,
 ) {
-    assert!(option::is_some(&marketplace.pvk), EMarketplaceUninitialized);
-
-    let expected_public_inputs = bcs::to_bytes(&commitment);
-    let public_inputs_copy = copy public_inputs_bytes;
-    assert!(public_inputs_copy == expected_public_inputs, ECommitmentMismatch);
-
-    let curve = groth16::bn254();
-    let proof_points = groth16::proof_points_from_bytes(proof_points_bytes);
-    let public_inputs = groth16::public_proof_inputs_from_bytes(public_inputs_bytes);
-    let is_valid = groth16::verify_groth16_proof(
-        &curve,
-        option::borrow(&marketplace.pvk),
-        &public_inputs,
-        &proof_points,
-    );
-    assert!(is_valid, EInvalidProof);
-
     transfer::share_object(IntelListing {
         id: object::new(ctx),
         seller: ctx.sender(),
-        commitment,
+        seal_id,
+        encrypted_blob_id,
         client_nonce,
         price,
         report_type,
@@ -270,6 +203,4 @@ fun create_listing_internal(
         buyer: option::none(),
         restricted_to_tribe_id,
     });
-
-    marketplace.listing_count = marketplace.listing_count + 1;
 }

@@ -8,10 +8,10 @@ const __dirname = path.dirname(__filename)
 const appJsPath = path.resolve(__dirname, "../app.js")
 
 describe("app hook registration", () => {
-  it("registers ZkProofGenerator in LiveSocket hooks", async () => {
+  it("registers SealEncrypt in LiveSocket hooks", async () => {
     const source = await readFile(appJsPath, "utf8")
 
-    expect(source).toMatch(/import\s+ZkProofGenerator\s+from\s+["']\.\/hooks\/zk_proof_hook["']/)
-    expect(source).toMatch(/ZkProofGenerator\s*:\s*ZkProofGenerator/)
+    expect(source).toMatch(/import\s+SealEncrypt\s+from\s+["']\.\/hooks\/seal_hook["']/)
+    expect(source).toMatch(/SealEncrypt\s*:\s*SealEncrypt/)
   })
 })

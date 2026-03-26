@@ -8,13 +8,13 @@ let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("
 import FuelCountdown from "./hooks/fuel_countdown"
 import InfiniteScroll from "./hooks/infinite_scroll"
 import WalletConnect from "./hooks/wallet_hook"
-import ZkProofGenerator from "./hooks/zk_proof_hook"
+import SealEncrypt from "./hooks/seal_hook"
 
 let Hooks = {
   FuelCountdown: FuelCountdown,
   InfiniteScroll: InfiniteScroll,
   WalletConnect: WalletConnect,
-  ZkProofGenerator: ZkProofGenerator
+  SealEncrypt: SealEncrypt
 }
 
 let liveSocket = new LiveSocket("/live", Socket, {

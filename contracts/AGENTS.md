@@ -1,6 +1,6 @@
 # contracts/
 
-Sui Move smart contracts for the Sigil package. Published as a single universal package on Sui testnet.
+Sui Move smart contracts for the Sigil package. The current Seal-delivery package has not been published yet; deploy a fresh package ID before pointing runtime config at it.
 
 ## Structure
 
@@ -16,7 +16,8 @@ cd contracts && sui move test    # Run all Move tests
 cd contracts && sui move build   # Compile only
 ```
 
-## Published Package
+## Deployment Status
 
-- Testnet deployment: `0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1`
-- All tribes share the same package — per-tribe shared objects are the parameterization
+- Seal-delivery modules in this directory are not published yet.
+- After the next deployment, update runtime configuration with the new package ID before enabling browser Seal flows.
+- All tribes share the same package — per-tribe shared objects are the parameterization.

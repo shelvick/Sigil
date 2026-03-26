@@ -42,13 +42,12 @@ defmodule Sigil.IntelMarketTest do
   describe "discover_marketplace/1" do
     test "discover_marketplace caches marketplace info in ETS", context do
       expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @marketplace_type], [] ->
-        {:ok, page([marketplace_object_json(object_id: address(0x11), listing_count: 3)])}
+        {:ok, page([marketplace_object_json(object_id: address(0x11))])}
       end)
 
       assert {:ok, marketplace} = Sigil.IntelMarket.discover_marketplace(market_opts(context))
       assert marketplace.object_id == address(0x11)
       assert marketplace.initial_shared_version == 7
-      assert marketplace.listing_count == 3
 
       assert Cache.get(context.tables.intel_market, {:marketplace}) == marketplace
       assert_receive {:marketplace_discovered, ^marketplace}
@@ -56,39 +55,16 @@ defmodule Sigil.IntelMarketTest do
   end
 
   describe "sync_listings/1" do
-    test "sync_listings persists listings and preserves local linkage", context do
+    test "sync_listings persists listings with seal fields and preserves local linkage",
+         context do
       intel_report_id = Ecto.UUID.generate()
-      stale_listing_id = address(0x30)
-
-      stale_listing =
-        insert_listing!(%{
-          id: stale_listing_id,
-          seller_address: address(0xAF),
-          commitment_hash: "9",
-          client_nonce: 6,
-          price_mist: 9,
-          description: "remove me"
-        })
-
-      set_listing_inserted_at!(stale_listing.id, ~U[2026-03-20 00:00:00.000000Z])
-
-      Cache.put(
-        context.tables.intel_market,
-        {:listing, stale_listing_id},
-        %IntelListing{id: stale_listing_id}
-      )
-
-      Cache.put(
-        context.tables.intel_market,
-        {:listing_ref, stale_listing_id},
-        %{object_id: object_id(0x30), initial_shared_version: 12}
-      )
 
       persisted_listing =
         insert_listing!(%{
           id: address(0x31),
           seller_address: context.seller,
-          commitment_hash: "10",
+          seal_id: seal_id_hex(0x10),
+          encrypted_blob_id: "walrus-persisted-10",
           client_nonce: 7,
           price_mist: 10,
           intel_report_id: intel_report_id,
@@ -101,7 +77,8 @@ defmodule Sigil.IntelMarketTest do
         listing_object_json(
           id: address(0x31),
           seller: context.seller,
-          commitment: "999999999",
+          seal_id: seal_id_hex(0x91),
+          encrypted_blob_id: "walrus-chain-999999999",
           client_nonce: 44,
           price: 125_000_000,
           report_type: 2,
@@ -114,7 +91,8 @@ defmodule Sigil.IntelMarketTest do
         listing_object_json(
           id: address(0x32),
           seller: address(0xA2),
-          commitment: "123456789",
+          seal_id: seal_id_hex(0x92),
+          encrypted_blob_id: "walrus-new-123456789",
           client_nonce: 45,
           price: 225_000_000,
           report_type: 1,
@@ -134,17 +112,73 @@ defmodule Sigil.IntelMarketTest do
       created = Repo.get!(IntelListing, address(0x32))
 
       assert persisted.intel_report_id == intel_report_id
+      assert persisted.seal_id == seal_id_hex(0x91)
+      assert persisted.encrypted_blob_id == "walrus-chain-999999999"
       assert persisted.price_mist == 125_000_000
       assert persisted.client_nonce == 44
       assert persisted.description == "Fresh chain listing"
       assert persisted.status == :active
+
       assert created.seller_address == address(0xA2)
+      assert created.seal_id == seal_id_hex(0x92)
+      assert created.encrypted_blob_id == "walrus-new-123456789"
 
       assert Cache.get(context.tables.intel_market, {:listing, address(0x31)}).id == address(0x31)
       assert Cache.get(context.tables.intel_market, {:listing, address(0x32)}).id == address(0x32)
+      refute_receive {:listing_removed, _}
+    end
+
+    test "sync_listings removes stale listings when stale_grace_ms is zero", context do
+      stale_listing_id = address(0x30)
+
+      insert_listing!(%{
+        id: stale_listing_id,
+        seller_address: address(0xAF),
+        seal_id: seal_id_hex(0x09),
+        encrypted_blob_id: "walrus-stale-9",
+        client_nonce: 6,
+        price_mist: 9,
+        description: "remove me"
+      })
+
+      Cache.put(
+        context.tables.intel_market,
+        {:listing, stale_listing_id},
+        %IntelListing{id: stale_listing_id}
+      )
+
+      Cache.put(
+        context.tables.intel_market,
+        {:listing_ref, stale_listing_id},
+        %{object_id: object_id(0x30), initial_shared_version: 12}
+      )
+
+      fresh_chain_listing =
+        listing_object_json(
+          id: address(0x33),
+          seller: address(0xA3),
+          seal_id: seal_id_hex(0x93),
+          encrypted_blob_id: "walrus-fresh-123456789",
+          client_nonce: 46,
+          price: 325_000_000,
+          report_type: 1,
+          solar_system_id: 30_001_044,
+          description: "Fresh market listing",
+          initial_shared_version: 15
+        )
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @listing_type], [] ->
+        {:ok, page([fresh_chain_listing])}
+      end)
+
+      assert {:ok, listings} =
+               Sigil.IntelMarket.sync_listings(market_opts(context, stale_grace_ms: 0))
+
+      assert Enum.map(listings, & &1.id) == [address(0x33)]
       assert Repo.get(IntelListing, stale_listing_id) == nil
       assert Cache.get(context.tables.intel_market, {:listing, stale_listing_id}) == nil
       assert Cache.get(context.tables.intel_market, {:listing_ref, stale_listing_id}) == nil
+      assert_receive {:listing_removed, ^stale_listing_id}
     end
 
     test "sync_listings preserves freshly reconciled listings not yet visible on chain",
@@ -154,7 +188,8 @@ defmodule Sigil.IntelMarketTest do
       insert_listing!(%{
         id: fresh_listing_id,
         seller_address: context.seller,
-        commitment_hash: "1234567890",
+        seal_id: seal_id_hex(0x93),
+        encrypted_blob_id: "walrus-fresh-1234567890",
         client_nonce: 99,
         price_mist: 150_000_000,
         description: "freshly created",
@@ -235,6 +270,104 @@ defmodule Sigil.IntelMarketTest do
       assert Enum.map(listings, & &1.id) == [newer_active.id, older_active.id]
       refute Enum.any?(listings, &(&1.status != :active))
     end
+
+    test "list_seller_listings returns seller listings across statuses", context do
+      seller = context.seller
+
+      active_listing =
+        insert_listing!(%{id: address(0x44), seller_address: seller, status: :active})
+
+      sold_listing = insert_listing!(%{id: address(0x45), seller_address: seller, status: :sold})
+
+      cancelled_listing =
+        insert_listing!(%{id: address(0x46), seller_address: seller, status: :cancelled})
+
+      _other_listing =
+        insert_listing!(%{id: address(0x47), seller_address: address(0xDE), status: :active})
+
+      set_listing_inserted_at!(active_listing.id, ~U[2026-03-20 00:00:00.000000Z])
+      set_listing_inserted_at!(sold_listing.id, ~U[2026-03-21 00:00:00.000000Z])
+      set_listing_inserted_at!(cancelled_listing.id, ~U[2026-03-22 00:00:00.000000Z])
+
+      listings = Sigil.IntelMarket.list_seller_listings(seller, market_opts(context))
+
+      assert Enum.map(listings, & &1.id) == [
+               cancelled_listing.id,
+               sold_listing.id,
+               active_listing.id
+             ]
+    end
+
+    test "list_purchased_listings returns buyer purchases", context do
+      buyer = context.buyer
+
+      older_purchase =
+        insert_listing!(%{
+          id: address(0x48),
+          buyer_address: buyer,
+          status: :sold,
+          seller_address: address(0xD1)
+        })
+
+      newer_purchase =
+        insert_listing!(%{
+          id: address(0x49),
+          buyer_address: buyer,
+          status: :sold,
+          seller_address: address(0xD2)
+        })
+
+      _active_listing =
+        insert_listing!(%{id: address(0x4A), buyer_address: buyer, status: :active})
+
+      _other_buyer =
+        insert_listing!(%{id: address(0x4B), buyer_address: address(0xEF), status: :sold})
+
+      set_listing_inserted_at!(older_purchase.id, ~U[2026-03-20 00:00:00.000000Z])
+      set_listing_inserted_at!(newer_purchase.id, ~U[2026-03-21 00:00:00.000000Z])
+
+      listings = Sigil.IntelMarket.list_purchased_listings(buyer, market_opts(context))
+
+      assert Enum.map(listings, & &1.id) == [newer_purchase.id, older_purchase.id]
+      assert Enum.all?(listings, &(&1.status == :sold))
+    end
+  end
+
+  describe "blob_available?/2" do
+    test "blob_available? returns Walrus availability for listing blob", context do
+      listing =
+        insert_listing!(%{
+          id: address(0x58),
+          encrypted_blob_id: "walrus-available-blob"
+        })
+
+      assert Sigil.IntelMarket.blob_available?(
+               listing.id,
+               market_opts(context, walrus_client: Sigil.TestSupport.BlobAvailableClient)
+             )
+    end
+
+    test "blob_available? returns false for missing or expired blob", context do
+      listing_without_blob = insert_listing!(%{id: address(0x59), encrypted_blob_id: nil})
+
+      listing_with_missing_blob =
+        insert_listing!(%{id: address(0x5A), encrypted_blob_id: "walrus-missing-blob"})
+
+      refute Sigil.IntelMarket.blob_available?(
+               listing_without_blob.id,
+               market_opts(context, walrus_client: Sigil.TestSupport.BlobMissingClient)
+             )
+
+      refute Sigil.IntelMarket.blob_available?(
+               listing_with_missing_blob.id,
+               market_opts(context, walrus_client: Sigil.TestSupport.BlobMissingClient)
+             )
+
+      refute Sigil.IntelMarket.blob_available?(
+               address(0x5B),
+               market_opts(context, walrus_client: Sigil.TestSupport.BlobMissingClient)
+             )
+    end
   end
 
   describe "get_listing/2" do
@@ -262,6 +395,42 @@ defmodule Sigil.IntelMarketTest do
     end
   end
 
+  describe "build_seal_config/1" do
+    test "build_seal_config returns the browser hook contract" do
+      assert Sigil.IntelMarket.build_seal_config([]) == %{
+               "seal_package_id" => @sigil_package_id,
+               "key_server_object_ids" => [],
+               "threshold" => 1,
+               "walrus_publisher_url" => "https://publisher.walrus-testnet.walrus.space",
+               "walrus_aggregator_url" => "https://aggregator.walrus-testnet.walrus.space",
+               "walrus_epochs" => 15,
+               "sui_rpc_url" => "https://fullnode.testnet.sui.io:443"
+             }
+    end
+
+    test "build_seal_config allows undeployed package overrides" do
+      assert Sigil.IntelMarket.build_seal_config(
+               sigil_package_id: "0x" <> String.duplicate("0", 64),
+               seal_config: %{
+                 key_server_object_ids: [],
+                 threshold: 1,
+                 walrus_publisher_url: "https://publisher.walrus-testnet.walrus.space",
+                 walrus_aggregator_url: "https://aggregator.walrus-testnet.walrus.space",
+                 walrus_epochs: 15,
+                 sui_rpc_url: "https://fullnode.testnet.sui.io:443"
+               }
+             ) == %{
+               "seal_package_id" => "0x" <> String.duplicate("0", 64),
+               "key_server_object_ids" => [],
+               "threshold" => 1,
+               "walrus_publisher_url" => "https://publisher.walrus-testnet.walrus.space",
+               "walrus_aggregator_url" => "https://aggregator.walrus-testnet.walrus.space",
+               "walrus_epochs" => 15,
+               "sui_rpc_url" => "https://fullnode.testnet.sui.io:443"
+             }
+    end
+  end
+
   describe "build_create_listing_tx/2" do
     test "build_create_listing_tx returns base64 tx_bytes", context do
       Cache.put(context.tables.intel_market, {:marketplace}, marketplace_info())
@@ -284,20 +453,21 @@ defmodule Sigil.IntelMarketTest do
       assert pending.client_nonce == client_nonce
       assert pending.intel_report_id == params.intel_report_id
 
+      assert pending.seal_id ==
+               Base.decode16!(String.trim_leading(params.seal_id, "0x"), case: :mixed)
+
+      assert pending.encrypted_blob_id == params.encrypted_blob_id
+
       assert tx_bytes ==
-               expected_create_listing_tx_bytes(
-                 marketplace_ref(),
-                 %{
-                   proof_points: Base.decode64!(params.proof_points),
-                   public_inputs: Base.decode64!(params.public_inputs),
-                   commitment: String.to_integer(params.commitment),
-                   client_nonce: client_nonce,
-                   price: params.price,
-                   report_type: params.report_type,
-                   solar_system_id: params.solar_system_id,
-                   description: params.description
-                 }
-               )
+               expected_create_listing_tx_bytes(%{
+                 seal_id: Base.decode16!(String.trim_leading(params.seal_id, "0x"), case: :mixed),
+                 encrypted_blob_id: params.encrypted_blob_id,
+                 client_nonce: client_nonce,
+                 price: params.price,
+                 report_type: params.report_type,
+                 solar_system_id: params.solar_system_id,
+                 description: params.description
+               })
     end
 
     test "build_create_restricted_listing_tx includes custodian ref", context do
@@ -327,14 +497,18 @@ defmodule Sigil.IntelMarketTest do
       assert pending.client_nonce == client_nonce
       assert pending.restricted_to_tribe_id == context.tribe_id
 
+      assert pending.seal_id ==
+               Base.decode16!(String.trim_leading(params.seal_id, "0x"), case: :mixed)
+
+      assert pending.encrypted_blob_id == params.encrypted_blob_id
+
       assert tx_bytes ==
                expected_create_restricted_listing_tx_bytes(
-                 marketplace_ref(),
                  custodian_ref(),
                  %{
-                   proof_points: Base.decode64!(params.proof_points),
-                   public_inputs: Base.decode64!(params.public_inputs),
-                   commitment: String.to_integer(params.commitment),
+                   seal_id:
+                     Base.decode16!(String.trim_leading(params.seal_id, "0x"), case: :mixed),
+                   encrypted_blob_id: params.encrypted_blob_id,
                    client_nonce: client_nonce,
                    price: params.price,
                    report_type: params.report_type,
@@ -395,6 +569,20 @@ defmodule Sigil.IntelMarketTest do
                market_opts(context, sender: context.seller)
              ) == {:error, :cannot_purchase_own_listing}
     end
+
+    test "build_purchase_tx rejects inactive listing", context do
+      insert_listing!(%{
+        id: address(0x65),
+        seller_address: address(0xCA),
+        price_mist: 125_000_000,
+        status: :sold
+      })
+
+      assert Sigil.IntelMarket.build_purchase_tx(
+               address(0x65),
+               market_opts(context, sender: context.buyer)
+             ) == {:error, :listing_not_active}
+    end
   end
 
   describe "build_cancel_listing_tx/2" do
@@ -414,6 +602,15 @@ defmodule Sigil.IntelMarketTest do
                {:cancel_listing, _},
                Cache.get(context.tables.intel_market, {:pending_tx, context.seller, tx_bytes})
              )
+    end
+
+    test "build_cancel_listing_tx rejects inactive listing", context do
+      insert_listing!(%{id: address(0x72), seller_address: context.seller, status: :cancelled})
+
+      assert Sigil.IntelMarket.build_cancel_listing_tx(
+               address(0x72),
+               market_opts(context, sender: context.seller)
+             ) == {:error, :listing_not_active}
     end
   end
 
@@ -459,7 +656,8 @@ defmodule Sigil.IntelMarketTest do
 
       assert persisted.seller_address == context.seller
       assert persisted.client_nonce == client_nonce
-      assert persisted.commitment_hash == params.commitment
+      assert persisted.seal_id == params.seal_id
+      assert persisted.encrypted_blob_id == params.encrypted_blob_id
       assert persisted.intel_report_id == params.intel_report_id
       assert persisted.status == :active
 
@@ -767,12 +965,13 @@ defmodule Sigil.IntelMarketTest do
              listing_object_json(
                id: address(0x86),
                seller: context.seller,
-               commitment: params.commitment,
+               seal_id: params.seal_id,
+               encrypted_blob_id: params.encrypted_blob_id,
                client_nonce: client_nonce + 1,
                price: params.price,
                report_type: params.report_type,
                solar_system_id: params.solar_system_id,
-               description: "same seller and commitment but wrong nonce",
+               description: "same seller and seal but wrong nonce",
                initial_shared_version: 31
              )
            ],
@@ -791,7 +990,8 @@ defmodule Sigil.IntelMarketTest do
              listing_object_json(
                id: matching_listing_id,
                seller: context.seller,
-               commitment: params.commitment,
+               seal_id: params.seal_id,
+               encrypted_blob_id: params.encrypted_blob_id,
                client_nonce: client_nonce,
                price: params.price,
                report_type: params.report_type,
@@ -839,9 +1039,8 @@ defmodule Sigil.IntelMarketTest do
 
   defp create_listing_params(overrides) do
     base = %{
-      proof_points: Base.encode64(<<1, 2, 3, 4>>),
-      public_inputs: Base.encode64(<<5, 6, 7, 8>>),
-      commitment: "123456789012345678901234567890",
+      seal_id: seal_id_hex(0x91),
+      encrypted_blob_id: "walrus-blob-123",
       price: 125_000_000,
       report_type: 1,
       solar_system_id: 30_001_042,
@@ -891,7 +1090,8 @@ defmodule Sigil.IntelMarketTest do
       %{
         id: address(0xC1),
         seller_address: address(0xA9),
-        commitment_hash: "1234567890",
+        seal_id: seal_id_hex(0x94),
+        encrypted_blob_id: "walrus-default-1234567890",
         client_nonce: 42,
         price_mist: 150_000_000,
         report_type: 1,
@@ -912,15 +1112,10 @@ defmodule Sigil.IntelMarketTest do
       %{
         object_id: address(0x10),
         object_id_bytes: object_id(0x10),
-        initial_shared_version: 7,
-        listing_count: 0
+        initial_shared_version: 7
       },
       overrides
     )
-  end
-
-  defp marketplace_ref do
-    %{object_id: object_id(0x10), initial_shared_version: 7}
   end
 
   defp listing_ref do
@@ -953,7 +1148,6 @@ defmodule Sigil.IntelMarketTest do
 
     %{
       "id" => object_id_hex,
-      "listing_count" => Integer.to_string(Keyword.get(overrides, :listing_count, 0)),
       "shared" => %{"initialSharedVersion" => Integer.to_string(initial_shared_version)},
       "initialSharedVersion" => Integer.to_string(initial_shared_version)
     }
@@ -966,7 +1160,9 @@ defmodule Sigil.IntelMarketTest do
     %{
       "id" => object_id_hex,
       "seller" => Keyword.get(overrides, :seller, address(0xA1)),
-      "commitment" => to_string(Keyword.get(overrides, :commitment, "1234567890")),
+      "seal_id" => Keyword.get(overrides, :seal_id, seal_id_hex(0x95)),
+      "encrypted_blob_id" =>
+        Keyword.get(overrides, :encrypted_blob_id, "walrus-listing-1234567890"),
       "client_nonce" => to_string(Keyword.get(overrides, :client_nonce, 42)),
       "price" => to_string(Keyword.get(overrides, :price, 125_000_000)),
       "report_type" => Keyword.get(overrides, :report_type, 1),
@@ -984,16 +1180,15 @@ defmodule Sigil.IntelMarketTest do
     %{data: entries, has_next_page: false, end_cursor: nil}
   end
 
-  defp expected_create_listing_tx_bytes(marketplace_ref, params) do
-    marketplace_ref
-    |> TxIntelMarket.build_create_listing(params, [])
+  defp expected_create_listing_tx_bytes(params) do
+    params
+    |> TxIntelMarket.build_create_listing([])
     |> TransactionBuilder.build_kind!()
     |> Base.encode64()
   end
 
-  defp expected_create_restricted_listing_tx_bytes(marketplace_ref, custodian_ref, params) do
-    marketplace_ref
-    |> TxIntelMarket.build_create_restricted_listing(custodian_ref, params, [])
+  defp expected_create_restricted_listing_tx_bytes(custodian_ref, params) do
+    TxIntelMarket.build_create_restricted_listing(custodian_ref, params, [])
     |> TransactionBuilder.build_kind!()
     |> Base.encode64()
   end
@@ -1023,4 +1218,8 @@ defmodule Sigil.IntelMarketTest do
   defp object_id(byte), do: :binary.copy(<<byte>>, 32)
 
   defp hex_to_bytes("0x" <> hex), do: Base.decode16!(hex, case: :mixed)
+
+  defp seal_id_hex(byte) do
+    "0x" <> Base.encode16(:binary.copy(<<byte>>, 32), case: :lower)
+  end
 end
