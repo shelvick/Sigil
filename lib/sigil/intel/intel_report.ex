@@ -33,18 +33,16 @@ defmodule Sigil.Intel.IntelReport do
   @location_required_fields [
     :tribe_id,
     :assembly_id,
-    :solar_system_id,
     :reported_by,
     :reported_by_character_id
   ]
   @scouting_required_fields [
     :tribe_id,
-    :solar_system_id,
     :reported_by,
     :reported_by_character_id,
     :notes
   ]
-  @optional_fields [:label, :notes, :reported_by_name]
+  @optional_fields [:solar_system_id, :label, :notes, :reported_by_name]
   @all_fields @location_required_fields ++ @optional_fields
 
   schema "intel_reports" do
@@ -89,7 +87,7 @@ defmodule Sigil.Intel.IntelReport do
   @spec validate_shared_fields(Ecto.Changeset.t()) :: Ecto.Changeset.t()
   defp validate_shared_fields(changeset) do
     changeset
-    |> validate_number(:solar_system_id, greater_than: 0)
+    |> validate_number(:solar_system_id, greater_than_or_equal_to: 0)
     |> validate_length(:label, max: 120)
     |> validate_length(:notes, max: 1000)
   end

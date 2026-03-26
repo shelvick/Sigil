@@ -1,42 +1,21 @@
 # contracts/sources/
 
 ## Modules
+- `sigil::standings_table` (`standings_table.move`) — legacy standings contract retained as immutable compatibility ballast.
+- `sigil::tribe_custodian` (`tribe_custodian.move`) — per-tribe governance and inline standings shared object.
+- `sigil::frontier_gate` (`frontier_gate.move`) — typed-witness gate-access extension keyed off Custodian standings.
+- `sigil::intel_market` (`intel_market.move`) — Seal-era marketplace contract storing `seal_id`, `encrypted_blob_id`, preview metadata, seller/buyer state, and optional tribe restriction. The singleton `IntelMarketplace` remains metadata-only and does not track `listing_count`.
+- `sigil::seal_policy` (`seal_policy.move`) — Seal decryption policy module authorizing the seller or the buyer of a sold listing.
 
-- `sigil::standings_table` (`standings_table.move`) — Standalone 5-tier standings table (OBSOLETE, pending migration to Custodian)
-- `sigil::tribe_custodian` (`tribe_custodian.move`) — Per-tribe governance + inline standings. TribeCustodianRegistry singleton, one-person-one-vote leader election, operator management, leader-gated standings upsert/read
-- `sigil::frontier_gate` (`frontier_gate.move`) — Gate access extension using typed-witness pattern, denies HOSTILE tier via get_effective_standing
-
-## Key Types
-
-### tribe_custodian
-- `TribeCustodianRegistry` (key) — singleton, `tribes: Table<u32, ID>`
-- `Custodian` (key) — per-tribe shared object: governance (members, votes, tallies, leader, operators) + standings (tribe, pilot, default)
-
-### standings_table
-- `StandingsTable` (key, store) — standalone standings with owner-gated writes
-
-### frontier_gate
-- Uses world::access typed-witness extension pattern
-
-## Error Constants (tribe_custodian)
-
-| Code | Name | Condition |
-|------|------|-----------|
-| 0 | ENotTribeMember | character.tribe() != custodian.tribe_id |
-| 1 | ETribeAlreadyRegistered | duplicate tribe_id in registry |
-| 2 | ENotLeader | caller is not current_leader |
-| 3 | EInvalidStanding | standing > 4 |
-| 4 | EMismatchedLengths | batch vectors differ in length |
-| 5 | ECandidateNotMember | vote candidate not in members |
-| 6 | EOperatorNotMember | operator not in members |
-| 7 | ENotLeaderCandidate | challenger votes <= leader votes |
-
-## Standing Tiers
-
-0=Hostile, 1=Unfriendly, 2=Neutral, 3=Friendly, 4=Allied
+## Marketplace Notes
+- `intel_market::create_listing` and `intel_market::create_restricted_listing` no longer take a marketplace shared-object argument or any legacy commitment parameter.
+- `intel_market.move` contains no proof-verification or PVK setup path.
+- `seal_policy::seal_approve` validates `seal_id`, allows sellers always, and allows buyers only when the listing is sold and owned by the sender.
 
 ## Dependencies
+- Marketplace contracts depend on `sigil::tribe_custodian` for restricted listings.
+- `sigil::seal_policy` depends on `sigil::intel_market` accessor functions and listing status semantics.
 
-- `sui::table`, `sui::vec_set`, `sui::transfer`, `sui::object`, `sui::tx_context`
-- `world::character` — tribe_id verification via `character.tribe()`
-- `world::access` — typed-witness extension pattern (frontier_gate)
+## Patterns
+- Keep policy modules thin: read immutable listing state and abort with explicit error codes when authorization fails.
+- Use shared-object references only where runtime data is actually required; listing creation itself does not need the marketplace singleton as an input.

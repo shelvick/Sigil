@@ -17,10 +17,13 @@ defmodule SigilWeb.IntelMarketLive do
   """
   @impl true
   @spec mount(map(), map(), Phoenix.LiveView.Socket.t()) :: {:ok, Phoenix.LiveView.Socket.t()}
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     socket =
       socket
+      |> assign(:seal_package_id_override, Map.get(session, "seal_package_id"))
+      |> assign(:walrus_client_override, Map.get(session, "walrus_client"))
       |> State.assign_base_state()
+      |> assign_seal_config_json()
       |> maybe_load_marketplace()
       |> maybe_subscribe_marketplace()
 
@@ -51,33 +54,62 @@ defmodule SigilWeb.IntelMarketLive do
   end
 
   @doc false
-  def handle_event("proof_status", %{"status" => status}, socket) when is_binary(status) do
+  def handle_event("seal_status", %{"status" => status}, socket) when is_binary(status) do
     {:noreply,
-     assign(socket, proof_status: State.humanize_status(status), proof_error_message: nil)}
+     assign(socket, seal_status: State.humanize_seal_status(status), seal_error_message: nil)}
   end
 
   @doc false
-  def handle_event("proof_generated", payload, %{assigns: %{pending_listing: pending}} = socket)
+  def handle_event(
+        "seal_upload_complete",
+        payload,
+        %{assigns: %{pending_listing: pending}} = socket
+      )
       when is_map(pending) do
     {:noreply, Transactions.build_listing_transaction(socket, pending, payload)}
   end
 
   @doc false
-  def handle_event("proof_error", %{"reason" => reason}, socket) when is_binary(reason) do
+  def handle_event("seal_error", %{"reason" => reason}, socket) when is_binary(reason) do
     {:noreply,
      socket
      |> assign(
-       proof_error_message: reason,
-       proof_status: nil,
+       seal_error_message: reason,
+       seal_status: nil,
        page_state: :ready,
        pending_listing: nil,
-       pending_tx: nil
-     )}
+       pending_tx: nil,
+       pending_decrypt_listing_id: nil
+     )
+     |> put_flash(:error, reason)}
   end
 
   @doc false
   def handle_event("purchase_listing", %{"listing_id" => listing_id}, socket) do
     {:noreply, Transactions.begin_purchase(socket, listing_id)}
+  end
+
+  @doc false
+  def handle_event("decrypt_listing", %{"listing_id" => listing_id}, socket) do
+    {:noreply, Transactions.begin_decrypt(socket, listing_id)}
+  end
+
+  @doc false
+  def handle_event(
+        "seal_decrypt_complete",
+        payload,
+        %{assigns: %{pending_decrypt_listing_id: listing_id}} = socket
+      )
+      when is_binary(listing_id) and is_map(payload) do
+    {:noreply, Transactions.complete_decrypt(socket, listing_id, payload)}
+  end
+
+  @doc false
+  def handle_event("dismiss_decrypted_intel", %{"listing_id" => listing_id}, socket)
+      when is_binary(listing_id) do
+    decrypted_intel = Map.delete(socket.assigns.decrypted_intel, listing_id)
+
+    {:noreply, assign(socket, decrypted_intel: decrypted_intel)}
   end
 
   @doc false
@@ -94,7 +126,7 @@ defmodule SigilWeb.IntelMarketLive do
       _other ->
         {:noreply,
          socket
-         |> assign(page_state: :ready, pending_tx: nil, pending_listing: nil, proof_status: nil)
+         |> assign(page_state: :ready, pending_tx: nil, pending_listing: nil, seal_status: nil)
          |> put_flash(:error, "Transaction failed")}
     end
   end
@@ -103,7 +135,7 @@ defmodule SigilWeb.IntelMarketLive do
   def handle_event("transaction_error", %{"reason" => reason}, socket) when is_binary(reason) do
     {:noreply,
      socket
-     |> assign(page_state: :ready, pending_tx: nil, proof_status: nil)
+     |> assign(page_state: :ready, pending_tx: nil, seal_status: nil)
      |> put_flash(:error, reason)}
   end
 
@@ -138,8 +170,15 @@ defmodule SigilWeb.IntelMarketLive do
       <div id="wallet-signer" phx-hook="WalletConnect" data-sui-chain={sui_chain()} class="hidden"></div>
     <% end %>
 
-    <%= if @can_sell do %>
-      <div id="zk-proof-generator" phx-hook="ZkProofGenerator" class="hidden"></div>
+    <%= if @authenticated? do %>
+      <div
+        id="seal-encrypt"
+        phx-hook="SealEncrypt"
+        data-address={@sender}
+        data-sui-chain={sui_chain()}
+        data-config={@seal_config_json}
+        class="hidden"
+      ></div>
     <% end %>
 
     <section class="relative overflow-hidden px-4 py-12 sm:px-6 lg:px-8">
@@ -148,9 +187,9 @@ defmodule SigilWeb.IntelMarketLive do
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p class="font-mono text-xs uppercase tracking-[0.35em] text-quantum-300">Intel marketplace</p>
-              <h1 class="mt-3 text-4xl font-semibold text-cream">Commitment-backed trade</h1>
+              <h1 class="mt-3 text-4xl font-semibold text-cream">Seal-encrypted trade</h1>
               <p class="mt-3 max-w-3xl text-sm leading-6 text-space-500">
-                Browse active intel listings, create proof-backed offers, and settle purchases through your wallet.
+                Browse active intel listings, encrypt and upload sealed offers, and settle purchases through your wallet.
               </p>
             </div>
 
@@ -177,9 +216,9 @@ defmodule SigilWeb.IntelMarketLive do
           </div>
         </div>
 
-        <%= if @proof_error_message do %>
+        <%= if @seal_error_message do %>
           <div class="rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
-            <%= @proof_error_message %>
+            <%= @seal_error_message %>
           </div>
         <% end %>
 
@@ -188,6 +227,8 @@ defmodule SigilWeb.IntelMarketLive do
             <%= if @page_section == :my_listings do %>
               <SigilWeb.IntelMarketLive.Components.my_listings_panel
                 listings={@my_listings}
+                purchased_listings={@purchased_listings}
+                decrypted_intel={@decrypted_intel}
                 static_data={@static_data_pid}
               />
             <% else %>
@@ -209,6 +250,7 @@ defmodule SigilWeb.IntelMarketLive do
                       sender={@sender}
                       tribe_id={@tribe_id}
                       static_data={@static_data_pid}
+                      decrypted_intel={Map.get(@decrypted_intel, listing.id, %{})}
                     />
                   <% end %>
                 </div>
@@ -219,12 +261,12 @@ defmodule SigilWeb.IntelMarketLive do
                     form={@form}
                     entry_mode={@entry_mode}
                     my_reports={@my_reports}
-                    proof_status={@proof_status}
+                    seal_status={@seal_status}
                     solar_systems={@solar_systems}
                     tribe_id={@tribe_id}
                   />
 
-                  <SigilWeb.IntelMarketLive.Components.proof_status status={@proof_status} />
+                  <SigilWeb.IntelMarketLive.Components.seal_status status={@seal_status} />
 
                   <.signing_overlay :if={@page_state == :signing_tx} />
                 </div>
@@ -240,7 +282,7 @@ defmodule SigilWeb.IntelMarketLive do
             <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Authentication required</p>
             <h2 class="mt-3 text-2xl font-semibold text-cream">Connect wallet to use marketplace</h2>
             <p class="mt-3 max-w-2xl text-sm leading-6 text-space-500">
-              Authenticate from the dashboard to browse listings, create proof-backed offers, and settle purchases.
+              Authenticate from the dashboard to browse listings, create sealed offers, and settle purchases.
             </p>
           </div>
         <% end %>
@@ -277,6 +319,14 @@ defmodule SigilWeb.IntelMarketLive do
     end
 
     socket
+  end
+
+  defp assign_seal_config_json(socket) do
+    assign(
+      socket,
+      :seal_config_json,
+      Jason.encode!(IntelMarket.build_seal_config(State.market_opts(socket)))
+    )
   end
 
   defp normalize_section("my_listings"), do: :my_listings

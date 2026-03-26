@@ -1,51 +1,26 @@
 # lib/sigil_web/live/intel_market_live/
 
 ## Modules
+- `SigilWeb.IntelMarketLive.State` (`state.ex`) — marketplace assigns, filter normalization, form helpers, and context option builders.
+- `SigilWeb.IntelMarketLive.Transactions` (`transactions.ex`) — sell, purchase, cancel, signed-submission, and browser decrypt workflows.
+- `SigilWeb.IntelMarketLive.Components` (`components.ex`) — browse cards, filter bar, seller inventory, purchased-intel panels, and shared presentation helpers.
+- `SigilWeb.IntelMarketLive.SellForm` (`sell_form.ex`) — extracted sell-form rendering and local display helpers.
 
-- `SigilWeb.IntelMarketLive.State` (`state.ex`) — State management, form helpers, filtering logic for marketplace LiveView
-- `SigilWeb.IntelMarketLive.Transactions` (`transactions.ex`) — Transaction-oriented workflows: submit listing, build tx, purchase, cancel, finalize
-- `SigilWeb.IntelMarketLive.Components` (`components.ex`) — Template function components for marketplace UI
+## Seal Delivery Flow
+- Sell flow builds structured `intel_data`, generates a server-side `seal_id`, then pushes `encrypt_and_upload` to `SealEncrypt`.
+- Hook completion returns `blob_id`; `Transactions.build_listing_transaction/3` uses that value to build the unsigned create-listing PTB.
+- Purchase flow surfaces `:listing_not_active` before wallet signing when the listing is already sold or cancelled.
+- Decrypt flow performs a Walrus preflight through `Sigil.IntelMarket.blob_available?/2`, pushes `decrypt_intel`, and decodes `%{"data" => json}` from the hook on success.
 
 ## Key Functions
-
-### State (state.ex)
-- `assign_base_state/1`: socket → initialize all marketplace assigns (page_section, page_state, listings, filters, etc.)
-- `sync_and_load_data/1`: socket → sync from chain + load listings + load reports + apply filters
-- `refresh_marketplace/1`: socket → reload listings/reports without chain sync
-- `apply_filters/2`: socket × filters → filter listings by report_type, solar_system, price range
-- `assign_listing_form/2`: socket × params → normalize and store Phoenix form
-- `intel_opts/1`, `market_opts/1`, `diplomacy_opts/1`: socket → context option keyword lists
-- `parse_price_sui/1`: SUI string → `{:ok, mist_integer}` | `:error`
-- `humanize_status/1`: proof status string normalization
-- `changeset_error/1`: changeset → user-facing error string
-- `report_type_value/1`: `:scouting → 2`, `_ → 1`
-- `blank_to_nil/1`: empty/whitespace string → nil
-
-### Transactions (transactions.ex)
-- `submit_listing/2`: socket × params → validate + resolve report + push `generate_proof` event
-- `build_listing_transaction/3`: socket × pending × payload → build unsigned tx + push `request_sign_transaction`
-- `begin_purchase/2`: socket × listing_id → build purchase tx + push signing event
-- `cancel_listing/2`: socket × listing_id → build cancel tx + push signing event
-- `finalize_transaction/3`: socket × tx_bytes × signature → submit signed tx + refresh marketplace
-
-### Components (components.ex)
-- `filter_bar/1`: browse filters (report_type, solar_system, price range)
-- `listing_card/1`: listing display with price, type, system, seller, description, purchase action
-- `sell_form/1`: sell intel form with report selector + manual entry + tribe restriction toggle
-- `proof_status/1`: proof generation progress indicator
-- `my_listings_panel/1`: seller's listings with status badges and cancel action
-- `listing_status_badge/1`: active/sold/cancelled badge
+- `State.sync_and_load_data/1` — syncs from chain, reloads browse/seller/purchased data, and reapplies filters.
+- `Transactions.submit_listing/2` — validates listing input and starts the Seal encrypt/upload flow.
+- `Transactions.build_listing_transaction/3` — builds create-listing PTBs after the hook returns `blob_id`.
+- `Transactions.begin_purchase/2` — starts wallet signing for eligible listings and handles inactive-listing errors.
+- `Transactions.begin_decrypt/2` — starts browser decryption for sold listings with available blobs.
+- `Components.sell_form/1` — delegates to `SellForm.sell_form/1`.
 
 ## Patterns
-- Follows `UI_DiplomacyLive` pattern for wallet signing flow (page_state machine)
-- State/Transactions split keeps LiveView event handlers as thin dispatchers
-- Components receive assigns as props, no direct socket access
-- Price display converts mist to SUI (÷1,000,000,000) with Decimal formatting
-- Purchase action disabled for own listings and ineligible tribe-restricted listings
-
-## Dependencies
-- `Sigil.IntelMarket` for marketplace operations
-- `Sigil.Intel` for report resolution and export
-- `Sigil.Diplomacy` for custodian checks
-- `Sigil.StaticData` for solar system name resolution
-- `Phoenix.PubSub` for real-time listing updates
+- Keep LiveView event handlers thin by delegating orchestration to `State` and `Transactions`.
+- Preserve buyer decrypt access after refresh by reloading `purchased_listings` from the context.
+- Treat hook payloads as the boundary contract: nested `intel_data`, server-generated `seal_id`, returned `blob_id`, decrypted `%{"data" => json}`.

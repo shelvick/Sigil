@@ -31,8 +31,7 @@ defmodule Sigil.IntelMarket.Listings do
       %{
         object_id: object_id,
         object_id_bytes: ObjectCodec.hex_to_bytes(object_id),
-        initial_shared_version: version,
-        listing_count: Support.parse_integer(Map.get(object, "listing_count"), 0)
+        initial_shared_version: version
       }
     else
       _invalid -> nil
@@ -52,7 +51,8 @@ defmodule Sigil.IntelMarket.Listings do
       listing: %IntelListing{
         id: id,
         seller_address: Map.fetch!(object, "seller"),
-        commitment_hash: to_string(Map.fetch!(object, "commitment")),
+        seal_id: normalize_seal_id(Map.get(object, "seal_id")),
+        encrypted_blob_id: normalize_blob_id(Map.get(object, "encrypted_blob_id")),
         client_nonce: Support.parse_integer(Map.fetch!(object, "client_nonce")),
         price_mist: Support.parse_integer(Map.fetch!(object, "price")),
         report_type: Support.parse_integer(Map.fetch!(object, "report_type")),
@@ -76,7 +76,8 @@ defmodule Sigil.IntelMarket.Listings do
     attrs = %{
       id: listing.id,
       seller_address: listing.seller_address,
-      commitment_hash: listing.commitment_hash,
+      seal_id: listing.seal_id,
+      encrypted_blob_id: listing.encrypted_blob_id,
       client_nonce: listing.client_nonce,
       price_mist: listing.price_mist,
       report_type: listing.report_type,
@@ -135,7 +136,7 @@ defmodule Sigil.IntelMarket.Listings do
   @doc "Clears cached listing data and removes stale persisted records absent from chain state."
   @spec remove_stale_listings(IntelMarket.options(), [String.t()]) :: :ok
   def remove_stale_listings(opts, chain_listing_ids) do
-    stale_ids = stale_listing_ids(chain_listing_ids)
+    stale_ids = stale_listing_ids(opts, chain_listing_ids)
 
     Enum.each(stale_ids, fn listing_id ->
       Repo.delete_all(from listing in IntelListing, where: listing.id == ^listing_id)
@@ -152,16 +153,41 @@ defmodule Sigil.IntelMarket.Listings do
     Cache.delete(table, {:listing_ref, listing_id})
   end
 
-  defp stale_listing_ids(chain_listing_ids) do
-    cutoff = DateTime.utc_now() |> DateTime.add(-30, :second)
+  defp stale_listing_ids(opts, chain_listing_ids) do
+    cutoff = stale_cutoff(opts)
 
     existing_ids =
       Repo.all(
         from listing in IntelListing,
-          where: listing.inserted_at < ^cutoff,
+          where: listing.inserted_at <= ^cutoff,
           select: listing.id
       )
 
     Enum.reject(existing_ids, &(&1 in chain_listing_ids))
   end
+
+  defp stale_cutoff(opts) do
+    stale_grace_ms = Keyword.get(opts, :stale_grace_ms, 30_000)
+    DateTime.add(DateTime.utc_now(), -stale_grace_ms, :millisecond)
+  end
+
+  defp normalize_seal_id(nil), do: nil
+
+  defp normalize_seal_id(value) when is_binary(value) do
+    if String.starts_with?(value, "0x") do
+      value
+    else
+      "0x" <> Base.encode16(value, case: :lower)
+    end
+  end
+
+  defp normalize_seal_id(value) when is_list(value) do
+    value
+    |> :erlang.list_to_binary()
+    |> normalize_seal_id()
+  end
+
+  defp normalize_blob_id(nil), do: nil
+  defp normalize_blob_id(value) when is_binary(value), do: value
+  defp normalize_blob_id(value) when is_list(value), do: List.to_string(value)
 end

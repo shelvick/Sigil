@@ -75,7 +75,8 @@ defmodule Sigil.IntelMarket.PendingOps do
           Listings.persist_created_listing(%{
             id: listing_id,
             seller_address: pending.seller_address,
-            commitment_hash: pending.commitment,
+            seal_id: encode_seal_id(pending.seal_id),
+            encrypted_blob_id: pending.encrypted_blob_id,
             client_nonce: pending.client_nonce,
             price_mist: pending.price,
             report_type: pending.report_type,
@@ -122,7 +123,8 @@ defmodule Sigil.IntelMarket.PendingOps do
            Listings.persist_created_listing(%{
              id: listing.id,
              seller_address: listing.seller_address,
-             commitment_hash: listing.commitment_hash,
+             seal_id: listing.seal_id,
+             encrypted_blob_id: listing.encrypted_blob_id,
              client_nonce: listing.client_nonce,
              price_mist: listing.price_mist,
              report_type: listing.report_type,
@@ -161,4 +163,8 @@ defmodule Sigil.IntelMarket.PendingOps do
   end
 
   defp created_listing_metadata(_effects), do: :error
+
+  defp encode_seal_id(seal_id) when is_binary(seal_id) do
+    "0x" <> Base.encode16(seal_id, case: :lower)
+  end
 end

@@ -27,7 +27,6 @@ defmodule Sigil.Intel.IntelListingTest do
 
       assert errors_on(changeset) == %{
                client_nonce: ["can't be blank"],
-               commitment_hash: ["can't be blank"],
                id: ["can't be blank"],
                price_mist: ["can't be blank"],
                report_type: ["can't be blank"],
@@ -48,6 +47,21 @@ defmodule Sigil.Intel.IntelListingTest do
       refute negative_changeset.valid?
       assert errors_on(zero_changeset).price_mist == ["must be greater than 0"]
       assert errors_on(negative_changeset).price_mist == ["must be greater than 0"]
+    end
+
+    test "changeset rejects negative solar_system_id but allows undisclosed sentinel" do
+      zero_changeset =
+        IntelListing.changeset(new_listing_struct(), valid_listing_params(%{solar_system_id: 0}))
+
+      negative_changeset =
+        IntelListing.changeset(new_listing_struct(), valid_listing_params(%{solar_system_id: -1}))
+
+      assert zero_changeset.valid?
+      refute negative_changeset.valid?
+
+      assert errors_on(negative_changeset).solar_system_id == [
+               "must be greater than or equal to 0"
+             ]
     end
 
     test "changeset rejects invalid report_type" do
@@ -99,6 +113,14 @@ defmodule Sigil.Intel.IntelListingTest do
       assert changeset.valid?
       assert get_field(changeset, :intel_report_id) == intel_report_id
     end
+
+    test "changeset accepts seal_id and encrypted_blob_id" do
+      changeset = IntelListing.changeset(new_listing_struct(), valid_listing_params())
+
+      assert changeset.valid?
+      assert get_change(changeset, :seal_id) == seal_id_hex()
+      assert get_change(changeset, :encrypted_blob_id) == "walrus-blob-123"
+    end
   end
 
   describe "status_changeset/2" do
@@ -147,6 +169,8 @@ defmodule Sigil.Intel.IntelListingTest do
       persisted = Repo.get(IntelListing, listing.id)
 
       assert persisted.seller_address == "0xseller-1"
+      assert persisted.seal_id == seal_id_hex()
+      assert persisted.encrypted_blob_id == "walrus-blob-123"
       assert persisted.client_nonce == 42
       assert persisted.price_mist == 1_500_000_000
       assert persisted.status == :sold
@@ -194,7 +218,6 @@ defmodule Sigil.Intel.IntelListingTest do
       assert columns == [
                "id",
                "seller_address",
-               "commitment_hash",
                "client_nonce",
                "price_mist",
                "report_type",
@@ -206,7 +229,9 @@ defmodule Sigil.Intel.IntelListingTest do
                "intel_report_id",
                "on_chain_digest",
                "inserted_at",
-               "updated_at"
+               "updated_at",
+               "seal_id",
+               "encrypted_blob_id"
              ]
 
       assert "intel_listings_status_index" in indexes
@@ -225,7 +250,8 @@ defmodule Sigil.Intel.IntelListingTest do
       %{
         id: "0xlisting-1",
         seller_address: "0xseller-1",
-        commitment_hash: "12345678901234567890",
+        seal_id: seal_id_hex(),
+        encrypted_blob_id: "walrus-blob-123",
         client_nonce: 42,
         price_mist: 1_500_000_000,
         report_type: 1,
@@ -238,5 +264,9 @@ defmodule Sigil.Intel.IntelListingTest do
       },
       overrides
     )
+  end
+
+  defp seal_id_hex do
+    "0x" <> Base.encode16(:binary.copy(<<0xAB>>, 32), case: :lower)
   end
 end

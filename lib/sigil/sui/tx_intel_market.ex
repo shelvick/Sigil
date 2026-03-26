@@ -9,7 +9,7 @@ defmodule Sigil.Sui.TxIntelMarket do
 
   @module_name "intel_market"
 
-  @typedoc "Shared object reference for the IntelMarketplace singleton."
+  @typedoc "Shared object reference for the marketplace singleton."
   @type marketplace_ref() :: %{
           object_id: PTB.bytes32(),
           initial_shared_version: non_neg_integer()
@@ -33,19 +33,10 @@ defmodule Sigil.Sui.TxIntelMarket do
   @typedoc "Transaction builder options for full or kind-only transaction construction."
   @type builder_opts() :: TransactionBuilder.build_opts() | TransactionBuilder.kind_opts()
 
-  @typedoc "Structured byte payload for Groth16 verifying key setup."
-  @type pvk_bytes() :: %{
-          vk_gamma_abc_g1: binary(),
-          alpha_g1_beta_g2: binary(),
-          gamma_g2_neg_pc: binary(),
-          delta_g2_neg_pc: binary()
-        }
-
   @typedoc "Marketplace listing creation parameters."
   @type listing_params() :: %{
-          proof_points: binary(),
-          public_inputs: binary(),
-          commitment: non_neg_integer(),
+          seal_id: binary(),
+          encrypted_blob_id: binary(),
           client_nonce: non_neg_integer(),
           price: non_neg_integer(),
           report_type: non_neg_integer(),
@@ -53,28 +44,12 @@ defmodule Sigil.Sui.TxIntelMarket do
           description: binary()
         }
 
-  @doc "Builds transaction options for `intel_market::setup_pvk`."
-  @spec build_setup_pvk(marketplace_ref(), pvk_bytes(), tx_opts()) :: builder_opts()
-  def build_setup_pvk(marketplace_ref, pvk_bytes, tx_opts) when is_list(tx_opts) do
-    inputs = [
-      shared_mut_input(marketplace_ref),
-      {:pure, encode_bytes_vector(Map.fetch!(pvk_bytes, :vk_gamma_abc_g1))},
-      {:pure, encode_bytes_vector(Map.fetch!(pvk_bytes, :alpha_g1_beta_g2))},
-      {:pure, encode_bytes_vector(Map.fetch!(pvk_bytes, :gamma_g2_neg_pc))},
-      {:pure, encode_bytes_vector(Map.fetch!(pvk_bytes, :delta_g2_neg_pc))}
-    ]
-
-    build_opts(tx_opts, inputs, [move_call("setup_pvk", input_arguments(inputs))])
-  end
-
   @doc "Builds transaction options for `intel_market::create_listing`."
-  @spec build_create_listing(marketplace_ref(), listing_params(), tx_opts()) :: builder_opts()
-  def build_create_listing(marketplace_ref, params, tx_opts) when is_list(tx_opts) do
+  @spec build_create_listing(listing_params(), tx_opts()) :: builder_opts()
+  def build_create_listing(params, tx_opts) when is_list(tx_opts) do
     inputs = [
-      shared_mut_input(marketplace_ref),
-      {:pure, encode_bytes_vector(Map.fetch!(params, :proof_points))},
-      {:pure, encode_bytes_vector(Map.fetch!(params, :public_inputs))},
-      {:pure, BCS.encode_u256(Map.fetch!(params, :commitment))},
+      {:pure, encode_bytes_vector(Map.fetch!(params, :seal_id))},
+      {:pure, encode_bytes_vector(Map.fetch!(params, :encrypted_blob_id))},
       {:pure, BCS.encode_u64(Map.fetch!(params, :client_nonce))},
       {:pure, BCS.encode_u64(Map.fetch!(params, :price))},
       {:pure, BCS.encode_u8(Map.fetch!(params, :report_type))},
@@ -86,20 +61,13 @@ defmodule Sigil.Sui.TxIntelMarket do
   end
 
   @doc "Builds transaction options for `intel_market::create_restricted_listing`."
-  @spec build_create_restricted_listing(
-          marketplace_ref(),
-          custodian_ref(),
-          listing_params(),
-          tx_opts()
-        ) :: builder_opts()
-  def build_create_restricted_listing(marketplace_ref, custodian_ref, params, tx_opts)
-      when is_list(tx_opts) do
+  @spec build_create_restricted_listing(custodian_ref(), listing_params(), tx_opts()) ::
+          builder_opts()
+  def build_create_restricted_listing(custodian_ref, params, tx_opts) when is_list(tx_opts) do
     inputs = [
-      shared_mut_input(marketplace_ref),
       shared_imm_input(custodian_ref),
-      {:pure, encode_bytes_vector(Map.fetch!(params, :proof_points))},
-      {:pure, encode_bytes_vector(Map.fetch!(params, :public_inputs))},
-      {:pure, BCS.encode_u256(Map.fetch!(params, :commitment))},
+      {:pure, encode_bytes_vector(Map.fetch!(params, :seal_id))},
+      {:pure, encode_bytes_vector(Map.fetch!(params, :encrypted_blob_id))},
       {:pure, BCS.encode_u64(Map.fetch!(params, :client_nonce))},
       {:pure, BCS.encode_u64(Map.fetch!(params, :price))},
       {:pure, BCS.encode_u8(Map.fetch!(params, :report_type))},
@@ -183,10 +151,10 @@ defmodule Sigil.Sui.TxIntelMarket do
     for {_input, index} <- Enum.with_index(inputs), do: {:input, index}
   end
 
-  @spec shared_mut_input(marketplace_ref() | listing_ref()) :: PTB.call_arg()
+  @spec shared_mut_input(map()) :: PTB.call_arg()
   defp shared_mut_input(ref), do: shared_input(ref, true)
 
-  @spec shared_imm_input(custodian_ref()) :: PTB.call_arg()
+  @spec shared_imm_input(map()) :: PTB.call_arg()
   defp shared_imm_input(ref), do: shared_input(ref, false)
 
   @spec shared_input(map(), boolean()) :: PTB.call_arg()

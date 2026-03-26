@@ -107,8 +107,7 @@ defmodule Sigil.IntelTest do
       assert errors_on(changeset) == %{
                assembly_id: ["can't be blank"],
                reported_by: ["can't be blank"],
-               reported_by_character_id: ["can't be blank"],
-               solar_system_id: ["can't be blank"]
+               reported_by_character_id: ["can't be blank"]
              }
     end
   end
@@ -471,60 +470,6 @@ defmodule Sigil.IntelTest do
                {:location, context.other_tribe_id, "0xassembly-other"}
              ) ==
                nil
-    end
-  end
-
-  describe "export_for_commitment/1" do
-    test "export_for_commitment extracts fields from location report" do
-      report = %IntelReport{
-        report_type: :location,
-        solar_system_id: 30_001_042,
-        assembly_id: "AbCdEf",
-        notes: "Gate is online and fueled."
-      }
-
-      assert Intel.export_for_commitment(report) == %{
-               report_type: 1,
-               solar_system_id: 30_001_042,
-               assembly_id: "0xabcdef",
-               notes: "Gate is online and fueled."
-             }
-    end
-
-    test "export_for_commitment returns report_type 2 for scouting" do
-      report = %IntelReport{
-        report_type: :scouting,
-        solar_system_id: 30_001_099,
-        assembly_id: "0XDEADBEEF",
-        notes: "Observed hostile scouts near the gate."
-      }
-
-      export = Intel.export_for_commitment(report)
-
-      assert export.report_type == 2
-      assert export.assembly_id == "0xdeadbeef"
-    end
-
-    test "export_for_commitment returns empty string for nil assembly_id" do
-      report = %IntelReport{
-        report_type: :scouting,
-        solar_system_id: 30_001_099,
-        assembly_id: nil,
-        notes: "Observed hostile scouts near the gate."
-      }
-
-      assert Intel.export_for_commitment(report).assembly_id == ""
-    end
-
-    test "export_for_commitment returns empty string for nil notes" do
-      report = %IntelReport{
-        report_type: :location,
-        solar_system_id: 30_001_042,
-        assembly_id: "0xassembly-1",
-        notes: nil
-      }
-
-      assert Intel.export_for_commitment(report).notes == ""
     end
   end
 

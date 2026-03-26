@@ -1,6 +1,6 @@
 defmodule Sigil.Sui.TxIntelMarketTest do
   @moduledoc """
-  Defines packet 3 transaction builder tests for intel marketplace PTB construction.
+  Verifies intel marketplace PTB construction for seal-delivery flows.
   """
 
   use ExUnit.Case, async: true
@@ -21,14 +21,12 @@ defmodule Sigil.Sui.TxIntelMarketTest do
       tx_opts = sample_tx_opts()
       params = sample_create_listing_params()
 
-      assert TxIntelMarket.build_create_listing(sample_marketplace_ref(), params, tx_opts) ==
+      assert TxIntelMarket.build_create_listing(params, tx_opts) ==
                tx_opts ++
                  [
                    inputs: [
-                     {:object, {:shared, object_id(0x10), 7, true}},
-                     {:pure, encode_bytes_vector(params.proof_points)},
-                     {:pure, encode_bytes_vector(params.public_inputs)},
-                     {:pure, BCS.encode_u256(params.commitment)},
+                     {:pure, encode_bytes_vector(params.seal_id)},
+                     {:pure, encode_bytes_vector(params.encrypted_blob_id)},
                      {:pure, BCS.encode_u64(params.client_nonce)},
                      {:pure, BCS.encode_u64(params.price)},
                      {:pure, BCS.encode_u8(params.report_type)},
@@ -44,25 +42,21 @@ defmodule Sigil.Sui.TxIntelMarketTest do
                         {:input, 3},
                         {:input, 4},
                         {:input, 5},
-                        {:input, 6},
-                        {:input, 7},
-                        {:input, 8}
+                        {:input, 6}
                       ]}
                    ]
                  ]
     end
 
-    test "build_create_listing encodes proof commitment and nonce" do
+    test "build_create_listing encodes seal and nonce inputs" do
       params = sample_create_listing_params()
 
       build_opts =
-        TxIntelMarket.build_create_listing(sample_marketplace_ref(), params, sample_tx_opts())
+        TxIntelMarket.build_create_listing(params, sample_tx_opts())
 
       assert build_opts[:inputs] == [
-               {:object, {:shared, object_id(0x10), 7, true}},
-               {:pure, encode_bytes_vector(params.proof_points)},
-               {:pure, encode_bytes_vector(params.public_inputs)},
-               {:pure, BCS.encode_u256(params.commitment)},
+               {:pure, encode_bytes_vector(params.seal_id)},
+               {:pure, encode_bytes_vector(params.encrypted_blob_id)},
                {:pure, BCS.encode_u64(params.client_nonce)},
                {:pure, BCS.encode_u64(params.price)},
                {:pure, BCS.encode_u8(params.report_type)},
@@ -76,18 +70,15 @@ defmodule Sigil.Sui.TxIntelMarketTest do
 
       build_opts =
         TxIntelMarket.build_create_restricted_listing(
-          sample_marketplace_ref(),
           sample_custodian_ref(),
           params,
           sample_tx_opts()
         )
 
       assert build_opts[:inputs] == [
-               {:object, {:shared, object_id(0x10), 7, true}},
                {:object, {:shared, object_id(0x20), 11, false}},
-               {:pure, encode_bytes_vector(params.proof_points)},
-               {:pure, encode_bytes_vector(params.public_inputs)},
-               {:pure, BCS.encode_u256(params.commitment)},
+               {:pure, encode_bytes_vector(params.seal_id)},
+               {:pure, encode_bytes_vector(params.encrypted_blob_id)},
                {:pure, BCS.encode_u64(params.client_nonce)},
                {:pure, BCS.encode_u64(params.price)},
                {:pure, BCS.encode_u8(params.report_type)},
@@ -105,9 +96,7 @@ defmodule Sigil.Sui.TxIntelMarketTest do
                   {:input, 4},
                   {:input, 5},
                   {:input, 6},
-                  {:input, 7},
-                  {:input, 8},
-                  {:input, 9}
+                  {:input, 7}
                 ]}
              ]
     end
@@ -173,39 +162,7 @@ defmodule Sigil.Sui.TxIntelMarketTest do
     end
   end
 
-  describe "setup and validation" do
-    test "build_setup_pvk encodes all PVK components" do
-      pvk_bytes = sample_pvk_bytes()
-
-      build_opts =
-        TxIntelMarket.build_setup_pvk(sample_marketplace_ref(), pvk_bytes, sample_tx_opts())
-
-      assert build_opts[:inputs] == [
-               {:object, {:shared, object_id(0x10), 7, true}},
-               {:pure, encode_bytes_vector(pvk_bytes.vk_gamma_abc_g1)},
-               {:pure, encode_bytes_vector(pvk_bytes.alpha_g1_beta_g2)},
-               {:pure, encode_bytes_vector(pvk_bytes.gamma_g2_neg_pc)},
-               {:pure, encode_bytes_vector(pvk_bytes.delta_g2_neg_pc)}
-             ]
-
-      assert build_opts[:commands] == [
-               {:move_call, @package_id, "intel_market", "setup_pvk", [],
-                [{:input, 0}, {:input, 1}, {:input, 2}, {:input, 3}, {:input, 4}]}
-             ]
-    end
-
-    test "invalid marketplace ref raises ArgumentError" do
-      invalid_marketplace_ref = %{object_id: <<1, 2, 3>>, initial_shared_version: 7}
-
-      assert_raise ArgumentError, fn ->
-        TxIntelMarket.build_create_listing(
-          invalid_marketplace_ref,
-          sample_create_listing_params(),
-          sample_tx_opts()
-        )
-      end
-    end
-
+  describe "validation" do
     test "invalid listing ref raises ArgumentError" do
       invalid_listing_ref = %{object_id: <<1, 2, 3>>, initial_shared_version: 13}
 
@@ -219,7 +176,6 @@ defmodule Sigil.Sui.TxIntelMarketTest do
 
       assert_raise ArgumentError, fn ->
         TxIntelMarket.build_create_restricted_listing(
-          sample_marketplace_ref(),
           invalid_custodian_ref,
           sample_create_listing_params(),
           sample_tx_opts()
@@ -232,7 +188,6 @@ defmodule Sigil.Sui.TxIntelMarketTest do
     test "build_create_listing output serializes via build_kind!" do
       build_opts =
         TxIntelMarket.build_create_listing(
-          sample_marketplace_ref(),
           sample_create_listing_params(),
           []
         )
@@ -247,10 +202,6 @@ defmodule Sigil.Sui.TxIntelMarketTest do
     end
   end
 
-  defp sample_marketplace_ref do
-    %{object_id: object_id(0x10), initial_shared_version: 7}
-  end
-
   defp sample_custodian_ref do
     %{object_id: object_id(0x20), initial_shared_version: 11}
   end
@@ -261,23 +212,13 @@ defmodule Sigil.Sui.TxIntelMarketTest do
 
   defp sample_create_listing_params do
     %{
-      proof_points: <<1, 2, 3, 4>>,
-      public_inputs: <<5, 6, 7, 8>>,
-      commitment: 123_456_789_012_345_678_901_234_567_890,
+      seal_id: :binary.copy(<<1>>, 32),
+      encrypted_blob_id: "walrus-blob-123",
       client_nonce: 42,
       price: 125_000_000,
       report_type: 1,
       solar_system_id: 30_001_042,
       description: "Frontier gate fuel intel"
-    }
-  end
-
-  defp sample_pvk_bytes do
-    %{
-      vk_gamma_abc_g1: <<10, 11, 12>>,
-      alpha_g1_beta_g2: <<13, 14, 15>>,
-      gamma_g2_neg_pc: <<16, 17, 18>>,
-      delta_g2_neg_pc: <<19, 20, 21>>
     }
   end
 

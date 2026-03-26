@@ -2,12 +2,13 @@
   "name": "sigil-assets",
   "private": true,
   "dependencies": {
-    "@mysten/sui": "^1.0.0",
+    "@mysten/seal": "^1.1.1",
+    "@mysten/sui": "^2.11.0",
     "snarkjs": "^0.7.0"
   },
   "devDependencies": {
-    "vitest": "^3.0",
-    "jsdom": "^25.0"
+    "jsdom": "^25.0",
+    "vitest": "^3.0"
   },
   "scripts": {
     "test": "vitest run",

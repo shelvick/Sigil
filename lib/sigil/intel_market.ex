@@ -14,15 +14,15 @@ defmodule Sigil.IntelMarket do
   alias Sigil.Sui.{Client, TransactionBuilder, TxIntelMarket}
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
+  @walrus_client Application.compile_env(:sigil, :walrus_client, Sigil.WalrusClient.HTTP)
 
   @marketplace_topic "intel_market"
 
-  @typedoc "Marketplace singleton metadata cached for transaction building."
+  @typedoc "Marketplace singleton metadata cached for discovery and UI availability checks."
   @type marketplace_info() :: %{
           object_id: String.t(),
           object_id_bytes: <<_::256>>,
-          initial_shared_version: non_neg_integer(),
-          listing_count: non_neg_integer()
+          initial_shared_version: non_neg_integer()
         }
 
   @typedoc "Shared object reference for an intel listing."
@@ -40,14 +40,17 @@ defmodule Sigil.IntelMarket do
           | {:sender, String.t()}
           | {:tribe_id, non_neg_integer()}
           | {:client, module()}
+          | {:walrus_client, module()}
+          | {:stale_grace_ms, non_neg_integer()}
+          | {:seal_config, map()}
+          | {:sigil_package_id, String.t()}
 
   @type options() :: [option()]
 
   @typedoc "Pending create-listing payload cached until the signed transaction returns."
   @type pending_create_listing() :: %{
-          proof_points: binary(),
-          public_inputs: binary(),
-          commitment: String.t(),
+          seal_id: binary(),
+          encrypted_blob_id: binary(),
           client_nonce: non_neg_integer(),
           price: non_neg_integer(),
           report_type: non_neg_integer(),
@@ -61,6 +64,32 @@ defmodule Sigil.IntelMarket do
   @doc "Returns the PubSub topic for marketplace events."
   @spec topic() :: String.t()
   def topic, do: @marketplace_topic
+
+  @doc "Builds the browser Seal/Walrus configuration payload for marketplace hooks."
+  @spec build_seal_config(options()) :: %{
+          required(String.t()) => String.t() | pos_integer() | [String.t()]
+        }
+  def build_seal_config(opts) when is_list(opts) do
+    world = Application.fetch_env!(:sigil, :eve_world)
+    worlds = Application.fetch_env!(:sigil, :eve_worlds)
+    seal_config = Keyword.get(opts, :seal_config, Application.fetch_env!(:sigil, :seal))
+
+    sigil_package_id =
+      Keyword.get_lazy(opts, :sigil_package_id, fn ->
+        %{sigil_package_id: id} = Map.fetch!(worlds, world)
+        id
+      end)
+
+    %{
+      "seal_package_id" => sigil_package_id,
+      "key_server_object_ids" => Map.get(seal_config, :key_server_object_ids, []),
+      "threshold" => Map.get(seal_config, :threshold, 1),
+      "walrus_publisher_url" => Map.fetch!(seal_config, :walrus_publisher_url),
+      "walrus_aggregator_url" => Map.fetch!(seal_config, :walrus_aggregator_url),
+      "walrus_epochs" => Map.get(seal_config, :walrus_epochs, 15),
+      "sui_rpc_url" => Map.fetch!(seal_config, :sui_rpc_url)
+    }
+  end
 
   @doc "Discovers the marketplace singleton, caches it, and broadcasts the result."
   @spec discover_marketplace(options()) ::
@@ -115,6 +144,26 @@ defmodule Sigil.IntelMarket do
     )
   end
 
+  @doc "Lists all listings created by the given seller ordered by newest first."
+  @spec list_seller_listings(String.t(), options()) :: [IntelListing.t()]
+  def list_seller_listings(seller, opts) when is_binary(seller) and is_list(opts) do
+    Repo.all(
+      from listing in IntelListing,
+        where: listing.seller_address == ^seller,
+        order_by: [desc: listing.inserted_at]
+    )
+  end
+
+  @doc "Lists sold listings purchased by the given buyer ordered by newest first."
+  @spec list_purchased_listings(String.t(), options()) :: [IntelListing.t()]
+  def list_purchased_listings(buyer, opts) when is_binary(buyer) and is_list(opts) do
+    Repo.all(
+      from listing in IntelListing,
+        where: listing.buyer_address == ^buyer and listing.status == :sold,
+        order_by: [desc: listing.inserted_at]
+    )
+  end
+
   @doc "Returns a cached listing or loads it from Postgres on a cache miss."
   @spec get_listing(String.t(), options()) :: IntelListing.t() | nil
   def get_listing(listing_id, opts) when is_binary(listing_id) and is_list(opts) do
@@ -141,21 +190,19 @@ defmodule Sigil.IntelMarket do
           {:ok, %{tx_bytes: String.t(), client_nonce: non_neg_integer()}}
           | {:error, :missing_sender | term()}
   def build_create_listing_tx(params, opts) when is_map(params) and is_list(opts) do
-    with {:ok, sender} <- require_sender(opts),
-         {:ok, marketplace_ref} <- require_marketplace_ref(opts) do
+    with {:ok, sender} <- require_sender(opts) do
       client_nonce = System.unique_integer([:positive])
       builder_params = build_listing_params(params, client_nonce)
 
       tx_bytes =
-        marketplace_ref
-        |> TxIntelMarket.build_create_listing(builder_params, [])
+        builder_params
+        |> TxIntelMarket.build_create_listing([])
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
       pending =
         builder_params
         |> Map.merge(%{
-          commitment: Map.fetch!(params, :commitment),
           intel_report_id: Map.get(params, :intel_report_id),
           seller_address: sender,
           restricted_to_tribe_id: nil
@@ -169,25 +216,26 @@ defmodule Sigil.IntelMarket do
   @doc "Builds unsigned transaction bytes for creating a tribe-restricted intel listing."
   @spec build_create_restricted_listing_tx(map(), options()) ::
           {:ok, %{tx_bytes: String.t(), client_nonce: non_neg_integer()}}
-          | {:error, :missing_sender | :missing_tribe_id | :no_active_custodian | term()}
+          | {:error,
+             :missing_sender
+             | :missing_tribe_id
+             | :no_active_custodian
+             | term()}
   def build_create_restricted_listing_tx(params, opts) when is_map(params) and is_list(opts) do
     with {:ok, sender} <- require_sender(opts),
          {:ok, tribe_id} <- require_tribe_id(opts),
-         {:ok, marketplace_ref} <- require_marketplace_ref(opts),
          {:ok, custodian_ref} <- require_custodian_ref(opts, tribe_id) do
       client_nonce = System.unique_integer([:positive])
       builder_params = build_listing_params(params, client_nonce)
 
       tx_bytes =
-        marketplace_ref
-        |> TxIntelMarket.build_create_restricted_listing(custodian_ref, builder_params, [])
+        TxIntelMarket.build_create_restricted_listing(custodian_ref, builder_params, [])
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
       pending =
         builder_params
         |> Map.merge(%{
-          commitment: Map.fetch!(params, :commitment),
           intel_report_id: Map.get(params, :intel_report_id),
           seller_address: sender,
           restricted_to_tribe_id: tribe_id
@@ -203,6 +251,7 @@ defmodule Sigil.IntelMarket do
           {:ok, %{tx_bytes: String.t()}}
           | {:error,
              :listing_not_found
+             | :listing_not_active
              | :missing_sender
              | :cannot_purchase_own_listing
              | :restricted_listing_requires_matching_tribe
@@ -231,10 +280,12 @@ defmodule Sigil.IntelMarket do
 
   @doc "Builds unsigned transaction bytes for cancelling an active listing."
   @spec build_cancel_listing_tx(String.t(), options()) ::
-          {:ok, %{tx_bytes: String.t()}} | {:error, :missing_sender | :listing_not_found | term()}
+          {:ok, %{tx_bytes: String.t()}}
+          | {:error, :missing_sender | :listing_not_found | :listing_not_active | term()}
   def build_cancel_listing_tx(listing_id, opts) when is_binary(listing_id) and is_list(opts) do
     with {:ok, sender} <- require_sender(opts),
          %IntelListing{} = listing <- get_listing(listing_id, opts),
+         :ok <- ensure_active_listing(listing),
          {:ok, listing_ref} <- resolve_listing_ref(listing_id, opts) do
       tx_bytes =
         listing_ref
@@ -247,6 +298,21 @@ defmodule Sigil.IntelMarket do
     else
       nil -> {:error, :listing_not_found}
       {:error, _reason} = error -> error
+    end
+  end
+
+  @doc "Returns whether the encrypted Walrus blob for a listing is still available."
+  @spec blob_available?(String.t(), options()) :: boolean()
+  def blob_available?(listing_id, opts) when is_binary(listing_id) and is_list(opts) do
+    walrus_client = Keyword.get(opts, :walrus_client, @walrus_client)
+
+    case get_listing(listing_id, opts) do
+      %IntelListing{encrypted_blob_id: encrypted_blob_id}
+      when is_binary(encrypted_blob_id) and encrypted_blob_id != "" ->
+        walrus_client.blob_exists?(encrypted_blob_id, opts)
+
+      _other ->
+        false
     end
   end
 
@@ -310,9 +376,8 @@ defmodule Sigil.IntelMarket do
   @spec build_listing_params(map(), non_neg_integer()) :: TxIntelMarket.listing_params()
   defp build_listing_params(params, client_nonce) do
     %{
-      proof_points: params |> Map.fetch!(:proof_points) |> Base.decode64!(),
-      public_inputs: params |> Map.fetch!(:public_inputs) |> Base.decode64!(),
-      commitment: params |> Map.fetch!(:commitment) |> String.to_integer(),
+      seal_id: decode_seal_id!(Map.fetch!(params, :seal_id)),
+      encrypted_blob_id: encode_blob_id(Map.fetch!(params, :encrypted_blob_id)),
       client_nonce: client_nonce,
       price: Map.fetch!(params, :price),
       report_type: Map.fetch!(params, :report_type),
@@ -350,28 +415,6 @@ defmodule Sigil.IntelMarket do
     case tx_bytes do
       {:error, _reason} = error -> error
       encoded when is_binary(encoded) -> {:ok, encoded}
-    end
-  end
-
-  @spec require_marketplace_ref(options()) ::
-          {:ok, TxIntelMarket.marketplace_ref()} | {:error, term()}
-  defp require_marketplace_ref(opts) do
-    case Cache.get(Support.market_table(opts), {:marketplace}) do
-      %{object_id_bytes: object_id_bytes, initial_shared_version: initial_shared_version} ->
-        {:ok, %{object_id: object_id_bytes, initial_shared_version: initial_shared_version}}
-
-      nil ->
-        case discover_marketplace(opts) do
-          {:ok,
-           %{object_id_bytes: object_id_bytes, initial_shared_version: initial_shared_version}} ->
-            {:ok, %{object_id: object_id_bytes, initial_shared_version: initial_shared_version}}
-
-          {:ok, nil} ->
-            {:error, :marketplace_not_found}
-
-          {:error, _reason} = error ->
-            error
-        end
     end
   end
 
@@ -413,9 +456,9 @@ defmodule Sigil.IntelMarket do
     end
   end
 
-  @spec ensure_active_listing(IntelListing.t()) :: :ok | {:error, :listing_not_found}
+  @spec ensure_active_listing(IntelListing.t()) :: :ok | {:error, :listing_not_active}
   defp ensure_active_listing(%IntelListing{status: :active}), do: :ok
-  defp ensure_active_listing(%IntelListing{}), do: {:error, :listing_not_found}
+  defp ensure_active_listing(%IntelListing{}), do: {:error, :listing_not_active}
 
   @spec ensure_not_self_purchase(IntelListing.t(), String.t()) ::
           :ok | {:error, :cannot_purchase_own_listing}
@@ -446,4 +489,11 @@ defmodule Sigil.IntelMarket do
   defp clear_pending_tx(opts, sender, tx_bytes) do
     Cache.delete(Support.market_table(opts), {:pending_tx, sender, tx_bytes})
   end
+
+  @spec decode_seal_id!(String.t() | binary()) :: binary()
+  defp decode_seal_id!("0x" <> hex), do: Base.decode16!(hex, case: :mixed)
+  defp decode_seal_id!(value) when is_binary(value), do: value
+
+  @spec encode_blob_id(String.t() | binary()) :: binary()
+  defp encode_blob_id(value) when is_binary(value), do: value
 end

@@ -19,8 +19,9 @@
 - `alerts/engine_test.exs` — 20 tests for Sigil.Alerts.Engine (R1-R19 + edge), async: true
 - `alerts/webhook_notifier_discord_test.exs` — 11 tests for WebhookNotifier.Discord (R1-R10 + edge), async: true
 - `repo_test.exs` — Repo persistence tests covering migration-backed intel tables and sandbox usage, async: true
-- `intel_market_test.exs` — 16 tests for Sigil.IntelMarket (R1-R16), async: true
-- `intel/intel_listing_test.exs` — Tests for IntelListing schema (if exists)
+- `intel_market_test.exs` — 30 tests for Sigil.IntelMarket covering chain sync, seller/purchased listing queries, Seal config, stale cleanup, signed submission reconciliation, restricted purchases, and Walrus blob availability, async: true
+- `intel/intel_listing_test.exs` — 13 tests for Sigil.Intel.IntelListing schema validation and persistence, async: true
+- `walrus_client_test.exs` — 8 tests for Sigil.WalrusClient.HTTP upload/read/existence contracts, async: true
 
 ## Test Patterns
 
@@ -55,5 +56,6 @@
 | Alerts (context) | 20 | R1-R20 | R20 (lifecycle dedup+cooldown) |
 | AlertEngine | 20 | R1-R19 + edge | R19 (monitor event→persist→Discord) |
 | WebhookNotifier.Discord | 11 | R1-R10 + edge | R10 (end-to-end webhook) |
-| IntelMarket | 16 | R1-R16 | R15 (create→purchase→sold flow) |
-| IntelListing | - | Schema | — |
+| IntelMarket | 30 | Seal sync + tx + blob flows | create→purchase→sold + restricted + stale-sync coverage |
+| IntelListing | 13 | Schema validation + persistence | — |
+| WalrusClient | 8 | upload/read/existence contract | — |
