@@ -91,7 +91,7 @@ defmodule SigilWeb.DashboardLive.Components do
       </div>
 
       <.alerts_summary alert_summary={@alert_summary} unread_count={@unread_count} />
-      <.assembly_manifest assemblies={@assemblies} discovery_error={@discovery_error} />
+      <.assembly_manifest assemblies={@assemblies} discovery_error={@discovery_error} static_data={assigns[:static_data]} />
     </div>
     """
   end
@@ -162,7 +162,7 @@ defmodule SigilWeb.DashboardLive.Components do
 
       <%= if @assemblies != [] do %>
         <div class="mt-4 flex flex-wrap gap-2">
-          <%= for {type, count} <- type_counts(@assemblies) do %>
+          <%= for {type, count} <- type_counts(@assemblies, assigns[:static_data]) do %>
             <span class="rounded-full border border-quantum-400/30 bg-quantum-400/5 px-3 py-1 font-mono text-xs uppercase tracking-[0.15em] text-quantum-300">
               <%= type %>: <%= count %>
             </span>
@@ -196,7 +196,7 @@ defmodule SigilWeb.DashboardLive.Components do
               <%= for assembly <- @assemblies do %>
                 <tr class="cursor-pointer rounded-2xl bg-space-900/70 text-sm text-foreground transition hover:bg-space-800/80" phx-click={JS.navigate(~p"/assembly/#{assembly.id}")}>
                   <td class={["rounded-l-2xl px-4 py-4 font-mono text-xs uppercase tracking-[0.2em]", type_text_color(assembly)]}>
-                    <%= assembly_type_label(assembly) %>
+                    <%= assembly_type_label(assembly, assigns[:static_data]) %>
                   </td>
                   <td class="px-4 py-4">
                     <.link navigate={~p"/assembly/#{assembly.id}"} class="font-semibold text-cream hover:text-quantum-300">
@@ -429,10 +429,10 @@ defmodule SigilWeb.DashboardLive.Components do
   defp wallet_name(%{name: name}) when is_binary(name), do: name
   defp wallet_name(_wallet), do: "Unknown Wallet"
 
-  @spec type_counts([term()]) :: [{String.t(), non_neg_integer()}]
-  defp type_counts(assemblies) do
+  @spec type_counts([term()], pid() | nil) :: [{String.t(), non_neg_integer()}]
+  defp type_counts(assemblies, static_data) do
     assemblies
-    |> Enum.group_by(&assembly_type_label/1)
+    |> Enum.group_by(&assembly_type_label(&1, static_data))
     |> Enum.map(fn {type, list} -> {type, length(list)} end)
     |> Enum.sort_by(fn {type, _} -> type end)
   end

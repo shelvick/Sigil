@@ -10,17 +10,34 @@ defmodule SigilWeb.AssemblyHelpers do
   use Phoenix.Component
 
   alias Sigil.Assemblies
+  alias Sigil.StaticData
   alias Sigil.Sui.Types.{Assembly, Gate, NetworkNode, StorageUnit, Turret}
 
   @doc """
   Returns a human-readable type label for the assembly struct.
+
+  The 2-arity version accepts a `StaticData` pid to resolve generic
+  `%Assembly{}` type names (e.g. Nursery, Nest, Hangar) from the World API
+  item type data. Falls back to `"Assembly"` when static_data is nil or
+  the type_id is not found.
   """
   @spec assembly_type_label(Assemblies.assembly()) :: String.t()
-  def assembly_type_label(%Gate{}), do: "Gate"
-  def assembly_type_label(%Turret{}), do: "Turret"
-  def assembly_type_label(%NetworkNode{}), do: "Network Node"
-  def assembly_type_label(%StorageUnit{}), do: "Storage Unit"
-  def assembly_type_label(%Assembly{}), do: "Assembly"
+  @spec assembly_type_label(Assemblies.assembly(), pid() | nil) :: String.t()
+  def assembly_type_label(assembly, static_data \\ nil)
+  def assembly_type_label(%Gate{}, _static_data), do: "Gate"
+  def assembly_type_label(%Turret{}, _static_data), do: "Turret"
+  def assembly_type_label(%NetworkNode{}, _static_data), do: "Network Node"
+  def assembly_type_label(%StorageUnit{}, _static_data), do: "Storage Unit"
+
+  def assembly_type_label(%Assembly{type_id: type_id}, static_data)
+      when is_pid(static_data) and is_integer(type_id) do
+    case StaticData.get_item_type(static_data, type_id) do
+      %{name: name} -> name
+      nil -> "Assembly"
+    end
+  end
+
+  def assembly_type_label(%Assembly{}, _static_data), do: "Assembly"
 
   @doc """
   Returns the assembly's metadata name, falling back to a truncated id.
