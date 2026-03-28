@@ -4,7 +4,7 @@
 
 - `Sigil.Sui.BCS` — Pure BCS encoder/decoder for Sui transaction serialization
 - `Sigil.Sui.Signer` — Ed25519 signing, verification, Sui address derivation
-- `Sigil.Sui.Client` — Behaviour contract for Sui GraphQL access (6 callbacks: get_object, get_object_with_ref, get_objects, get_dynamic_fields, execute_transaction, verify_zklogin_signature)
+- `Sigil.Sui.Client` — Behaviour contract for Sui GraphQL access (7 callbacks: get_object, get_object_with_ref, get_objects, get_dynamic_fields, execute_transaction, verify_zklogin_signature, get_coins)
 - `Sigil.Sui.Client.HTTP` — Req-backed HTTP implementation of Client behaviour (see `client/AGENTS.md`)
 - `Sigil.Sui.ZkLoginVerifier` — Challenge nonce lifecycle + zkLogin signature verification. Pure function module over injected ETS + Sui client
 - `Sigil.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
@@ -27,6 +27,8 @@
 - `Sigil.Sui.Types.Character` — Character object
 - `Sigil.Sui.Types.Turret` — Turret object
 - `Sigil.Sui.Types.StorageUnit` — Storage unit with inventory_keys
+- `Sigil.Sui.GasRelay` (`gas_relay.ex`) — Ed25519 relay keypair management (file-backed load-or-generate), sponsored transaction preparation (`prepare_sponsored/3`) with gas coin selection, and dual-signed submission (`submit_sponsored/4`)
+- `Sigil.Sui.TxIntelReputation` (`tx_intel_reputation.ex`) — PTB builders for intel reputation feedback: `build_confirm_quality/3` and `build_report_bad_quality/3` targeting the `intel_reputation` Move module with shared registry + listing inputs
 
 ## Key Functions
 
@@ -52,6 +54,7 @@
 - `get_dynamic_fields/2`: Fetch dynamic field entries for a parent object (votes/tallies tables)
 - `execute_transaction/3`: Submit signed tx (tx_bytes + signatures)
 - `verify_zklogin_signature/5`: Verify zkLogin signature via Sui GraphQL (bytes, sig, scope, author, opts)
+- `get_coins/2`: Fetch SUI coins owned by an address for gas selection; returns `[coin_info()]`
 
 ### ZkLoginVerifier (zklogin_verifier.ex)
 - `generate_nonce/2`: address × opts → {:ok, %{nonce, message}} — stores nonce+expected_message in ETS
@@ -101,6 +104,15 @@
 - `build_batch_set_standings/4`: custodian_ref × character_ref × [{tribe_id, standing}] × tx_opts → builder_opts
 - `build_batch_set_pilot_standings/4`: custodian_ref × character_ref × [{pilot, standing}] × tx_opts → builder_opts
 
+### GasRelay (gas_relay.ex)
+- `prepare_sponsored/3`: kind_opts x pseudonym_address x opts -> {:ok, %{tx_bytes, relay_signature}} — builds full TransactionData with relay gas payment, signs with relay keypair
+- `submit_sponsored/4`: tx_bytes x pseudonym_sig x relay_sig x opts -> {:ok, %{digest, effects_bcs, effects}} — submits dual-signed tx
+- `relay_address/1`: opts -> relay Sui address string from configured keypair
+
+### TxIntelReputation (tx_intel_reputation.ex)
+- `build_confirm_quality/3`: registry_ref x listing_ref x tx_opts -> builder_opts (intel_reputation::confirm_quality)
+- `build_report_bad_quality/3`: registry_ref x listing_ref x tx_opts -> builder_opts (intel_reputation::report_bad_quality)
+
 ### Base58 (base58.ex)
 - `decode!/1`: Base58 string → binary (raises on invalid)
 - `decode/1`: Base58 string → {:ok, binary} | {:error, :invalid_base58}
@@ -111,7 +123,7 @@
 
 ## Patterns
 
-- All modules are pure functions (no state, no side effects)
+- All modules are pure functions (no state, no side effects) except GasRelay which manages file-backed keypair persistence
 - Error handling via FunctionClauseError (guards/pattern matching) and ArgumentError (validation)
 - Client uses behaviour + Hammox mock for DI (`config :sigil, :sui_client`)
 - TransactionBuilder uses `@sui_client Application.compile_env!` for client DI (compile-time module attribute)

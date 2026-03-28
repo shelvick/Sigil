@@ -257,7 +257,7 @@ defmodule Mix.Tasks.Sigil.PopulateStaticDataTest do
           | args
         ],
         cd: project_root(),
-        env: [{"MIX_ENV", "test"}],
+        env: [{"MIX_ENV", "test"}] ++ Fixtures.mix_subprocess_env("populate_static_data_mix"),
         stderr_to_stdout: true
       )
 

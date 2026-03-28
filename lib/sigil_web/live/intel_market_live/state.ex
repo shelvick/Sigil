@@ -4,18 +4,19 @@ defmodule SigilWeb.IntelMarketLive.State do
   """
 
   import Phoenix.Component, only: [assign: 2, assign: 3, to_form: 2]
+  import Phoenix.LiveView, only: [push_event: 3]
 
-  alias Sigil.{Diplomacy, Intel, IntelMarket, StaticData}
-  alias Sigil.Intel.IntelReport
+  alias Sigil.{Diplomacy, Intel, IntelMarket}
   alias Sigil.Sui.Types.Character
+  alias SigilWeb.IntelMarketLive.State.{Filtering, MarketData}
 
   @doc """
   Assigns the baseline marketplace state for the current socket.
   """
   @spec assign_base_state(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def assign_base_state(socket) do
-    sender = current_sender(socket)
-    tribe_id = current_tribe_id(socket)
+    sender = MarketData.current_sender(socket)
+    tribe_id = MarketData.current_tribe_id(socket)
 
     can_sell =
       is_binary(sender) and is_integer(tribe_id) and
@@ -37,16 +38,24 @@ defmodule SigilWeb.IntelMarketLive.State do
       my_listings: [],
       purchased_listings: [],
       my_reports: [],
-      filters: default_filters(),
+      filters: Filtering.default_filters(),
       entry_mode: "existing",
       pending_listing: nil,
       pending_tx: nil,
       pending_decrypt_listing_id: nil,
       seal_status: nil,
       seal_error_message: nil,
+      pseudonyms: [],
+      active_pseudonym: nil,
+      pending_active_pseudonym: nil,
+      pending_delete_pseudonym: nil,
+      pseudonym_error_message: nil,
+      pseudonym_delete_warning: nil,
       decrypted_intel: %{},
+      reputation_cache: %{},
+      feedback_recorded: %{},
       static_data_pid: socket.assigns[:static_data],
-      solar_systems: load_solar_systems(socket.assigns[:static_data])
+      solar_systems: MarketData.load_solar_systems(socket.assigns[:static_data])
     )
     |> assign_listing_form(%{"entry_mode" => if(can_sell, do: "existing", else: "manual")})
   end
@@ -59,8 +68,9 @@ defmodule SigilWeb.IntelMarketLive.State do
     _ = IntelMarket.sync_listings(market_opts(socket))
 
     socket
-    |> load_listings()
-    |> load_reports()
+    |> MarketData.load_pseudonyms()
+    |> MarketData.load_listings()
+    |> MarketData.load_reports()
     |> apply_filters(socket.assigns.filters)
   end
 
@@ -70,8 +80,9 @@ defmodule SigilWeb.IntelMarketLive.State do
   @spec refresh_marketplace(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def refresh_marketplace(socket) do
     socket
-    |> load_listings()
-    |> load_reports()
+    |> MarketData.load_pseudonyms()
+    |> MarketData.load_listings()
+    |> MarketData.load_reports()
     |> apply_filters(socket.assigns.filters)
   end
 
@@ -83,7 +94,7 @@ defmodule SigilWeb.IntelMarketLive.State do
     filtered =
       Enum.filter(
         socket.assigns.listings,
-        &matches_filters?(&1, filters, socket.assigns.static_data_pid)
+        &Filtering.matches_filters?(&1, filters, socket.assigns.static_data_pid)
       )
 
     assign(socket, filters: filters, filtered_listings: filtered)
@@ -97,8 +108,8 @@ defmodule SigilWeb.IntelMarketLive.State do
     params =
       params
       |> Map.put_new("entry_mode", socket.assigns.entry_mode)
-      |> maybe_fill_from_report(socket)
-      |> maybe_fill_solar_system_id(socket.assigns.static_data_pid)
+      |> Filtering.maybe_fill_from_report(socket)
+      |> Filtering.maybe_fill_solar_system_id(socket.assigns.static_data_pid)
 
     socket
     |> assign(entry_mode: Map.get(params, "entry_mode", socket.assigns.entry_mode))
@@ -118,6 +129,39 @@ defmodule SigilWeb.IntelMarketLive.State do
   end
 
   @doc """
+  Pushes the current pseudonym cache payload to the browser hook.
+  """
+  @spec push_pseudonyms(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def push_pseudonyms(socket) do
+    encrypted_keys =
+      Enum.map(socket.assigns.pseudonyms, fn pseudonym ->
+        %{
+          "address" => pseudonym.pseudonym_address,
+          "encrypted_key" => Base.encode64(pseudonym.encrypted_private_key)
+        }
+      end)
+
+    push_event(socket, "load_pseudonyms", %{
+      "encrypted_keys" => encrypted_keys,
+      "active_address" => socket.assigns.active_pseudonym
+    })
+  end
+
+  @doc """
+  Reloads persisted pseudonyms without asking the browser hook to decrypt again.
+  """
+  @spec reload_pseudonyms(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def reload_pseudonyms(socket), do: MarketData.reload_pseudonyms(socket)
+
+  @doc """
+  Reconciles LiveView state with the pseudonyms the browser hook actually loaded.
+  """
+  @spec sync_loaded_pseudonyms(Phoenix.LiveView.Socket.t(), [String.t()], String.t() | nil) ::
+          Phoenix.LiveView.Socket.t()
+  def sync_loaded_pseudonyms(socket, addresses, active_address),
+    do: MarketData.sync_loaded_pseudonyms(socket, addresses, active_address)
+
+  @doc """
   Returns the context options used for marketplace operations.
   """
   @spec market_opts(Phoenix.LiveView.Socket.t()) :: IntelMarket.options()
@@ -130,6 +174,20 @@ defmodule SigilWeb.IntelMarketLive.State do
     ]
     |> maybe_put_sigil_package_id(socket.assigns[:seal_package_id_override])
     |> maybe_put_walrus_client(socket.assigns[:walrus_client_override])
+    |> maybe_put_reputation_registry_id(socket.assigns[:reputation_registry_id_override])
+  end
+
+  @doc """
+  Marks buyer feedback as recorded for a listing in the current LiveView session.
+  """
+  @spec mark_feedback_recorded(Phoenix.LiveView.Socket.t(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def mark_feedback_recorded(socket, listing_id) when is_binary(listing_id) do
+    assign(
+      socket,
+      :feedback_recorded,
+      Map.put(socket.assigns.feedback_recorded || %{}, listing_id, true)
+    )
   end
 
   @doc """
@@ -200,7 +258,7 @@ defmodule SigilWeb.IntelMarketLive.State do
   @doc """
   Maps intel report types onto the marketplace enum values.
   """
-  @spec report_type_value(IntelReport.report_type()) :: 1 | 2
+  @spec report_type_value(Sigil.Intel.IntelReport.report_type()) :: 1 | 2
   def report_type_value(:scouting), do: 2
   @doc false
   def report_type_value(_type), do: 1
@@ -231,156 +289,10 @@ defmodule SigilWeb.IntelMarketLive.State do
 
   defp maybe_put_walrus_client(opts, _walrus_client), do: opts
 
-  defp load_listings(socket) do
-    active_listings = IntelMarket.list_listings(market_opts(socket))
-
-    assign(socket,
-      listings: active_listings,
-      my_listings:
-        IntelMarket.list_seller_listings(socket.assigns.sender || "", market_opts(socket)),
-      purchased_listings:
-        IntelMarket.list_purchased_listings(socket.assigns.sender || "", market_opts(socket))
-    )
+  defp maybe_put_reputation_registry_id(opts, reputation_registry_id)
+       when is_binary(reputation_registry_id) do
+    Keyword.put(opts, :reputation_registry_id, reputation_registry_id)
   end
 
-  defp load_reports(%{assigns: %{can_sell: false}} = socket) do
-    socket
-    |> assign(my_reports: [])
-    |> assign_listing_form(%{"entry_mode" => "manual"})
-  end
-
-  defp load_reports(socket) do
-    reports =
-      socket.assigns.tribe_id
-      |> Intel.list_intel(intel_opts(socket))
-      |> Enum.filter(&(&1.reported_by == socket.assigns.sender))
-
-    socket
-    |> assign(my_reports: reports)
-    |> ensure_entry_mode(reports)
-  end
-
-  defp ensure_entry_mode(socket, reports) do
-    entry_mode = if reports == [], do: "manual", else: socket.assigns.entry_mode
-
-    params = Map.put(socket.assigns.form.params || %{}, "entry_mode", entry_mode)
-
-    socket
-    |> assign(:entry_mode, entry_mode)
-    |> assign_listing_form(params)
-  end
-
-  defp matches_filters?(listing, filters, static_data_pid) do
-    matches_report_type?(listing, filters["report_type"]) and
-      matches_solar_system?(listing, filters["solar_system_name"], static_data_pid) and
-      matches_price?(listing, filters["price_min_sui"], :min) and
-      matches_price?(listing, filters["price_max_sui"], :max)
-  end
-
-  defp matches_report_type?(_listing, value) when value in [nil, ""], do: true
-
-  defp matches_report_type?(listing, value) do
-    Integer.to_string(listing.report_type) == value
-  end
-
-  defp matches_solar_system?(_listing, value, _static_data_pid) when value in [nil, ""], do: true
-
-  defp matches_solar_system?(listing, value, static_data_pid) when is_pid(static_data_pid) do
-    case StaticData.get_solar_system_by_name(static_data_pid, value) do
-      %{id: id} -> listing.solar_system_id == id
-      _other -> false
-    end
-  end
-
-  defp matches_solar_system?(_listing, _value, _static_data_pid), do: false
-
-  defp matches_price?(_listing, value, _kind) when value in [nil, ""], do: true
-
-  defp matches_price?(listing, value, :min) do
-    case parse_price_sui(value) do
-      {:ok, amount} -> listing.price_mist >= amount
-      :error -> true
-    end
-  end
-
-  defp matches_price?(listing, value, :max) do
-    case parse_price_sui(value) do
-      {:ok, amount} -> listing.price_mist <= amount
-      :error -> true
-    end
-  end
-
-  defp maybe_fill_from_report(
-         %{"entry_mode" => "existing", "report_id" => report_id} = params,
-         socket
-       )
-       when is_binary(report_id) and report_id != "" do
-    case Enum.find(socket.assigns.my_reports, &(&1.id == report_id)) do
-      %IntelReport{} = report ->
-        params
-        |> Map.put("report_type", Integer.to_string(report_type_value(report.report_type)))
-        |> Map.put("assembly_id", report.assembly_id || "")
-        |> Map.put("notes", report.notes || "")
-        |> Map.put("solar_system_id", Integer.to_string(report.solar_system_id || 0))
-        |> Map.put(
-          "solar_system_name",
-          solar_system_name(socket.assigns.static_data_pid, report.solar_system_id)
-        )
-
-      nil ->
-        params
-    end
-  end
-
-  defp maybe_fill_from_report(params, _socket), do: params
-
-  defp maybe_fill_solar_system_id(%{"solar_system_name" => name} = params, static_data_pid)
-       when is_pid(static_data_pid) and is_binary(name) and name != "" do
-    case StaticData.get_solar_system_by_name(static_data_pid, name) do
-      %{id: id} -> Map.put(params, "solar_system_id", Integer.to_string(id))
-      _other -> params
-    end
-  end
-
-  defp maybe_fill_solar_system_id(params, _static_data_pid), do: params
-
-  defp current_sender(socket) do
-    case socket.assigns[:current_account] do
-      %{address: address} when is_binary(address) -> address
-      _other -> nil
-    end
-  end
-
-  defp current_tribe_id(socket) do
-    case socket.assigns[:active_character] do
-      %{tribe_id: tribe_id} when is_integer(tribe_id) and tribe_id > 0 -> tribe_id
-      _other -> account_tribe_id(socket.assigns[:current_account])
-    end
-  end
-
-  defp account_tribe_id(%{tribe_id: tribe_id}) when is_integer(tribe_id) and tribe_id > 0,
-    do: tribe_id
-
-  defp account_tribe_id(_account), do: nil
-
-  defp load_solar_systems(pid) when is_pid(pid), do: StaticData.list_solar_systems(pid)
-  defp load_solar_systems(_pid), do: []
-
-  defp solar_system_name(pid, solar_system_id) when is_pid(pid) and is_integer(solar_system_id) do
-    case StaticData.get_solar_system(pid, solar_system_id) do
-      %{name: name} -> name
-      _other -> ""
-    end
-  end
-
-  defp solar_system_name(_pid, _solar_system_id), do: ""
-
-  defp default_filters do
-    %{
-      "report_type" => "",
-      "solar_system_name" => "",
-      "price_min_sui" => "",
-      "price_max_sui" => ""
-    }
-  end
+  defp maybe_put_reputation_registry_id(opts, _reputation_registry_id), do: opts
 end

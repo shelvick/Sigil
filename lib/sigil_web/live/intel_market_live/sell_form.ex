@@ -23,6 +23,84 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
       </div>
 
       <%= if @can_sell do %>
+        <div class="mt-6 space-y-4 rounded-2xl border border-space-600/80 bg-space-950/50 p-5">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="font-mono text-xs uppercase tracking-[0.24em] text-quantum-300">Seller Identity</p>
+              <%= if @active_pseudonym do %>
+                <p class="mt-2 text-sm font-semibold text-cream">Active pseudonym</p>
+                <p class="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-space-500"><%= @active_pseudonym %></p>
+              <% else %>
+                <p class="mt-2 text-sm text-space-500">Create a pseudonymous identity to sell intel</p>
+              <% end %>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                :if={length(@pseudonyms) < 5}
+                type="button"
+                phx-click="create_pseudonym"
+                class="inline-flex rounded-full border border-quantum-400/50 bg-quantum-400/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.22em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+              >
+                Create Pseudonym
+              </button>
+
+              <button
+                :if={@active_pseudonym}
+                type="button"
+                phx-click="request_delete_pseudonym"
+                phx-value-pseudonym_address={@active_pseudonym}
+                class="inline-flex rounded-full border border-warning/40 bg-warning/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.22em] text-warning transition hover:border-warning hover:text-cream"
+              >
+                Delete Active
+              </button>
+            </div>
+          </div>
+
+          <%= if length(@pseudonyms) > 1 do %>
+            <.form id="pseudonym-switcher" for={to_form(%{"active_address" => @active_pseudonym}, as: :pseudonym)} phx-change="switch_pseudonym">
+              <label class="block space-y-2">
+                <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Switch pseudonym</span>
+                <select
+                  name="pseudonym[active_address]"
+                  class="w-full rounded-2xl border border-space-600/80 bg-space-900/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
+                >
+                  <option :for={pseudonym <- @pseudonyms} value={pseudonym.pseudonym_address} selected={pseudonym.pseudonym_address == @active_pseudonym}>
+                    <%= pseudonym.pseudonym_address %>
+                  </option>
+                </select>
+              </label>
+            </.form>
+          <% end %>
+
+          <%= if @pseudonym_error_message do %>
+            <p class="text-sm text-warning"><%= @pseudonym_error_message %></p>
+          <% end %>
+
+          <%= if @pseudonym_delete_warning do %>
+            <div class="space-y-3 rounded-2xl border border-warning/40 bg-warning/10 p-4">
+              <p class="text-sm leading-6 text-warning"><%= @pseudonym_delete_warning %></p>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  phx-click="delete_pseudonym"
+                  phx-value-pseudonym_address={@pending_delete_pseudonym}
+                  class="inline-flex rounded-full border border-warning/50 bg-warning/20 px-4 py-2 font-mono text-xs uppercase tracking-[0.22em] text-warning transition hover:border-warning hover:text-cream"
+                >
+                  Confirm Delete
+                </button>
+                <button
+                  type="button"
+                  phx-click="cancel_delete_pseudonym"
+                  class="inline-flex rounded-full border border-space-600/80 bg-space-900/50 px-4 py-2 font-mono text-xs uppercase tracking-[0.22em] text-space-500 transition hover:border-space-500 hover:text-cream"
+                >
+                  Keep Pseudonym
+                </button>
+              </div>
+            </div>
+          <% end %>
+        </div>
+
         <.form id="sell-intel-form" for={@form} phx-change="validate_listing" phx-submit="submit_listing" class="mt-6 space-y-5">
           <div class="flex flex-wrap gap-3">
             <label class={entry_mode_classes(@entry_mode == "existing")}>
@@ -129,15 +207,21 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
             Restrict to your tribe
           </label>
 
+          <p :if={!@active_pseudonym} class="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
+            Create and activate a pseudonym before publishing a listing.
+          </p>
+
           <datalist id="seller-solar-systems">
             <option :for={system <- @solar_systems} value={system.name}></option>
           </datalist>
 
           <button
             type="submit"
-            class="inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
+            disabled={!@active_pseudonym}
+            aria-disabled={to_string(!@active_pseudonym)}
+            class={publish_button_classes(@active_pseudonym)}
           >
-            Create Listing
+            Publish Intel
           </button>
         </.form>
       <% else %>
@@ -166,5 +250,14 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
 
   defp entry_mode_classes(false) do
     "rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-space-500 transition hover:border-quantum-400 hover:text-cream"
+  end
+
+  @spec publish_button_classes(String.t() | nil) :: String.t()
+  defp publish_button_classes(active_pseudonym) when is_binary(active_pseudonym) do
+    "inline-flex rounded-full bg-quantum-400 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-950 transition hover:bg-quantum-300"
+  end
+
+  defp publish_button_classes(_active_pseudonym) do
+    "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-5 py-3 font-mono text-xs uppercase tracking-[0.25em] text-space-500 opacity-70"
   end
 end

@@ -132,6 +132,11 @@ defmodule Sigil.DiplomacyTestSuiClient do
   def get_dynamic_fields(_parent_id, _opts),
     do: {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
 
+  @doc "Returns no coins because diplomacy probes do not use gas relay funding."
+  @impl true
+  @spec get_coins(String.t(), keyword()) :: {:ok, [Sigil.Sui.Client.coin_info()]}
+  def get_coins(_owner, _opts), do: {:ok, []}
+
   @doc "Returns `:not_found` because diplomacy probes do not verify zkLogin signatures."
   @impl true
   @spec verify_zklogin_signature(String.t(), String.t(), String.t(), String.t(), keyword()) ::

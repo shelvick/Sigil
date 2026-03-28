@@ -2,6 +2,8 @@ import { SealClient, SessionKey } from "@mysten/seal"
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc"
 import { Transaction } from "@mysten/sui/transactions"
 
+import { getActivePseudonym } from "./pseudonym_store"
+
 const DEFAULT_SESSION_TTL_MIN = 10
 const UNPUBLISHED_PACKAGE_ID = `0x${"0".repeat(64)}`
 
@@ -106,31 +108,58 @@ const SealEncrypt = {
       this.pushEvent("seal_status", { status: "decrypting" })
       phase = "decrypt"
 
-      const { wallet, account } = await this._resolveWalletAccount()
-      const sessionKey = await SessionKey.create({
-        address: account.address,
-        packageId: config.seal_package_id,
-        ttlMin: DEFAULT_SESSION_TTL_MIN,
-        suiClient
-      })
+      const walletAddress = this.el.dataset.address.toLowerCase()
+      const sellerAddress = (payload?.seller_address || this.el.dataset.activePseudonym || "")
+        .toLowerCase()
+      const activePseudonym = getActivePseudonym()
+      const pseudonymAddress = activePseudonym?.getPublicKey?.()?.toSuiAddress?.()?.toLowerCase?.()
 
-      const signFeature = wallet.features?.["sui:signPersonalMessage"]
-      if (!signFeature) {
-        throw new Error("Wallet does not support message signing")
+      let approvalSignerAddress = this.el.dataset.address
+      let sessionKey
+
+      if (activePseudonym && sellerAddress !== "" && pseudonymAddress === sellerAddress) {
+        if (this.wallets.length === 0 && typeof activePseudonym.signTransaction === "function") {
+          await activePseudonym.signTransaction(new Uint8Array([0]))
+        }
+
+        approvalSignerAddress = sellerAddress
+
+        sessionKey = await SessionKey.create({
+          address: sellerAddress,
+          signer: activePseudonym,
+          packageId: config.seal_package_id,
+          ttlMin: DEFAULT_SESSION_TTL_MIN,
+          suiClient
+        })
+      } else {
+        const { wallet, account } = await this._resolveWalletAccount()
+        approvalSignerAddress = account.address
+
+        sessionKey = await SessionKey.create({
+          address: account.address,
+          packageId: config.seal_package_id,
+          ttlMin: DEFAULT_SESSION_TTL_MIN,
+          suiClient
+        })
+
+        const signFeature = wallet.features?.["sui:signPersonalMessage"]
+        if (!signFeature) {
+          throw new Error("Wallet does not support message signing")
+        }
+
+        const signed = await signFeature.signPersonalMessage({
+          message: sessionKey.getPersonalMessage(),
+          account
+        })
+        await sessionKey.setPersonalMessageSignature(signed.signature)
       }
-
-      const signed = await signFeature.signPersonalMessage({
-        message: sessionKey.getPersonalMessage(),
-        account
-      })
-      await sessionKey.setPersonalMessageSignature(signed.signature)
 
       const txBytes = await this._buildApprovalTransaction({
         packageId: config.seal_package_id,
         listingId,
         sealId,
         suiClient,
-        sender: account.address
+        sender: approvalSignerAddress || walletAddress
       })
 
       const plaintextBytes = await sealClient.decrypt({

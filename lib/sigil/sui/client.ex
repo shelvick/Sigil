@@ -88,6 +88,14 @@ defmodule Sigil.Sui.Client do
   @typedoc "Raw zkLogin verification payload returned from Sui."
   @type zklogin_result :: %{String.t() => term()}
 
+  @typedoc "SUI coin info used for gas selection."
+  @type coin_info :: %{
+          object_id: <<_::256>>,
+          version: non_neg_integer(),
+          digest: <<_::256>>,
+          balance: non_neg_integer()
+        }
+
   @doc "Submits a signed transaction to Sui."
   @callback execute_transaction(String.t(), [String.t()], request_opts()) ::
               {:ok, tx_effects()} | {:error, error_reason()}
@@ -100,4 +108,8 @@ defmodule Sigil.Sui.Client do
               String.t(),
               request_opts()
             ) :: {:ok, zklogin_result()} | {:error, error_reason()}
+
+  @doc "Fetches SUI coins owned by an address for gas selection."
+  @callback get_coins(String.t(), request_opts()) ::
+              {:ok, [coin_info()]} | {:error, error_reason()}
 end

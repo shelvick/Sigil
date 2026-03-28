@@ -13,6 +13,8 @@
 | `transaction_builder_test.exs` | `TransactionBuilderTest` | 14 | build!/1, build/1, digest/1, execute/3, reference vector |
 | `tx_diplomacy_test.exs` | `Sigil.Sui.TxDiplomacyTest` | 11 | All builder functions, package ID, shared refs, validation, TransactionBuilder integration |
 | `tx_custodian_test.exs` | `Sigil.Sui.TxCustodianTest` | 19 | All 11 builders, package ID, mutable/immutable refs, standing/address/batch validation, TransactionBuilder integration |
+| `gas_relay_test.exs` | `Sigil.Sui.GasRelayTest` | 13 | prepare_sponsored (coin selection, gas budget, relay signing), submit_sponsored (dual-sig, error handling), relay_address, keypair file lifecycle (load/generate/persist), insufficient gas, no coins |
+| `tx_intel_reputation_test.exs` | `Sigil.Sui.TxIntelReputationTest` | 5 | build_confirm_quality/build_report_bad_quality PTB structure, shared-ref mutability (registry mutable, listing immutable), TransactionBuilder integration |
 
 ## Patterns
 

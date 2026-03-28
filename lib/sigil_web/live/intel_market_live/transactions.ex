@@ -6,127 +6,22 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3, push_event: 3]
 
-  alias Sigil.{Diplomacy, Intel, IntelMarket, StaticData}
-  alias Sigil.Intel.IntelReport
+  alias Sigil.IntelMarket
   alias SigilWeb.IntelMarketLive.State
+  alias SigilWeb.IntelMarketLive.Transactions.ListingFlow
 
   @doc """
   Validates listing input and starts the Seal encrypt-and-upload flow.
   """
   @spec submit_listing(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
-  def submit_listing(%{assigns: %{can_sell: false}} = socket, _params) do
-    put_flash(socket, :error, "creating listings requires a tribe-backed intel record")
-  end
-
-  @doc false
-  def submit_listing(socket, params) do
-    with :ok <- ensure_restriction_allowed(socket, params),
-         {:ok, report} <- resolve_report(socket, params),
-         {:ok, price_mist} <- State.parse_price_sui(Map.get(params, "price_sui")),
-         description when is_binary(description) and description != "" <-
-           Map.get(params, "description") do
-      intel_data = export_intel_data(report, description)
-      seal_id = random_seal_id()
-
-      socket
-      |> assign(
-        pending_listing: %{
-          report: report,
-          restricted?: Map.get(params, "restricted") == "true",
-          price_mist: price_mist,
-          description: description,
-          report_type: intel_data.report_type,
-          solar_system_id: intel_data.solar_system_id,
-          assembly_id: intel_data.assembly_id,
-          notes: intel_data.notes,
-          seal_id: seal_id
-        },
-        seal_error_message: nil,
-        seal_status: "encrypting",
-        page_state: :preparing_listing
-      )
-      |> push_event("encrypt_and_upload", %{
-        "intel_data" => %{
-          "report_type" => intel_data.report_type,
-          "solar_system_id" => intel_data.solar_system_id,
-          "assembly_id" => intel_data.assembly_id,
-          "notes" => intel_data.notes,
-          "label" => intel_data.label
-        },
-        "seal_id" => seal_id,
-        "config" => IntelMarket.build_seal_config(State.market_opts(socket)),
-        "report_type" => intel_data.report_type,
-        "solar_system_id" => intel_data.solar_system_id,
-        "assembly_id" => intel_data.assembly_id,
-        "notes" => intel_data.notes
-      })
-    else
-      {:error, :missing_active_custodian} ->
-        put_flash(socket, :error, "restricted listings require an active custodian")
-
-      {:error, :unknown_report} ->
-        put_flash(socket, :error, "Select an intel report")
-
-      {:error, :unknown_solar_system} ->
-        put_flash(socket, :error, "Unknown or ambiguous solar system")
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        put_flash(socket, :error, State.changeset_error(changeset))
-
-      :error ->
-        put_flash(socket, :error, "Enter a valid price")
-
-      _other ->
-        put_flash(socket, :error, "Unable to prepare listing")
-    end
-  end
+  defdelegate submit_listing(socket, params), to: ListingFlow
 
   @doc """
   Builds the unsigned create-listing transaction after Seal upload succeeds.
   """
   @spec build_listing_transaction(Phoenix.LiveView.Socket.t(), map(), map()) ::
           Phoenix.LiveView.Socket.t()
-  def build_listing_transaction(socket, pending, payload) do
-    params = %{
-      seal_id: Map.fetch!(payload, "seal_id"),
-      encrypted_blob_id: Map.get(payload, "encrypted_blob_id") || Map.fetch!(payload, "blob_id"),
-      price: pending.price_mist,
-      report_type: pending.report_type,
-      solar_system_id: pending.solar_system_id,
-      description: pending.description,
-      intel_report_id: pending.report.id
-    }
-
-    builder_result =
-      if pending.restricted? do
-        IntelMarket.build_create_restricted_listing_tx(params, State.market_opts(socket))
-      else
-        IntelMarket.build_create_listing_tx(params, State.market_opts(socket))
-      end
-
-    case builder_result do
-      {:ok, %{tx_bytes: tx_bytes, client_nonce: client_nonce}} ->
-        socket
-        |> assign(
-          pending_listing: Map.put(pending, :client_nonce, client_nonce),
-          pending_tx: %{kind: :create_listing, tx_bytes: tx_bytes},
-          page_state: :signing_tx,
-          seal_status: nil,
-          seal_error_message: nil
-        )
-        |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})
-
-      {:error, :no_active_custodian} ->
-        socket
-        |> assign(page_state: :ready, pending_listing: nil, pending_tx: nil, seal_status: nil)
-        |> put_flash(:error, "restricted listings require an active custodian")
-
-      {:error, reason} ->
-        socket
-        |> assign(page_state: :ready, pending_listing: nil, pending_tx: nil, seal_status: nil)
-        |> put_flash(:error, "Transaction failed: #{inspect(reason)}")
-    end
-  end
+  defdelegate build_listing_transaction(socket, pending, payload), to: ListingFlow
 
   @doc """
   Begins a purchase flow for the selected listing.
@@ -196,7 +91,45 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
   """
   @spec cancel_listing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   def cancel_listing(socket, listing_id) do
-    case IntelMarket.build_cancel_listing_tx(listing_id, State.market_opts(socket)) do
+    opts = State.market_opts(socket)
+
+    result =
+      case IntelMarket.get_listing(listing_id, opts) do
+        %{seller_address: seller_address}
+        when is_binary(socket.assigns.active_pseudonym) and
+               seller_address == socket.assigns.active_pseudonym ->
+          IntelMarket.build_pseudonym_cancel_listing_tx(
+            listing_id,
+            Keyword.put(opts, :pseudonym_address, socket.assigns.active_pseudonym)
+          )
+
+        %{seller_address: seller_address} when seller_address == socket.assigns.sender ->
+          IntelMarket.build_cancel_listing_tx(listing_id, opts)
+
+        nil ->
+          {:error, :listing_not_found}
+
+        _other_listing ->
+          {:error, :not_listing_owner}
+      end
+
+    case result do
+      {:ok, %{tx_bytes: tx_bytes, relay_signature: relay_signature}} ->
+        socket
+        |> assign(
+          page_state: :signing_tx,
+          pending_tx: %{
+            kind: :cancel_listing_pseudonym,
+            tx_bytes: tx_bytes,
+            relay_signature: relay_signature,
+            pseudonym_address: socket.assigns.active_pseudonym
+          }
+        )
+        |> push_event("sign_pseudonym_tx", %{
+          "pseudonym_address" => socket.assigns.active_pseudonym,
+          "tx_bytes" => tx_bytes
+        })
+
       {:ok, %{tx_bytes: tx_bytes}} ->
         socket
         |> assign(
@@ -204,6 +137,15 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
           pending_tx: %{kind: :cancel_listing, tx_bytes: tx_bytes}
         )
         |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+      {:error, :listing_not_found} ->
+        put_flash(socket, :error, "Listing not found")
+
+      {:error, :not_listing_owner} ->
+        put_flash(socket, :error, "Only the listing owner can cancel this listing")
+
+      {:error, :missing_pseudonym} ->
+        put_flash(socket, :error, "Select an active pseudonym to cancel this listing")
 
       {:error, _reason} ->
         put_flash(socket, :error, "Transaction failed")
@@ -215,6 +157,33 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
   """
   @spec finalize_transaction(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
           Phoenix.LiveView.Socket.t()
+  def finalize_transaction(
+        %{assigns: %{pending_tx: %{kind: :create_listing_pseudonym} = pending_tx}} = socket,
+        tx_bytes,
+        pseudonym_signature
+      )
+      when pending_tx.tx_bytes == tx_bytes and is_binary(pseudonym_signature) do
+    case IntelMarket.submit_pseudonym_transaction(
+           tx_bytes,
+           pseudonym_signature,
+           pending_tx.relay_signature,
+           State.market_opts(socket)
+         ) do
+      {:ok, %{effects_bcs: effects_bcs}} ->
+        socket
+        |> assign(page_state: :ready, pending_listing: nil, pending_tx: nil, seal_status: nil)
+        |> maybe_push_effects(%{"bcs" => effects_bcs})
+        |> put_flash(:info, "Listing created")
+        |> State.refresh_marketplace()
+
+      {:error, _reason} ->
+        socket
+        |> assign(page_state: :ready, pending_tx: nil, pending_listing: nil, seal_status: nil)
+        |> put_flash(:error, "Transaction failed")
+    end
+  end
+
+  @doc false
   def finalize_transaction(
         %{assigns: %{pending_tx: %{kind: :create_listing}}} = socket,
         tx_bytes,
@@ -237,32 +206,44 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
 
   @doc false
   def finalize_transaction(
-        %{assigns: %{pending_tx: %{kind: kind}}} = socket,
+        %{assigns: %{pending_tx: %{kind: :cancel_listing_pseudonym} = pending_tx}} = socket,
+        tx_bytes,
+        pseudonym_signature
+      )
+      when pending_tx.tx_bytes == tx_bytes and is_binary(pseudonym_signature) do
+    case IntelMarket.submit_pseudonym_transaction(
+           tx_bytes,
+           pseudonym_signature,
+           pending_tx.relay_signature,
+           State.market_opts(socket)
+         ) do
+      {:ok, %{effects_bcs: effects_bcs}} ->
+        socket
+        |> assign(page_state: :ready, pending_tx: nil, seal_status: nil)
+        |> maybe_push_effects(%{"bcs" => effects_bcs})
+        |> put_flash(:info, "Listing cancelled")
+        |> State.refresh_marketplace()
+
+      {:error, _reason} ->
+        socket
+        |> assign(page_state: :ready, pending_tx: nil, seal_status: nil)
+        |> put_flash(:error, "Transaction failed")
+    end
+  end
+
+  @doc false
+  def finalize_transaction(
+        %{assigns: %{pending_tx: %{kind: kind} = pending_tx}} = socket,
         tx_bytes,
         signature
       )
-      when kind in [:purchase, :cancel_listing] do
-    case IntelMarket.submit_signed_transaction(tx_bytes, signature, State.market_opts(socket)) do
+      when kind in [:purchase, :cancel_listing, :confirm_quality, :report_bad_quality] do
+    case submit_signed_tx(socket, tx_bytes, signature) do
       {:ok, %{effects_bcs: effects_bcs}} ->
-        socket =
-          socket
-          |> assign(page_state: :ready, pending_tx: nil, seal_status: nil)
-          |> maybe_push_effects(%{"bcs" => effects_bcs})
-
-        case kind do
-          :purchase ->
-            socket
-            |> put_flash(
-              :info,
-              "Purchase successful — seller must reveal the canonical intel payload"
-            )
-            |> State.refresh_marketplace()
-
-          :cancel_listing ->
-            socket
-            |> put_flash(:info, "Listing cancelled")
-            |> State.refresh_marketplace()
-        end
+        socket
+        |> assign(page_state: :ready, pending_tx: nil, seal_status: nil)
+        |> maybe_push_effects(%{"bcs" => effects_bcs})
+        |> handle_successful_signed_tx(kind, pending_tx)
 
       {:error, _reason} ->
         socket
@@ -297,98 +278,41 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
     |> put_flash(:info, "Intel decrypted")
   end
 
-  defp ensure_restriction_allowed(socket, %{"restricted" => "true"}) do
-    if Diplomacy.get_active_custodian(State.diplomacy_opts(socket)) do
-      :ok
-    else
-      {:error, :missing_active_custodian}
+  @doc """
+  Builds buyer feedback transactions for decrypted purchased intel and requests wallet signing.
+  """
+  @spec submit_feedback(
+          Phoenix.LiveView.Socket.t(),
+          String.t(),
+          :confirm_quality | :report_bad_quality
+        ) ::
+          Phoenix.LiveView.Socket.t()
+  def submit_feedback(socket, listing_id, action)
+      when is_binary(listing_id) and action in [:confirm_quality, :report_bad_quality] do
+    case build_feedback_tx(listing_id, action, socket) do
+      {:ok, %{tx_bytes: tx_bytes}} ->
+        socket
+        |> assign(
+          page_state: :signing_tx,
+          pending_tx: %{kind: action, tx_bytes: tx_bytes, listing_id: listing_id}
+        )
+        |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+      {:error, :already_reviewed} ->
+        put_flash(socket, :error, "Feedback already submitted")
+
+      {:error, :listing_not_sold} ->
+        put_flash(socket, :error, "Only sold listings can be reviewed")
+
+      {:error, :listing_not_found} ->
+        put_flash(socket, :error, "Listing not found")
+
+      {:error, :reputation_unavailable} ->
+        put_flash(socket, :error, "Feedback system unavailable")
+
+      {:error, _reason} ->
+        put_flash(socket, :error, "Transaction failed")
     end
-  end
-
-  defp ensure_restriction_allowed(_socket, _params), do: :ok
-
-  defp resolve_report(socket, %{"entry_mode" => "existing", "report_id" => report_id}) do
-    case Enum.find(socket.assigns.my_reports, &(&1.id == report_id)) do
-      %IntelReport{} = report -> {:ok, report}
-      nil -> {:error, :unknown_report}
-    end
-  end
-
-  defp resolve_report(socket, params) do
-    persist_manual_report(socket, params)
-  end
-
-  defp persist_manual_report(socket, params) do
-    solar_system_name = Map.get(params, "solar_system_name", "") |> String.trim()
-
-    solar_system_id =
-      if solar_system_name == "" do
-        nil
-      else
-        case StaticData.get_solar_system_by_name(
-               socket.assigns.static_data_pid,
-               solar_system_name
-             ) do
-          %{id: id} -> id
-          nil -> :unknown
-        end
-      end
-
-    if solar_system_id == :unknown do
-      {:error, :unknown_solar_system}
-    else
-      attrs = manual_report_attrs(socket, params, solar_system_id)
-
-      case persist_report(attrs, params, socket) do
-        {:ok, report} -> {:ok, report}
-        {:error, %Ecto.Changeset{} = changeset} -> {:error, changeset}
-      end
-    end
-  end
-
-  defp manual_report_attrs(socket, params, solar_system_id) do
-    %{
-      tribe_id: socket.assigns.tribe_id,
-      assembly_id: State.blank_to_nil(Map.get(params, "assembly_id")),
-      solar_system_id: solar_system_id,
-      label: State.blank_to_nil(Map.get(params, "description")),
-      notes: State.blank_to_nil(Map.get(params, "notes")),
-      reported_by: socket.assigns.sender,
-      reported_by_name: State.active_character_name(socket.assigns.active_character),
-      reported_by_character_id: socket.assigns.active_character.id
-    }
-  end
-
-  defp persist_report(attrs, %{"report_type" => "2"}, socket),
-    do: Intel.report_scouting(attrs, State.intel_opts(socket))
-
-  defp persist_report(attrs, _params, socket),
-    do: Intel.report_location(attrs, State.intel_opts(socket))
-
-  @spec export_intel_data(IntelReport.t(), String.t()) :: %{
-          report_type: 1 | 2,
-          solar_system_id: non_neg_integer(),
-          assembly_id: String.t(),
-          notes: String.t(),
-          label: String.t()
-        }
-  defp export_intel_data(%IntelReport{} = report, description) when is_binary(description) do
-    %{
-      report_type: report_type_value(report.report_type),
-      solar_system_id: report.solar_system_id || 0,
-      assembly_id: report.assembly_id || "",
-      notes: report.notes || "",
-      label: description
-    }
-  end
-
-  @spec report_type_value(IntelReport.report_type() | nil) :: 1 | 2
-  defp report_type_value(:scouting), do: 2
-  defp report_type_value(_report_type), do: 1
-
-  @spec random_seal_id() :: String.t()
-  defp random_seal_id do
-    "0x" <> Base.encode16(:crypto.strong_rand_bytes(32), case: :lower)
   end
 
   @spec decode_decrypted_payload(map()) :: map()
@@ -400,6 +324,65 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
   end
 
   defp decode_decrypted_payload(payload) when is_map(payload), do: payload
+
+  @spec build_feedback_tx(
+          String.t(),
+          :confirm_quality | :report_bad_quality,
+          Phoenix.LiveView.Socket.t()
+        ) :: {:ok, %{tx_bytes: String.t()}} | {:error, term()}
+  defp build_feedback_tx(listing_id, :confirm_quality, socket) do
+    IntelMarket.build_confirm_quality_tx(listing_id, State.market_opts(socket))
+  end
+
+  defp build_feedback_tx(listing_id, :report_bad_quality, socket) do
+    IntelMarket.build_report_bad_quality_tx(listing_id, State.market_opts(socket))
+  end
+
+  @spec submit_signed_tx(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+          {:ok, %{digest: String.t(), effects_bcs: String.t() | nil}} | {:error, term()}
+  defp submit_signed_tx(socket, tx_bytes, signature) do
+    case socket.assigns.pending_tx.kind do
+      kind when kind in [:confirm_quality, :report_bad_quality] ->
+        IntelMarket.submit_feedback_transaction(tx_bytes, signature, State.market_opts(socket))
+
+      _other ->
+        IntelMarket.submit_signed_transaction(tx_bytes, signature, State.market_opts(socket))
+    end
+  end
+
+  @spec handle_successful_signed_tx(
+          Phoenix.LiveView.Socket.t(),
+          :purchase | :cancel_listing | :confirm_quality | :report_bad_quality,
+          map()
+        ) :: Phoenix.LiveView.Socket.t()
+  defp handle_successful_signed_tx(socket, :purchase, _pending_tx) do
+    socket
+    |> put_flash(:info, "Purchase successful — seller must reveal the canonical intel payload")
+    |> State.refresh_marketplace()
+  end
+
+  defp handle_successful_signed_tx(socket, :cancel_listing, _pending_tx) do
+    socket
+    |> put_flash(:info, "Listing cancelled")
+    |> State.refresh_marketplace()
+  end
+
+  defp handle_successful_signed_tx(socket, action, pending_tx)
+       when action in [:confirm_quality, :report_bad_quality] do
+    socket
+    |> maybe_mark_feedback_recorded(pending_tx)
+    |> put_flash(:info, "Feedback submitted")
+    |> State.refresh_marketplace()
+  end
+
+  @spec maybe_mark_feedback_recorded(Phoenix.LiveView.Socket.t(), map()) ::
+          Phoenix.LiveView.Socket.t()
+  defp maybe_mark_feedback_recorded(socket, %{listing_id: listing_id})
+       when is_binary(listing_id) do
+    State.mark_feedback_recorded(socket, listing_id)
+  end
+
+  defp maybe_mark_feedback_recorded(socket, _pending_tx), do: socket
 
   defp maybe_push_effects(socket, %{"bcs" => effects_bcs}) when is_binary(effects_bcs) do
     push_event(socket, "report_transaction_effects", %{effects: effects_bcs})

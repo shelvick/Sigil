@@ -294,10 +294,9 @@ defmodule Sigil.ApplicationTest do
       Task.async(fn ->
         System.cmd("mix", Fixtures.mix_run_args(config_path, script, no_start: true),
           cd: project_root(),
-          env: [
-            {"MIX_ENV", "test"},
-            {"ELIXIR_CLI_NO_VALIDATE_COMPILE_ENV", "1"}
-          ],
+          env:
+            [{"MIX_ENV", "test"}] ++
+              Fixtures.mix_subprocess_env("application_probe_mix"),
           stderr_to_stdout: true
         )
       end)

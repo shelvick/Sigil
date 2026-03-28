@@ -82,11 +82,16 @@ defmodule SigilWeb.IntelMarketLive.Components do
     assigns =
       assigns
       |> assign(:decrypted_intel, assigns[:decrypted_intel] || %{})
+      |> assign(:reputation, assigns[:reputation])
+      |> assign(:active_pseudonym, assigns[:active_pseudonym])
       |> assign(
         :purchase_action,
-        purchase_action(assigns.listing, assigns.sender, assigns[:tribe_id])
+        purchase_action(assigns.listing, assigns[:sender], assigns[:tribe_id])
       )
-      |> assign(:decrypt_action, decrypt_action(assigns.listing, assigns.sender))
+      |> assign(
+        :decrypt_action,
+        decrypt_action(assigns.listing, assigns[:sender], assigns[:active_pseudonym])
+      )
 
     ~H"""
     <article class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-6 shadow-xl shadow-black/20 backdrop-blur">
@@ -116,6 +121,10 @@ defmodule SigilWeb.IntelMarketLive.Components do
             <span>Seller <%= truncate_id(@listing.seller_address) %></span>
             <span :if={@listing.buyer_address}>Buyer <%= truncate_id(@listing.buyer_address) %></span>
           </div>
+
+          <p :if={is_map(@reputation)} class="font-mono text-xs uppercase tracking-[0.2em] text-success">
+            <%= reputation_summary(@reputation) %>
+          </p>
 
           <div :if={present_decrypted?(@decrypted_intel)} class="rounded-2xl border border-success/30 bg-success/10 p-4 text-left text-sm text-cream">
             <p class="font-mono text-xs uppercase tracking-[0.22em] text-success">Decrypted Intel</p>
@@ -162,7 +171,10 @@ defmodule SigilWeb.IntelMarketLive.Components do
   """
   @spec my_listings_panel(map()) :: Phoenix.LiveView.Rendered.t()
   def my_listings_panel(assigns) do
-    assigns = assign(assigns, :purchased_listings, assigns[:purchased_listings] || [])
+    assigns =
+      assigns
+      |> assign(:purchased_listings, assigns[:purchased_listings] || [])
+      |> assign(:feedback_recorded, assigns[:feedback_recorded] || %{})
 
     ~H"""
     <div class="space-y-4 rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/30 backdrop-blur">
@@ -253,6 +265,35 @@ defmodule SigilWeb.IntelMarketLive.Components do
                         Dismiss
                       </button>
                     </div>
+
+                    <div class="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        phx-click={if feedback_recorded?(@feedback_recorded, listing.id), do: nil, else: "confirm_quality"}
+                        phx-value-listing_id={listing.id}
+                        disabled={feedback_recorded?(@feedback_recorded, listing.id)}
+                        aria-disabled={to_string(feedback_recorded?(@feedback_recorded, listing.id))}
+                        class={feedback_button_classes(:confirm, feedback_recorded?(@feedback_recorded, listing.id))}
+                      >
+                        Confirm Quality
+                      </button>
+                      <button
+                        type="button"
+                        phx-click={if feedback_recorded?(@feedback_recorded, listing.id), do: nil, else: "report_bad_quality"}
+                        phx-value-listing_id={listing.id}
+                        disabled={feedback_recorded?(@feedback_recorded, listing.id)}
+                        aria-disabled={to_string(feedback_recorded?(@feedback_recorded, listing.id))}
+                        class={feedback_button_classes(:report, feedback_recorded?(@feedback_recorded, listing.id))}
+                      >
+                        Report Bad Quality
+                      </button>
+                      <span
+                        :if={feedback_recorded?(@feedback_recorded, listing.id)}
+                        class="inline-flex items-center rounded-full border border-space-600/80 bg-space-950/60 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-space-500"
+                      >
+                        Feedback submitted
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -282,18 +323,6 @@ defmodule SigilWeb.IntelMarketLive.Components do
     <div :if={@status} class="rounded-2xl border border-quantum-400/40 bg-quantum-400/10 p-4 text-sm text-quantum-300">
       <%= @status %>
     </div>
-    """
-  end
-
-  @doc """
-  Renders a listing status badge.
-  """
-  @spec listing_status_badge(map()) :: Phoenix.LiveView.Rendered.t()
-  def listing_status_badge(assigns) do
-    ~H"""
-    <span class="rounded-full border border-space-600/80 bg-space-950/60 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-      <%= status_label(@status) %>
-    </span>
     """
   end
 
@@ -379,18 +408,28 @@ defmodule SigilWeb.IntelMarketLive.Components do
     %{visible?: true, enabled?: false, reason: "Restricted to another tribe"}
   end
 
-  @spec decrypt_action(IntelListing.t(), String.t() | nil) :: %{visible?: boolean()}
-  defp decrypt_action(%IntelListing{status: :sold, seller_address: seller_address}, sender)
-       when seller_address == sender do
+  @spec decrypt_action(IntelListing.t(), String.t() | nil, String.t() | nil) :: %{
+          visible?: boolean()
+        }
+  defp decrypt_action(
+         %IntelListing{status: :sold, seller_address: seller_address},
+         sender,
+         active_pseudonym
+       )
+       when seller_address == sender or seller_address == active_pseudonym do
     %{visible?: true}
   end
 
-  defp decrypt_action(%IntelListing{status: :sold, buyer_address: buyer_address}, sender)
+  defp decrypt_action(
+         %IntelListing{status: :sold, buyer_address: buyer_address},
+         sender,
+         _active_pseudonym
+       )
        when buyer_address == sender and not is_nil(sender) do
     %{visible?: true}
   end
 
-  defp decrypt_action(%IntelListing{}, _sender), do: %{visible?: false}
+  defp decrypt_action(%IntelListing{}, _sender, _active_pseudonym), do: %{visible?: false}
 
   @spec purchase_button_classes(boolean()) :: String.t()
   defp purchase_button_classes(true) do
@@ -399,6 +438,20 @@ defmodule SigilWeb.IntelMarketLive.Components do
 
   defp purchase_button_classes(false) do
     "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-space-500 opacity-70"
+  end
+
+  @spec reputation_summary(%{positive: non_neg_integer(), negative: non_neg_integer()}) ::
+          String.t()
+  defp reputation_summary(%{positive: positive, negative: negative}) do
+    total = positive + negative
+
+    ratio =
+      case total do
+        0 -> 0
+        _non_zero_total -> round(positive * 100 / total)
+      end
+
+    "+#{positive} / -#{negative} (#{ratio}%)"
   end
 
   @spec present?(String.t() | nil) :: boolean()
@@ -417,4 +470,22 @@ defmodule SigilWeb.IntelMarketLive.Components do
   @spec present_decrypted?(map()) :: boolean()
   defp present_decrypted?(payload) when is_map(payload), do: map_size(payload) > 0
   defp present_decrypted?(_payload), do: false
+
+  @spec feedback_recorded?(map(), String.t()) :: boolean()
+  defp feedback_recorded?(feedback_recorded, listing_id) when is_map(feedback_recorded) do
+    Map.get(feedback_recorded, listing_id, false)
+  end
+
+  @spec feedback_button_classes(:confirm | :report, boolean()) :: String.t()
+  defp feedback_button_classes(_action, true) do
+    "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-space-500 opacity-70"
+  end
+
+  defp feedback_button_classes(:confirm, false) do
+    "inline-flex rounded-full border border-success/40 bg-success/10 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-success transition hover:border-success hover:text-cream"
+  end
+
+  defp feedback_button_classes(:report, false) do
+    "inline-flex rounded-full border border-warning/40 bg-warning/10 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-warning transition hover:border-warning hover:text-cream"
+  end
 end

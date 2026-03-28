@@ -9,12 +9,14 @@ import FuelCountdown from "./hooks/fuel_countdown"
 import InfiniteScroll from "./hooks/infinite_scroll"
 import WalletConnect from "./hooks/wallet_hook"
 import SealEncrypt from "./hooks/seal_hook"
+import PseudonymKey from "./hooks/pseudonym_hook"
 
 let Hooks = {
   FuelCountdown: FuelCountdown,
   InfiniteScroll: InfiniteScroll,
   WalletConnect: WalletConnect,
-  SealEncrypt: SealEncrypt
+  SealEncrypt: SealEncrypt,
+  PseudonymKey: PseudonymKey
 }
 
 let liveSocket = new LiveSocket("/live", Socket, {

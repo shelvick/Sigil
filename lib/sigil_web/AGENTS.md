@@ -12,7 +12,7 @@
   - `.Governance` (`live/diplomacy_live/governance.ex`) — extracted governance state management, tx building, and signing flow.
   - `.GovernanceComponents` (`live/diplomacy_live/governance_components.ex`) — governance section HEEx components.
 - `SigilWeb.IntelLive`, `SigilWeb.TribeOverviewLive`, and `SigilWeb.AssemblyDetailLive` — tribe intel views that share data with the marketplace seller workflow.
-- `assets/js/hooks/seal_hook.js` and `assets/js/hooks/wallet_hook.js` are the paired browser contracts for marketplace encryption/decryption and transaction signing.
+- `assets/js/hooks/seal_hook.js`, `assets/js/hooks/wallet_hook.js`, `assets/js/hooks/pseudonym_hook.js`, and `assets/js/hooks/pseudonym_store.js` are the browser contracts for marketplace encryption/decryption, transaction signing, and pseudonym identity management.
 
 ## Marketplace Notes
 - Marketplace sell flow no longer generates browser ZK proofs.
@@ -22,10 +22,12 @@
 
 ## JS Hooks
 - `assets/js/hooks/wallet_hook.js` — wallet discovery, account selection, `signPersonalMessage`, `signTransaction`, and `reportTransactionEffects` support.
-- `assets/js/hooks/seal_hook.js` — browser-side Seal encryption/decryption plus Walrus upload/fetch for marketplace flows.
+- `assets/js/hooks/seal_hook.js` — browser-side Seal encryption/decryption plus Walrus upload/fetch for marketplace flows; imports `getActivePseudonym` from pseudonym store.
+- `assets/js/hooks/pseudonym_hook.js` — browser-side pseudonym identity management: wallet-derived AES-GCM key derivation, Ed25519 keypair lifecycle, encrypted key persistence, and pseudonym transaction signing.
+- `assets/js/hooks/pseudonym_store.js` — shared in-memory pseudonym keypair cache used by both `pseudonym_hook.js` and `seal_hook.js`.
 - `assets/js/hooks/fuel_countdown.js` — assembly fuel countdown display.
 - `assets/js/hooks/infinite_scroll.js` — alert-feed pagination sentinel.
 
 ## Patterns
-- Marketplace UI keeps wallet signing and browser crypto separated: `WalletConnect` signs transactions, `SealEncrypt` handles encrypted payloads.
+- Marketplace UI keeps wallet signing, browser crypto, and pseudonym key management in separate hooks: `WalletConnect` signs transactions, `SealEncrypt` handles encrypted payloads, `PseudonymKey` manages pseudonym identities.
 - Session DI remains the preferred test hook for `cache_tables`, `pubsub`, `static_data`, and marketplace-specific doubles such as `walrus_client` overrides.

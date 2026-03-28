@@ -12,7 +12,7 @@ defmodule Sigil.IntelMarketTest do
   alias Sigil.{Cache, Repo}
   alias Sigil.Intel.IntelListing
   alias Sigil.Intel.IntelReport
-  alias Sigil.Sui.{TransactionBuilder, TxIntelMarket}
+  alias Sigil.Sui.{Signer, TransactionBuilder, TxIntelMarket, TxIntelReputation}
 
   @marketplace_topic "intel_market"
   @sigil_package_id "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1"
@@ -1027,6 +1027,460 @@ defmodule Sigil.IntelMarketTest do
     end
   end
 
+  describe "Layer 4 pseudonym and reputation APIs" do
+    test "build_pseudonym_create_listing_tx returns sponsored transaction", context do
+      params = create_listing_params(intel_report_id: Ecto.UUID.generate())
+      relay_keypair = relay_keypair()
+      relay_owner = relay_owner_address(relay_keypair)
+
+      expect(Sigil.Sui.ClientMock, :get_coins, fn ^relay_owner, client_opts ->
+        assert client_opts == []
+        {:ok, [relay_coin(0x11, 0x21, 12_000_000)]}
+      end)
+
+      assert {:ok,
+              %{tx_bytes: tx_bytes, relay_signature: relay_signature, client_nonce: client_nonce}} =
+               Sigil.IntelMarket.build_pseudonym_create_listing_tx(
+                 params,
+                 market_opts(
+                   context,
+                   sender: context.seller,
+                   pseudonym_address: address(0xA7),
+                   relay_keypair: relay_keypair
+                 )
+               )
+
+      assert is_binary(tx_bytes)
+      assert is_binary(relay_signature)
+      assert is_integer(client_nonce)
+    end
+
+    test "build_pseudonym_create_listing_tx preserves restricted listing intent", context do
+      relay_keypair = relay_keypair()
+
+      Cache.put(
+        context.tables.standings,
+        {:active_custodian, context.tribe_id},
+        custodian_info(
+          tribe_id: context.tribe_id,
+          object_id: address(0x25),
+          initial_shared_version: 11
+        )
+      )
+
+      params =
+        create_listing_params(
+          intel_report_id: Ecto.UUID.generate(),
+          restricted_to_tribe_id: context.tribe_id
+        )
+
+      expect(Sigil.Sui.ClientMock, :get_coins, fn _relay_owner, client_opts ->
+        assert client_opts == []
+
+        {:ok,
+         [
+           %{
+             object_id: :binary.copy(<<0x12>>, 32),
+             version: 7,
+             digest: :binary.copy(<<0x22>>, 32),
+             balance: 12_000_000
+           }
+         ]}
+      end)
+
+      assert {:ok,
+              %{tx_bytes: tx_bytes, relay_signature: relay_signature, client_nonce: client_nonce}} =
+               Sigil.IntelMarket.build_pseudonym_create_listing_tx(
+                 params,
+                 market_opts(
+                   context,
+                   sender: context.seller,
+                   tribe_id: context.tribe_id,
+                   pseudonym_address: address(0xA7),
+                   relay_keypair: relay_keypair
+                 )
+               )
+
+      assert is_binary(relay_signature)
+      assert is_integer(client_nonce)
+
+      assert {:create_listing, pending} =
+               Cache.get(context.tables.intel_market, {:pending_tx, context.seller, tx_bytes})
+
+      assert pending.seller_address == address(0xA7)
+      assert pending.restricted_to_tribe_id == context.tribe_id
+    end
+
+    test "build_pseudonym_create_listing_tx rejects missing pseudonym", context do
+      assert Sigil.IntelMarket.build_pseudonym_create_listing_tx(
+               create_listing_params(intel_report_id: Ecto.UUID.generate()),
+               market_opts(context, sender: context.seller)
+             ) == {:error, :missing_pseudonym}
+    end
+
+    test "submit_pseudonym_transaction passes through chain error", context do
+      assert {:error, :relay_submit_failed} =
+               Sigil.IntelMarket.submit_pseudonym_transaction(
+                 "tx-bytes",
+                 "pseudonym-signature",
+                 "relay-signature",
+                 market_opts(context, sender: context.seller)
+               )
+    end
+
+    test "submit_pseudonym_transaction reconciles pending ops", context do
+      params = create_listing_params(intel_report_id: Ecto.UUID.generate())
+      relay_keypair = relay_keypair()
+      relay_owner = relay_owner_address(relay_keypair)
+
+      expect(Sigil.Sui.ClientMock, :get_coins, fn ^relay_owner, client_opts ->
+        assert client_opts == []
+        {:ok, [relay_coin(0x41, 0x51, 12_000_000)]}
+      end)
+
+      assert {:ok,
+              %{tx_bytes: tx_bytes, relay_signature: relay_signature, client_nonce: client_nonce}} =
+               Sigil.IntelMarket.build_pseudonym_create_listing_tx(
+                 params,
+                 market_opts(
+                   context,
+                   sender: context.seller,
+                   pseudonym_address: address(0xA7),
+                   relay_keypair: relay_keypair
+                 )
+               )
+
+      created_listing_id = address(0xC1)
+
+      expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^tx_bytes, signatures, [] ->
+        assert signatures == ["pseudonym-signature", relay_signature]
+
+        {:ok,
+         %{
+           "status" => "SUCCESS",
+           "transaction" => %{"digest" => "pseudonym-create-digest"},
+           "bcs" => "pseudonym-effects-bcs",
+           "objectChanges" => [
+             %{
+               "type" => "created",
+               "objectType" => @listing_type,
+               "objectId" => created_listing_id,
+               "version" => "21"
+             }
+           ]
+         }}
+      end)
+
+      assert {:ok, %{digest: "pseudonym-create-digest", effects_bcs: "pseudonym-effects-bcs"}} =
+               Sigil.IntelMarket.submit_pseudonym_transaction(
+                 tx_bytes,
+                 "pseudonym-signature",
+                 relay_signature,
+                 market_opts(context, sender: context.seller, relay_keypair: relay_keypair)
+               )
+
+      persisted = Repo.get!(IntelListing, created_listing_id)
+      assert persisted.client_nonce == client_nonce
+      assert persisted.seller_address == address(0xA7)
+      assert persisted.status == :active
+
+      assert Cache.get(context.tables.intel_market, {:pending_tx, context.seller, tx_bytes}) ==
+               nil
+
+      assert_receive {:listing_created, %IntelListing{id: ^created_listing_id}}
+    end
+
+    test "get_reputation returns seller scores", context do
+      registry_id = address(0xA8)
+
+      expect(Sigil.Sui.ClientMock, :get_object, fn ^registry_id, [] ->
+        {:ok, reputation_registry_json(context.seller, 12, 2, [])}
+      end)
+
+      assert {:ok, %{positive: 12, negative: 2}} =
+               Sigil.IntelMarket.get_reputation(
+                 context.seller,
+                 market_opts(context, reputation_registry_id: registry_id)
+               )
+    end
+
+    test "get_reputation returns zeroes for unknown seller", context do
+      registry_id = address(0xA8)
+
+      expect(Sigil.Sui.ClientMock, :get_object, fn ^registry_id, [] ->
+        {:ok, reputation_registry_json(address(0xEE), 9, 1, [])}
+      end)
+
+      assert {:ok, %{positive: 0, negative: 0}} =
+               Sigil.IntelMarket.get_reputation(
+                 context.seller,
+                 market_opts(context, reputation_registry_id: registry_id)
+               )
+    end
+
+    test "get_reputation surfaces unavailable registry", context do
+      registry_id = address(0xA8)
+
+      expect(Sigil.Sui.ClientMock, :get_object, fn ^registry_id, [] ->
+        {:error, :timeout}
+      end)
+
+      assert Sigil.IntelMarket.get_reputation(
+               context.seller,
+               market_opts(context, reputation_registry_id: registry_id)
+             ) == {:error, :reputation_unavailable}
+    end
+
+    test "feedback builders reject already reviewed listing", context do
+      sold_listing_id = address(0xA9)
+      seller_address = address(0xDA)
+      registry_id = address(0xA8)
+
+      insert_listing!(%{
+        id: sold_listing_id,
+        seller_address: seller_address,
+        buyer_address: context.buyer,
+        status: :sold
+      })
+
+      expect(Sigil.Sui.ClientMock, :get_object, 2, fn ^registry_id, [] ->
+        {:ok, reputation_registry_json(seller_address, 7, 1, [sold_listing_id])}
+      end)
+
+      assert Sigil.IntelMarket.build_confirm_quality_tx(
+               sold_listing_id,
+               market_opts(context, sender: context.buyer, reputation_registry_id: registry_id)
+             ) == {:error, :already_reviewed}
+
+      assert Sigil.IntelMarket.build_report_bad_quality_tx(
+               sold_listing_id,
+               market_opts(context, sender: context.buyer, reputation_registry_id: registry_id)
+             ) == {:error, :already_reviewed}
+    end
+
+    test "build_confirm_quality_tx produces valid PTB", context do
+      sold_listing_id = address(0xCA)
+      seller_address = address(0xDA)
+      registry_id = address(0xCB)
+      listing_shared_version = 33
+      registry_shared_version = 19
+
+      insert_listing!(%{
+        id: sold_listing_id,
+        seller_address: seller_address,
+        buyer_address: context.buyer,
+        status: :sold
+      })
+
+      Cache.put(
+        context.tables.intel_market,
+        {:listing_ref, sold_listing_id},
+        %{
+          object_id: hex_to_bytes(sold_listing_id),
+          initial_shared_version: listing_shared_version
+        }
+      )
+
+      expect(Sigil.Sui.ClientMock, :get_object, fn ^registry_id, [] ->
+        {:ok, reputation_registry_json(seller_address, 0, 0, [])}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_object_with_ref, fn ^registry_id, [] ->
+        {:ok,
+         %{
+           json: %{"id" => registry_id},
+           ref: {hex_to_bytes(registry_id), registry_shared_version, object_id(0xEE)}
+         }}
+      end)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Sigil.IntelMarket.build_confirm_quality_tx(
+                 sold_listing_id,
+                 market_opts(context, sender: context.buyer, reputation_registry_id: registry_id)
+               )
+
+      expected_tx_bytes =
+        TxIntelReputation.build_confirm_quality(
+          %{
+            object_id: hex_to_bytes(registry_id),
+            initial_shared_version: registry_shared_version
+          },
+          %{
+            object_id: hex_to_bytes(sold_listing_id),
+            initial_shared_version: listing_shared_version
+          },
+          []
+        )
+        |> TransactionBuilder.build_kind!()
+        |> Base.encode64()
+
+      assert tx_bytes == expected_tx_bytes
+    end
+
+    test "build_report_bad_quality_tx produces valid PTB", context do
+      sold_listing_id = address(0xCC)
+      seller_address = address(0xDD)
+      registry_id = address(0xCD)
+      listing_shared_version = 34
+      registry_shared_version = 20
+
+      insert_listing!(%{
+        id: sold_listing_id,
+        seller_address: seller_address,
+        buyer_address: context.buyer,
+        status: :sold
+      })
+
+      Cache.put(
+        context.tables.intel_market,
+        {:listing_ref, sold_listing_id},
+        %{
+          object_id: hex_to_bytes(sold_listing_id),
+          initial_shared_version: listing_shared_version
+        }
+      )
+
+      expect(Sigil.Sui.ClientMock, :get_object, fn ^registry_id, [] ->
+        {:ok, reputation_registry_json(seller_address, 0, 0, [])}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_object_with_ref, fn ^registry_id, [] ->
+        {:ok,
+         %{
+           json: %{"id" => registry_id},
+           ref: {hex_to_bytes(registry_id), registry_shared_version, object_id(0xEF)}
+         }}
+      end)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Sigil.IntelMarket.build_report_bad_quality_tx(
+                 sold_listing_id,
+                 market_opts(context, sender: context.buyer, reputation_registry_id: registry_id)
+               )
+
+      expected_tx_bytes =
+        TxIntelReputation.build_report_bad_quality(
+          %{
+            object_id: hex_to_bytes(registry_id),
+            initial_shared_version: registry_shared_version
+          },
+          %{
+            object_id: hex_to_bytes(sold_listing_id),
+            initial_shared_version: listing_shared_version
+          },
+          []
+        )
+        |> TransactionBuilder.build_kind!()
+        |> Base.encode64()
+
+      assert tx_bytes == expected_tx_bytes
+    end
+
+    test "feedback builder rejects non-sold listing", context do
+      listing_id = address(0xCE)
+
+      insert_listing!(%{
+        id: listing_id,
+        seller_address: address(0xDF),
+        buyer_address: context.buyer,
+        status: :active
+      })
+
+      assert Sigil.IntelMarket.build_confirm_quality_tx(
+               listing_id,
+               market_opts(context, sender: context.buyer, reputation_registry_id: address(0xA8))
+             ) == {:error, :listing_not_sold}
+    end
+
+    test "feedback_recorded queries seller entry", context do
+      seller_address = address(0xD0)
+      listing_id = address(0xD1)
+      other_listing_id = address(0xD2)
+      registry_id = address(0xD3)
+
+      expect(Sigil.Sui.ClientMock, :get_object, 2, fn ^registry_id, [] ->
+        {:ok, reputation_registry_json(seller_address, 3, 1, [listing_id])}
+      end)
+
+      assert Sigil.IntelMarket.feedback_recorded?(
+               seller_address,
+               listing_id,
+               market_opts(context, reputation_registry_id: registry_id)
+             )
+
+      refute Sigil.IntelMarket.feedback_recorded?(
+               seller_address,
+               other_listing_id,
+               market_opts(context, reputation_registry_id: registry_id)
+             )
+    end
+
+    test "list_all_seller_listings aggregates across pseudonym addresses", context do
+      pseudo_one = address(0xAA)
+      pseudo_two = address(0xAB)
+
+      listing_one = insert_listing!(%{id: address(0xAC), seller_address: pseudo_one})
+      listing_two = insert_listing!(%{id: address(0xAD), seller_address: pseudo_two})
+
+      _other_listing = insert_listing!(%{id: address(0xAE), seller_address: address(0xAF)})
+
+      listings =
+        Sigil.IntelMarket.list_all_seller_listings(
+          [pseudo_one, pseudo_two],
+          market_opts(context)
+        )
+
+      assert Enum.map(listings, & &1.id) == [listing_two.id, listing_one.id]
+    end
+
+    test "build_pseudonym_cancel_listing_tx rejects wrong owner", context do
+      listing_id = address(0xB0)
+
+      insert_listing!(%{id: listing_id, seller_address: address(0xD0), status: :active})
+
+      assert Sigil.IntelMarket.build_pseudonym_cancel_listing_tx(
+               listing_id,
+               market_opts(context, sender: context.seller, pseudonym_address: address(0xB1))
+             ) == {:error, :not_listing_owner}
+    end
+
+    test "build_pseudonym_cancel_listing_tx returns sponsored cancel tx", context do
+      listing_id = address(0xB2)
+      pseudonym_address = address(0xB3)
+      relay_keypair = relay_keypair()
+      relay_owner = relay_owner_address(relay_keypair)
+
+      insert_listing!(%{id: listing_id, seller_address: pseudonym_address, status: :active})
+
+      Cache.put(
+        context.tables.intel_market,
+        {:listing_ref, listing_id},
+        %{object_id: hex_to_bytes(listing_id), initial_shared_version: 27}
+      )
+
+      expect(Sigil.Sui.ClientMock, :get_coins, fn ^relay_owner, [] ->
+        {:ok, [relay_coin(0x12, 0x22, 12_000_000)]}
+      end)
+
+      assert {:ok, %{tx_bytes: tx_bytes, relay_signature: relay_signature}} =
+               Sigil.IntelMarket.build_pseudonym_cancel_listing_tx(
+                 listing_id,
+                 market_opts(
+                   context,
+                   sender: context.seller,
+                   pseudonym_address: pseudonym_address,
+                   relay_keypair: relay_keypair
+                 )
+               )
+
+      assert is_binary(tx_bytes)
+      assert is_binary(relay_signature)
+
+      assert {:cancel_listing, %{listing_id: ^listing_id}} =
+               Cache.get(context.tables.intel_market, {:pending_tx, context.seller, tx_bytes})
+    end
+  end
+
   defp market_opts(context, overrides \\ []) do
     Keyword.merge(
       [
@@ -1209,6 +1663,40 @@ defmodule Sigil.IntelMarketTest do
 
   defp unique_pubsub_name do
     :"intel_market_pubsub_#{System.unique_integer([:positive])}"
+  end
+
+  defp relay_keypair do
+    Signer.keypair_from_private_key(:binary.copy(<<0x42>>, 32))
+  end
+
+  defp relay_owner_address({public_key, _private_key}) do
+    public_key
+    |> Signer.address_from_public_key()
+    |> Signer.to_sui_address()
+  end
+
+  defp relay_coin(id_byte, digest_byte, balance) do
+    %{
+      object_id: object_id(id_byte),
+      version: 7,
+      digest: object_id(digest_byte),
+      balance: balance
+    }
+  end
+
+  defp reputation_registry_json(seller, positive, negative, reviewed_listing_ids) do
+    %{
+      "scores" => [
+        %{
+          "key" => seller,
+          "value" => %{
+            "positive" => positive,
+            "negative" => negative,
+            "reviewed_listings" => Enum.map(reviewed_listing_ids, &%{"id" => &1})
+          }
+        }
+      ]
+    }
   end
 
   defp address(byte) do

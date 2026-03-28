@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { mountHook } from "./support/liveview_hook"
 import { createMockWallet, registerWallet } from "./support/mock_wallet"
 
+const activePseudonymRef = { current: null }
+
 const sealClientConstructor = vi.fn()
 const encryptMock = vi.fn()
 const decryptMock = vi.fn()
@@ -41,6 +43,10 @@ vi.mock("@mysten/sui/transactions", () => ({
   }))
 }))
 
+vi.mock("../hooks/pseudonym_store", () => ({
+  getActivePseudonym: () => activePseudonymRef.current
+}))
+
 const sealConfig = {
   seal_package_id: "0x" + "11".repeat(32),
   key_server_object_ids: ["0x" + "22".repeat(32), "0x" + "33".repeat(32)],
@@ -68,6 +74,7 @@ describe("SealEncrypt hook", () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    activePseudonymRef.current = null
   })
 
   afterEach(() => {
@@ -631,6 +638,177 @@ describe("SealEncrypt hook", () => {
     expect(events).toContainEqual({
       event: "seal_decrypt_complete",
       payload: { data: JSON.stringify(intelPayload) }
+    })
+
+    destroy()
+  })
+
+  it("seller decrypt uses active pseudonym key without wallet prompt", async () => {
+    const pseudonymAddress = "0xpseudonym"
+    const pseudonymSignTransaction = vi.fn().mockResolvedValue({
+      signature: "pseudonym-signature"
+    })
+    const pseudonymKeypair = {
+      signTransaction: pseudonymSignTransaction,
+      getPublicKey: () => ({
+        toSuiAddress: () => pseudonymAddress
+      })
+    }
+
+    activePseudonymRef.current = pseudonymKeypair
+
+    sessionKeyCreateMock.mockResolvedValue({
+      getPersonalMessage: () => new Uint8Array([3, 3, 3]),
+      setPersonalMessageSignature: vi.fn().mockResolvedValue(undefined)
+    })
+    buildMock.mockResolvedValue(new Uint8Array([7, 7, 7]))
+    decryptMock.mockResolvedValue(new TextEncoder().encode(JSON.stringify(intelPayload)))
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([5, 4, 3]).buffer
+      })
+    )
+
+    const wallet = createMockWallet({
+      accounts: [{ address: pseudonymAddress, chains: ["sui:testnet"] }]
+    })
+
+    const { pushServerEvent, events, destroy } = mountHook(await loadHook(), {
+      id: "seal-encrypt",
+      dataset: {
+        address: pseudonymAddress,
+        suiChain: "sui:testnet",
+        config: JSON.stringify(sealConfig)
+      }
+    })
+
+    registerWallet(wallet)
+
+    await pushServerEvent("decrypt_intel", {
+      blob_id: "walrus-blob-123",
+      seal_id: "0x" + "c1".repeat(32),
+      listing_id: "0xlisting",
+      seller_address: pseudonymAddress,
+      config: sealConfig
+    })
+    expect(sessionKeyCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: pseudonymAddress,
+        signer: pseudonymKeypair
+      })
+    )
+    expect(pseudonymSignTransaction).not.toHaveBeenCalled()
+    expect(wallet._calls.connect).toHaveLength(0)
+    expect(wallet._calls.signPersonalMessage).toHaveLength(0)
+    expect(wallet._calls.signTransaction).toHaveLength(0)
+    expect(events).toContainEqual({
+      event: "seal_decrypt_complete",
+      payload: { data: JSON.stringify(intelPayload) }
+    })
+
+    destroy()
+  })
+
+  it("wallet decrypt path still works when pseudonym does not match address", async () => {
+    activePseudonymRef.current = {
+      signTransaction: vi.fn().mockResolvedValue({ signature: "unused" }),
+      getPublicKey: () => ({
+        toSuiAddress: () => "0xotherpseudonym"
+      })
+    }
+
+    sessionKeyCreateMock.mockResolvedValue({
+      getPersonalMessage: () => new Uint8Array([4, 4, 4]),
+      setPersonalMessageSignature: vi.fn().mockResolvedValue(undefined)
+    })
+    buildMock.mockResolvedValue(new Uint8Array([7, 7, 7]))
+    decryptMock.mockResolvedValue(new TextEncoder().encode(JSON.stringify(intelPayload)))
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([6, 5, 4]).buffer
+      })
+    )
+
+    const wallet = createMockWallet({
+      accounts: [{ address: "0xabc123", chains: ["sui:testnet"] }]
+    })
+
+    const { pushServerEvent, events, destroy } = mountHook(await loadHook(), {
+      id: "seal-encrypt",
+      dataset: {
+        address: "0xabc123",
+        suiChain: "sui:testnet",
+        config: JSON.stringify(sealConfig)
+      }
+    })
+
+    registerWallet(wallet)
+
+    await pushServerEvent("decrypt_intel", {
+      blob_id: "walrus-blob-123",
+      seal_id: "0x" + "c2".repeat(32),
+      listing_id: "0xlisting",
+      seller_address: "0xfeedbeef",
+      config: sealConfig
+    })
+    expect(sessionKeyCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ address: "0xabc123" })
+    )
+    expect(wallet._calls.signPersonalMessage).toHaveLength(1)
+    expect(events).toContainEqual({
+      event: "seal_decrypt_complete",
+      payload: { data: JSON.stringify(intelPayload) }
+    })
+
+    destroy()
+  })
+
+  it("pseudonym key reconstruction failure emits decrypt phase error", async () => {
+    activePseudonymRef.current = {
+      signTransaction: vi.fn().mockRejectedValue(new Error("bad pseudonym key")),
+      getPublicKey: () => ({
+        toSuiAddress: () => "0xabc123"
+      })
+    }
+
+    sessionKeyCreateMock.mockResolvedValue({
+      getPersonalMessage: () => new Uint8Array([5, 5, 5]),
+      setPersonalMessageSignature: vi.fn().mockResolvedValue(undefined)
+    })
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer
+      })
+    )
+
+    const { pushServerEvent, events, destroy } = mountHook(await loadHook(), {
+      id: "seal-encrypt",
+      dataset: {
+        address: "0xabc123",
+        suiChain: "sui:testnet",
+        config: JSON.stringify(sealConfig)
+      }
+    })
+
+    await pushServerEvent("decrypt_intel", {
+      blob_id: "walrus-blob-123",
+      seal_id: "0x" + "c3".repeat(32),
+      listing_id: "0xlisting",
+      seller_address: "0xabc123",
+      config: sealConfig
+    })
+    expect(events).toContainEqual({
+      event: "seal_error",
+      payload: expect.objectContaining({ phase: "decrypt" })
     })
 
     destroy()

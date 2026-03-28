@@ -7,12 +7,15 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
   import Hammox
 
+  @compile {:no_warn_undefined, Sigil.Pseudonym}
+  @compile {:no_warn_undefined, Sigil.Pseudonyms}
+
   alias Phoenix.LiveViewTest
   alias Sigil.Accounts.Account
   alias Sigil.Cache
   alias Sigil.Intel.IntelListing
   alias Sigil.Intel.IntelReport
-  alias Sigil.Repo
+  alias Sigil.{Pseudonym, Repo}
   alias Sigil.StaticData
   alias Sigil.StaticDataTestFixtures, as: StaticDataFixtures
   alias Sigil.Sui.Types.Character
@@ -341,6 +344,12 @@ defmodule SigilWeb.IntelMarketLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
+    insert_pseudonym!(
+      account_address: wallet_address,
+      pseudonym_address: unique_wallet_address(),
+      encrypted_private_key: <<1, 2, 3, 4>>
+    )
+
     seed_chain_marketplace([])
 
     {:ok, view, _html} =
@@ -393,7 +402,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
     assert Repo.aggregate(IntelReport, :count) == 1
   end
 
-  test "sell flow renders SealEncrypt hook mount point", %{
+  test "sell flow renders SealEncrypt and PseudonymKey hook mount points", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -412,6 +421,663 @@ defmodule SigilWeb.IntelMarketLiveTest do
              )
 
     assert html =~ "phx-hook=\"SealEncrypt\""
+    assert html =~ "phx-hook=\"PseudonymKey\""
+    assert html =~ "Create Pseudonym"
+    refute html =~ "Failed to create pseudonym"
+  end
+
+  @tag :acceptance
+  test "user creates pseudonym and sees it in marketplace", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_chain_marketplace([])
+
+    {:ok, view, initial_html} =
+      mount_live_with_cleanup(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+        "/marketplace"
+      )
+
+    assert initial_html =~ "Create Pseudonym"
+    refute initial_html =~ "Active pseudonym"
+
+    assert_push_event(view, "load_pseudonyms", %{
+      "encrypted_keys" => initial_encrypted_keys,
+      "active_address" => initial_active_address
+    })
+
+    assert initial_encrypted_keys == []
+    assert initial_active_address == nil
+
+    view
+    |> element("button[phx-click=\"create_pseudonym\"]")
+    |> render_click()
+
+    assert_push_event(view, "create_pseudonym", %{})
+
+    pseudonym_address = unique_wallet_address()
+    encrypted_private_key = Base.encode64(<<9, 8, 7, 6>>)
+
+    created_html =
+      render_hook(view, "pseudonym_created", %{
+        "pseudonym_address" => pseudonym_address,
+        "encrypted_private_key" => encrypted_private_key
+      })
+
+    pseudonyms = apply(Sigil.Pseudonyms, :list_pseudonyms, [wallet_address])
+
+    assert Enum.map(pseudonyms, & &1.pseudonym_address) == [pseudonym_address]
+    assert created_html =~ pseudonym_address
+    refute created_html =~ "Create a pseudonymous identity to sell intel"
+    refute created_html =~ "Failed to create pseudonym"
+
+    assert_push_event(view, "load_pseudonyms", %{
+      "encrypted_keys" => encrypted_keys,
+      "active_address" => active_address
+    })
+
+    assert active_address == pseudonym_address
+    assert Enum.map(encrypted_keys, & &1["address"]) == [pseudonym_address]
+
+    loaded_html =
+      render_hook(view, "pseudonyms_loaded", %{
+        "addresses" => Enum.map(encrypted_keys, & &1["address"]),
+        "active_address" => active_address
+      })
+
+    assert loaded_html =~ pseudonym_address
+    refute loaded_html =~ "Failed to load pseudonyms"
+  end
+
+  @tag :acceptance
+  test "user can create an additional pseudonym while under the five identity cap", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    existing_pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
+    seed_chain_marketplace([])
+
+    {:ok, view, initial_html} =
+      mount_live_with_cleanup(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+        "/marketplace"
+      )
+
+    assert initial_html =~ existing_pseudonym.pseudonym_address
+    assert initial_html =~ "Create Pseudonym"
+
+    view
+    |> element("button[phx-click=\"create_pseudonym\"]")
+    |> render_click()
+
+    assert_push_event(view, "create_pseudonym", %{})
+
+    new_pseudonym_address = unique_wallet_address()
+
+    created_html =
+      render_hook(view, "pseudonym_created", %{
+        "pseudonym_address" => new_pseudonym_address,
+        "encrypted_private_key" => Base.encode64(<<5, 6, 7, 8>>)
+      })
+
+    pseudonyms = apply(Sigil.Pseudonyms, :list_pseudonyms, [wallet_address])
+
+    assert Enum.map(pseudonyms, & &1.pseudonym_address) == [
+             existing_pseudonym.pseudonym_address,
+             new_pseudonym_address
+           ]
+
+    assert created_html =~ existing_pseudonym.pseudonym_address
+    assert created_html =~ new_pseudonym_address
+    assert created_html =~ "Create Pseudonym"
+    refute created_html =~ "Failed to create pseudonym"
+  end
+
+  @tag :acceptance
+  test "failed pseudonym reload clears the active pseudonym and surfaces a load error", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
+    seed_chain_marketplace([])
+
+    {:ok, view, _initial_html} =
+      mount_live_with_cleanup(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+        "/marketplace"
+      )
+
+    assert_push_event(view, "load_pseudonyms", %{
+      "encrypted_keys" => encrypted_keys,
+      "active_address" => active_address
+    })
+
+    loaded_html =
+      render_hook(view, "pseudonyms_loaded", %{
+        "addresses" => Enum.map(encrypted_keys, & &1["address"]),
+        "active_address" => active_address
+      })
+
+    assert active_address == pseudonym.pseudonym_address
+    assert loaded_html =~ pseudonym.pseudonym_address
+
+    error_html =
+      render_hook(view, "pseudonym_error", %{
+        "phase" => "load",
+        "reason" => "decrypt_failed"
+      })
+
+    assert error_html =~ "Failed to load pseudonyms"
+    refute error_html =~ "Active pseudonym"
+  end
+
+  @tag :acceptance
+  test "switching pseudonym updates active identity in marketplace", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    first_pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
+    second_pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<5, 6, 7, 8>>
+      )
+
+    seed_chain_marketplace([])
+
+    {:ok, view, initial_html} =
+      mount_live_with_cleanup(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+        "/marketplace"
+      )
+
+    assert initial_html =~ first_pseudonym.pseudonym_address
+    assert initial_html =~ second_pseudonym.pseudonym_address
+    assert initial_html =~ "Create Pseudonym"
+
+    assert_push_event(view, "load_pseudonyms", %{
+      "encrypted_keys" => encrypted_keys,
+      "active_address" => active_address
+    })
+
+    assert active_address == first_pseudonym.pseudonym_address
+
+    assert Enum.map(encrypted_keys, & &1["address"]) == [
+             first_pseudonym.pseudonym_address,
+             second_pseudonym.pseudonym_address
+           ]
+
+    loaded_html =
+      render_hook(view, "pseudonyms_loaded", %{
+        "addresses" => Enum.map(encrypted_keys, & &1["address"]),
+        "active_address" => active_address
+      })
+
+    assert loaded_html =~ first_pseudonym.pseudonym_address
+    refute loaded_html =~ "Failed to load pseudonyms"
+
+    view
+    |> form("#pseudonym-switcher", %{
+      "pseudonym" => %{"active_address" => second_pseudonym.pseudonym_address}
+    })
+    |> render_change()
+
+    second_address = second_pseudonym.pseudonym_address
+
+    assert_push_event(view, "activate_pseudonym", %{
+      "pseudonym_address" => ^second_address
+    })
+
+    switched_html =
+      render_hook(view, "pseudonym_activated", %{
+        "pseudonym_address" => second_address
+      })
+
+    assert switched_html =~ second_pseudonym.pseudonym_address
+    refute switched_html =~ "Failed to switch pseudonym"
+  end
+
+  @tag :acceptance
+  test "marketplace requires active pseudonym before sell submission", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_chain_marketplace([])
+
+    {:ok, view, html} =
+      mount_live_with_cleanup(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+        "/marketplace"
+      )
+
+    assert html =~ "Create Pseudonym"
+    refute html =~ "Active pseudonym"
+    assert html =~ "Create and activate a pseudonym before publishing a listing."
+    assert html =~ ~s(aria-disabled="true")
+
+    blocked_html =
+      view
+      |> form("#sell-intel-form", %{
+        "listing" => %{
+          "entry_mode" => "manual",
+          "report_type" => "1",
+          "solar_system_name" => "A 2560",
+          "assembly_id" => "0xno-pseudonym",
+          "notes" => "Blocked listing",
+          "price_sui" => "1.25",
+          "description" => "Should not publish"
+        }
+      })
+      |> render_submit()
+
+    assert blocked_html =~ "Create and activate a pseudonym before listing intel"
+    refute blocked_html =~ "encrypt_and_upload"
+  end
+
+  @tag :acceptance
+  test "seller listing flow requests pseudonym transaction signature", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
+    seed_chain_marketplace([])
+
+    expect(Sigil.Sui.ClientMock, :get_coins, fn relay_owner, client_opts ->
+      assert is_binary(relay_owner)
+      assert is_list(client_opts)
+
+      {:ok,
+       [
+         %{
+           object_id: :binary.copy(<<0x11>>, 32),
+           version: 7,
+           digest: :binary.copy(<<0x21>>, 32),
+           balance: 12_000_000
+         }
+       ]}
+    end)
+
+    {:ok, view, initial_html} =
+      mount_live_with_cleanup(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+        "/marketplace"
+      )
+
+    assert initial_html =~ pseudonym.pseudonym_address
+    refute initial_html =~ "Create a pseudonymous identity to sell intel"
+
+    view
+    |> form("#sell-intel-form", %{
+      "listing" => %{
+        "entry_mode" => "manual",
+        "report_type" => "1",
+        "solar_system_name" => "A 2560",
+        "assembly_id" => "0xpseudonym-assembly",
+        "notes" => "Pseudonymous listing",
+        "price_sui" => "1.75",
+        "description" => "Pseudonym market listing"
+      }
+    })
+    |> render_submit()
+
+    assert_push_event(view, "encrypt_and_upload", %{"seal_id" => seal_id})
+    assert seal_id =~ ~r/^0x[0-9a-f]{64}$/
+
+    render_hook(view, "seal_upload_complete", %{
+      "seal_id" => seal_id,
+      "blob_id" => "walrus-pseudonym-blob"
+    })
+
+    assert_push_event(view, "sign_pseudonym_tx", %{
+      "pseudonym_address" => pseudonym_address,
+      "tx_bytes" => tx_bytes
+    })
+
+    assert pseudonym_address == pseudonym.pseudonym_address
+    assert is_binary(tx_bytes)
+  end
+
+  test "decrypted purchased intel renders buyer feedback controls", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    listing =
+      insert_listing!(%{
+        id: unique_object_id(),
+        seller_address: unique_wallet_address(),
+        buyer_address: wallet_address,
+        status: :sold,
+        seal_id: seal_id_hex(0xD5),
+        encrypted_blob_id: "walrus-feedback-blob",
+        description: "Feedback target intel"
+      })
+
+    seed_chain_marketplace([listing])
+    reputation_registry_id = unique_object_id()
+
+    expect(Sigil.Sui.ClientMock, :get_object, 2, fn ^reputation_registry_id, [] ->
+      {:ok,
+       %{
+         "scores" => [
+           %{
+             "key" => listing.seller_address,
+             "value" => %{"positive" => 0, "negative" => 0, "reviewed_listings" => []}
+           }
+         ]
+       }}
+    end)
+
+    {:ok, view, _html} =
+      mount_live_with_cleanup(
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub,
+          "static_data" => static_data,
+          "walrus_client" => Sigil.TestSupport.BlobAvailableClient,
+          "reputation_registry_id" => reputation_registry_id
+        }),
+        "/marketplace"
+      )
+
+    render_click(view, "show_section", %{"section" => "my_listings"})
+    render_click(view, "decrypt_listing", %{"listing_id" => listing.id})
+
+    render_hook(view, "seal_decrypt_complete", %{
+      "data" =>
+        Jason.encode!(%{"notes" => "Recovered feedback intel", "assembly_id" => "0xassembly"})
+    })
+
+    html = render(view)
+
+    assert html =~ "Recovered feedback intel"
+    assert html =~ ~s(phx-click="confirm_quality")
+    assert html =~ ~s(phx-click="report_bad_quality")
+    refute html =~ "Feedback already submitted"
+  end
+
+  test "listing card shows reputation summary when provided", %{static_data: static_data} do
+    seller_address = unique_wallet_address()
+
+    html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: seller_address,
+          seal_id: seal_id_hex(0xD6),
+          encrypted_blob_id: "walrus-reputation-blob",
+          client_nonce: 15,
+          price_mist: 200_000_000,
+          report_type: 1,
+          solar_system_id: 30_000_001,
+          description: "Reputation listing",
+          status: :active,
+          buyer_address: nil,
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        active_pseudonym: nil,
+        tribe_id: @tribe_id,
+        static_data: static_data,
+        reputation: %{positive: 12, negative: 2}
+      )
+
+    assert html =~ "+12 / -2 (86%)"
+    refute html =~ "No reputation data"
+
+    hidden_html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: seller_address,
+          seal_id: seal_id_hex(0xD7),
+          encrypted_blob_id: "walrus-hidden-seller-blob",
+          client_nonce: 16,
+          price_mist: 250_000_000,
+          report_type: 1,
+          solar_system_id: 30_000_001,
+          description: "Other user view",
+          status: :sold,
+          buyer_address: unique_wallet_address(),
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        active_pseudonym: nil,
+        tribe_id: @tribe_id,
+        static_data: static_data,
+        reputation: %{positive: 12, negative: 2}
+      )
+
+    pseudonym_decrypt_html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: seller_address,
+          seal_id: seal_id_hex(0xDA),
+          encrypted_blob_id: "walrus-pseudonym-visible-blob",
+          client_nonce: 17,
+          price_mist: 300_000_000,
+          report_type: 1,
+          solar_system_id: 30_000_001,
+          description: "Pseudonym seller decrypt",
+          status: :sold,
+          buyer_address: unique_wallet_address(),
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        active_pseudonym: seller_address,
+        tribe_id: @tribe_id,
+        static_data: static_data,
+        reputation: %{positive: 12, negative: 2}
+      )
+
+    refute hidden_html =~ "Decrypt Intel"
+    assert pseudonym_decrypt_html =~ "Decrypt Intel"
+  end
+
+  test "feedback submission locks controls and refreshes reputation", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seller_address = unique_wallet_address()
+
+    sold_listing =
+      insert_listing!(%{
+        id: unique_object_id(),
+        seller_address: seller_address,
+        buyer_address: wallet_address,
+        status: :sold,
+        seal_id: seal_id_hex(0xD8),
+        encrypted_blob_id: "walrus-feedback-lock-blob",
+        description: "Feedback lock target"
+      })
+
+    active_listing =
+      insert_listing!(%{
+        id: unique_object_id(),
+        seller_address: seller_address,
+        status: :active,
+        seal_id: seal_id_hex(0xD9),
+        encrypted_blob_id: "walrus-reputation-refresh-blob",
+        description: "Reputation refresh target"
+      })
+
+    seed_chain_marketplace([sold_listing, active_listing])
+
+    reputation_registry_id = unique_object_id()
+
+    {:ok, reputation_state} = Agent.start_link(fn -> 9 end)
+
+    on_exit(fn ->
+      if Process.alive?(reputation_state) do
+        try do
+          Agent.stop(reputation_state, :normal, :infinity)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+
+    stub(Sigil.Sui.ClientMock, :get_object, fn ^reputation_registry_id, [] ->
+      positive = Agent.get(reputation_state, & &1)
+
+      {:ok,
+       %{
+         "scores" => [
+           %{
+             "key" => seller_address,
+             "value" => %{"positive" => positive, "negative" => 1, "reviewed_listings" => []}
+           }
+         ]
+       }}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :get_object_with_ref, fn ^reputation_registry_id, [] ->
+      {:ok,
+       %{
+         json: %{"id" => reputation_registry_id},
+         ref: {:binary.copy(<<0x99>>, 32), 7, :binary.copy(<<0x55>>, 32)}
+       }}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
+      Agent.update(reputation_state, fn _previous -> 10 end)
+
+      {:ok,
+       %{
+         "bcs" => "feedback-effects-bcs",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "feedback-digest"}
+       }}
+    end)
+
+    {:ok, view, _html} =
+      mount_live_with_cleanup(
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub,
+          "static_data" => static_data,
+          "walrus_client" => Sigil.TestSupport.BlobAvailableClient,
+          "reputation_registry_id" => reputation_registry_id
+        }),
+        "/marketplace"
+      )
+
+    before_feedback_html = render(view)
+    assert before_feedback_html =~ "+9 / -1 (90%)"
+
+    render_click(view, "show_section", %{"section" => "my_listings"})
+    render_click(view, "decrypt_listing", %{"listing_id" => sold_listing.id})
+
+    render_hook(view, "seal_decrypt_complete", %{
+      "data" => Jason.encode!(%{"notes" => "Feedback lock intel", "assembly_id" => "0xassembly"})
+    })
+
+    my_listings_html = render(view)
+    assert my_listings_html =~ ~s(phx-click="confirm_quality")
+
+    render_click(view, "confirm_quality", %{"listing_id" => sold_listing.id})
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    assert_push_event(view, "report_transaction_effects", %{effects: "feedback-effects-bcs"})
+
+    after_feedback_html = render(view)
+
+    assert after_feedback_html =~ "Feedback submitted"
+    assert after_feedback_html =~ "Feedback submitted</p>"
+    assert after_feedback_html =~ "disabled"
+
+    replay_html = render_click(view, "confirm_quality", %{"listing_id" => sold_listing.id})
+    assert replay_html =~ "Feedback already submitted"
+
+    refreshed_browse_html = render_click(view, "show_section", %{"section" => "browsing"})
+    assert refreshed_browse_html =~ "+10 / -1 (91%)"
   end
 
   test "marketplace emits undeployed seal config when session overrides package id", %{
@@ -423,6 +1089,12 @@ defmodule SigilWeb.IntelMarketLiveTest do
   } do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
+
+    insert_pseudonym!(
+      account_address: wallet_address,
+      pseudonym_address: unique_wallet_address(),
+      encrypted_private_key: <<1, 2, 3, 4>>
+    )
 
     seed_chain_marketplace([])
 
@@ -487,6 +1159,13 @@ defmodule SigilWeb.IntelMarketLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
+    pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
     nonce = "marketplace-sell-nonce"
     seed_nonce(cache_tables, nonce, wallet_address)
     expect_wallet_registration(wallet_address)
@@ -495,7 +1174,23 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
     created_listing_id = unique_object_id()
 
-    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
+    expect(Sigil.Sui.ClientMock, :get_coins, fn relay_owner, [] ->
+      assert is_binary(relay_owner)
+
+      {:ok,
+       [
+         %{
+           object_id: :binary.copy(<<0x11>>, 32),
+           version: 7,
+           digest: :binary.copy(<<0x21>>, 32),
+           balance: 12_000_000
+         }
+       ]}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, signatures, [] ->
+      assert length(signatures) == 2
+
       {:ok,
        %{
          "bcs" => "effects-bcs-data",
@@ -587,12 +1282,14 @@ defmodule SigilWeb.IntelMarketLiveTest do
       "blob_id" => "walrus-browser-blob"
     })
 
-    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
-
-    render_hook(view, "transaction_signed", %{
-      "bytes" => tx_bytes,
-      "signature" => Base.encode64("wallet-signature")
+    assert_push_event(view, "sign_pseudonym_tx", %{
+      "pseudonym_address" => pseudonym_address,
+      "tx_bytes" => _tx_bytes
     })
+
+    assert pseudonym_address == pseudonym.pseudonym_address
+
+    render_hook(view, "pseudonym_tx_signed", %{"signature" => Base.encode64("wallet-signature")})
 
     assert_push_event(view, "report_transaction_effects", %{effects: "effects-bcs-data"})
 
@@ -750,10 +1447,17 @@ defmodule SigilWeb.IntelMarketLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
+    pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<9, 8, 7, 6>>
+      )
+
     listing =
       insert_listing!(%{
         id: unique_object_id(),
-        seller_address: wallet_address,
+        seller_address: pseudonym.pseudonym_address,
         status: :active,
         description: "Cancelable listing"
       })
@@ -761,7 +1465,23 @@ defmodule SigilWeb.IntelMarketLiveTest do
     seed_chain_marketplace([listing])
     :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
 
-    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
+    expect(Sigil.Sui.ClientMock, :get_coins, fn relay_owner, [] ->
+      assert is_binary(relay_owner)
+
+      {:ok,
+       [
+         %{
+           object_id: :binary.copy(<<0x31>>, 32),
+           version: 7,
+           digest: :binary.copy(<<0x41>>, 32),
+           balance: 12_000_000
+         }
+       ]}
+    end)
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, signatures, [] ->
+      assert length(signatures) == 2
+
       {:ok,
        %{
          "bcs" => "cancel-effects-bcs",
@@ -778,12 +1498,14 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
     render_click(view, "cancel_listing", %{"listing_id" => listing.id})
 
-    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
-
-    render_hook(view, "transaction_signed", %{
-      "bytes" => tx_bytes,
-      "signature" => "wallet-signature"
+    assert_push_event(view, "sign_pseudonym_tx", %{
+      "pseudonym_address" => pseudonym_address,
+      "tx_bytes" => _tx_bytes
     })
+
+    assert pseudonym_address == pseudonym.pseudonym_address
+
+    render_hook(view, "pseudonym_tx_signed", %{"signature" => "wallet-signature"})
 
     assert_push_event(view, "report_transaction_effects", %{effects: "cancel-effects-bcs"})
 
@@ -864,13 +1586,31 @@ defmodule SigilWeb.IntelMarketLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
+    pseudonym_one =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
+    pseudonym_two =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<5, 6, 7, 8>>
+      )
+
     active_listing =
-      insert_listing!(%{id: unique_object_id(), seller_address: wallet_address, status: :active})
+      insert_listing!(%{
+        id: unique_object_id(),
+        seller_address: pseudonym_one.pseudonym_address,
+        status: :active
+      })
 
     sold_listing =
       insert_listing!(%{
         id: unique_object_id(),
-        seller_address: wallet_address,
+        seller_address: pseudonym_two.pseudonym_address,
         status: :sold,
         buyer_address: unique_wallet_address()
       })
@@ -1055,11 +1795,36 @@ defmodule SigilWeb.IntelMarketLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
     seed_active_custodian(cache_tables)
+
+    pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
     seed_chain_marketplace([])
+
+    expect(Sigil.Sui.ClientMock, :get_coins, fn relay_owner, client_opts ->
+      assert is_binary(relay_owner)
+      assert is_list(client_opts)
+
+      {:ok,
+       [
+         %{
+           object_id: :binary.copy(<<0x12>>, 32),
+           version: 7,
+           digest: :binary.copy(<<0x22>>, 32),
+           balance: 12_000_000
+         }
+       ]}
+    end)
 
     restricted_listing_id = unique_object_id()
 
-    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, signatures, [] ->
+      assert length(signatures) == 2
+
       {:ok,
        %{
          "bcs" => "restricted-effects-bcs",
@@ -1120,18 +1885,21 @@ defmodule SigilWeb.IntelMarketLiveTest do
       "blob_id" => "walrus-restricted-blob"
     })
 
-    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
-
-    render_hook(view, "transaction_signed", %{
-      "bytes" => tx_bytes,
-      "signature" => "wallet-signature"
+    assert_push_event(view, "sign_pseudonym_tx", %{
+      "pseudonym_address" => pseudonym_address,
+      "tx_bytes" => _tx_bytes
     })
+
+    assert pseudonym_address == pseudonym.pseudonym_address
+
+    render_hook(view, "pseudonym_tx_signed", %{"signature" => "pseudonym-signature"})
 
     assert_receive {:listing_created,
                     %IntelListing{id: restricted_id, restricted_to_tribe_id: restricted_tribe_id}}
 
     assert restricted_tribe_id == @tribe_id
     assert restricted_id == restricted_listing_id
+    assert Repo.get!(IntelListing, restricted_id).seller_address == pseudonym.pseudonym_address
 
     html = render(view)
     assert html =~ "Listing created"
@@ -1473,7 +2241,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
     refute html =~ "1000000000"
   end
 
-  test "restricted sell flow requires active custodian", %{
+  test "active pseudonym deletion warns before confirm and rebinds seller UI", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -1483,6 +2251,20 @@ defmodule SigilWeb.IntelMarketLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
+    first_pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<1, 2, 3, 4>>
+      )
+
+    second_pseudonym =
+      insert_pseudonym!(
+        account_address: wallet_address,
+        pseudonym_address: unique_wallet_address(),
+        encrypted_private_key: <<5, 6, 7, 8>>
+      )
+
     seed_chain_marketplace([])
 
     {:ok, view, _html} =
@@ -1491,24 +2273,56 @@ defmodule SigilWeb.IntelMarketLiveTest do
         "/marketplace"
       )
 
-    html =
-      view
-      |> form("#sell-intel-form", %{
-        "listing" => %{
-          "entry_mode" => "manual",
-          "report_type" => "1",
-          "solar_system_name" => "A 2560",
-          "assembly_id" => "0xrestricted-assembly",
-          "notes" => "Tribe-only intel",
-          "price_sui" => "3.00",
-          "description" => "Restricted intel",
-          "restricted" => "true"
-        }
-      })
-      |> render_submit()
+    assert_push_event(view, "load_pseudonyms", %{"active_address" => active_address})
 
-    assert html =~ "active custodian"
-    refute html =~ "Approve in your wallet"
+    assert active_address in [
+             first_pseudonym.pseudonym_address,
+             second_pseudonym.pseudonym_address
+           ]
+
+    warning_html =
+      render_click(view, "request_delete_pseudonym", %{"pseudonym_address" => active_address})
+
+    assert warning_html =~ "orphan active listings"
+
+    assert Repo.get_by(Pseudonym,
+             account_address: wallet_address,
+             pseudonym_address: active_address
+           )
+
+    cancelled_html = render_click(view, "cancel_delete_pseudonym", %{})
+
+    refute cancelled_html =~ "Confirm Delete"
+
+    assert Repo.get_by(Pseudonym,
+             account_address: wallet_address,
+             pseudonym_address: active_address
+           )
+
+    _warning_again_html =
+      render_click(view, "request_delete_pseudonym", %{"pseudonym_address" => active_address})
+
+    confirmed_html =
+      render_click(view, "delete_pseudonym", %{"pseudonym_address" => active_address})
+
+    assert confirmed_html =~ "Pseudonym deleted"
+
+    assert Repo.get_by(Pseudonym,
+             account_address: wallet_address,
+             pseudonym_address: active_address
+           ) == nil
+
+    remaining_pseudonym =
+      [first_pseudonym.pseudonym_address, second_pseudonym.pseudonym_address]
+      |> Enum.find(&(&1 != active_address))
+
+    assert Repo.get_by(Pseudonym,
+             account_address: wallet_address,
+             pseudonym_address: remaining_pseudonym
+           )
+
+    assert confirmed_html =~ remaining_pseudonym
+    refute confirmed_html =~ ~s(aria-disabled="true")
   end
 
   defp mount_live_with_cleanup(conn, path) do
@@ -1621,6 +2435,14 @@ defmodule SigilWeb.IntelMarketLiveTest do
   defp insert_listing!(attrs) do
     %IntelListing{}
     |> IntelListing.changeset(valid_listing_attrs(attrs))
+    |> Repo.insert!()
+  end
+
+  defp insert_pseudonym!(attrs) do
+    attrs = attrs |> Map.new() |> Map.put_new(:encrypted_private_key, <<1, 2, 3, 4>>)
+
+    apply(Pseudonym, :__struct__, [])
+    |> Pseudonym.changeset(attrs)
     |> Repo.insert!()
   end
 

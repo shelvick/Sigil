@@ -108,6 +108,19 @@ defmodule Sigil.StaticDataTestFixtures do
     ["do", "loadconfig", Path.expand(config_path), "+", "run"] ++ run_flags ++ ["-e", script]
   end
 
+  @doc "Returns isolated Hex env vars for spawned mix subprocesses."
+  @spec mix_subprocess_env(String.t()) :: [{String.t(), String.t()}]
+  def mix_subprocess_env(prefix) do
+    base_dir = ensure_tmp_dir!(prefix)
+    hex_home = Path.join(base_dir, "hex_home")
+    File.mkdir_p!(hex_home)
+
+    [
+      {"HEX_HOME", hex_home},
+      {"ELIXIR_CLI_NO_VALIDATE_COMPILE_ENV", "1"}
+    ]
+  end
+
   @doc "Writes DETS fixture files for static-data subprocess tests."
   @spec write_dets_fixture!(String.t(), static_data()) :: :ok
   def write_dets_fixture!(dets_dir, data) do

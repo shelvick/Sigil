@@ -19,9 +19,11 @@
 - `alerts/engine_test.exs` — 20 tests for Sigil.Alerts.Engine (R1-R19 + edge), async: true
 - `alerts/webhook_notifier_discord_test.exs` — 11 tests for WebhookNotifier.Discord (R1-R10 + edge), async: true
 - `repo_test.exs` — Repo persistence tests covering migration-backed intel tables and sandbox usage, async: true
-- `intel_market_test.exs` — 30 tests for Sigil.IntelMarket covering chain sync, seller/purchased listing queries, Seal config, stale cleanup, signed submission reconciliation, restricted purchases, and Walrus blob availability, async: true
+- `intel_market_test.exs` — 44 tests for Sigil.IntelMarket covering chain sync, seller/purchased listing queries, Seal config, stale cleanup, signed submission reconciliation, restricted purchases, Walrus blob availability, Layer 4 reputation queries/feedback tx builders, pseudonym create/cancel flows, and relay-sponsored submission, async: true
 - `intel/intel_listing_test.exs` — 13 tests for Sigil.Intel.IntelListing schema validation and persistence, async: true
 - `walrus_client_test.exs` — 8 tests for Sigil.WalrusClient.HTTP upload/read/existence contracts, async: true
+- `pseudonym_test.exs` — 6 tests for Sigil.Pseudonym schema validation (required fields, 0x-prefix, non-empty binary key, valid changeset), async: true
+- `pseudonyms_test.exs` — 10 tests for Sigil.Pseudonyms context CRUD (create, list, get, delete, limit enforcement, concurrent limit enforcement), async: true
 
 ## Test Patterns
 
@@ -56,6 +58,8 @@
 | Alerts (context) | 20 | R1-R20 | R20 (lifecycle dedup+cooldown) |
 | AlertEngine | 20 | R1-R19 + edge | R19 (monitor event→persist→Discord) |
 | WebhookNotifier.Discord | 11 | R1-R10 + edge | R10 (end-to-end webhook) |
-| IntelMarket | 30 | Seal sync + tx + blob flows | create→purchase→sold + restricted + stale-sync coverage |
+| IntelMarket | 44 | Seal sync + tx + blob + reputation + pseudonym flows | create→purchase→sold + restricted + stale-sync + reputation + pseudonym relay coverage |
 | IntelListing | 13 | Schema validation + persistence | — |
 | WalrusClient | 8 | upload/read/existence contract | — |
+| Pseudonym | 6 | Schema validation | — |
+| Pseudonyms | 10 | CRUD + limit + concurrency | create→list→get→delete + advisory lock concurrency |
