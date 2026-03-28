@@ -106,7 +106,7 @@ defmodule Sigil.Sui.Client.HTTP do
   }
   """
 
-  alias Sigil.Sui.Client.HTTP.DynamicFields
+  alias Sigil.Sui.Client.HTTP.{Coins, DynamicFields}
 
   @doc "Fetches a single Sui object by address."
   @impl Client
@@ -241,6 +241,21 @@ defmodule Sigil.Sui.Client.HTTP do
     )
   end
 
+  @doc "Fetches SUI coin refs and balances for the given owner address."
+  @impl Client
+  @spec get_coins(String.t(), Client.request_opts()) ::
+          {:ok, [Client.coin_info()]} | {:error, Client.error_reason()}
+  def get_coins(owner, opts \\ []) when is_binary(owner) and is_list(opts) do
+    with {:ok, data} <-
+           graphql_request(
+             Coins.query(),
+             %{"owner" => owner, "type" => "0x2::coin::Coin<0x2::sui::SUI>"},
+             opts
+           ) do
+      Coins.build_list(data)
+    end
+  end
+
   @spec graphql_request(String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, Client.error_reason()}
   defp graphql_request(query, variables, opts) do
@@ -368,16 +383,19 @@ defmodule Sigil.Sui.Client.HTTP do
   # -- Address, version & digest decoding for object refs --
 
   @spec parse_version(term()) :: {:ok, non_neg_integer()} | :error
-  defp parse_version(version) when is_integer(version) and version >= 0, do: {:ok, version}
+  defp parse_version(version), do: parse_non_neg_integer(version)
 
-  defp parse_version(version) when is_binary(version) do
-    case Integer.parse(version) do
+  @spec parse_non_neg_integer(term()) :: {:ok, non_neg_integer()} | :error
+  defp parse_non_neg_integer(value) when is_integer(value) and value >= 0, do: {:ok, value}
+
+  defp parse_non_neg_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
       {int, ""} when int >= 0 -> {:ok, int}
       _ -> :error
     end
   end
 
-  defp parse_version(_other), do: :error
+  defp parse_non_neg_integer(_other), do: :error
 
   @spec decode_sui_address(String.t()) :: {:ok, binary()} | {:error, :invalid_response}
   defp decode_sui_address("0x" <> hex), do: decode_sui_address(hex)

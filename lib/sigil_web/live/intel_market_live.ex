@@ -9,8 +9,8 @@ defmodule SigilWeb.IntelMarketLive do
   import SigilWeb.TransactionHelpers, only: [sui_chain: 0]
 
   alias Sigil.Intel.IntelListing
-  alias Sigil.IntelMarket
-  alias SigilWeb.IntelMarketLive.{State, Transactions}
+  alias Sigil.Pseudonyms
+  alias SigilWeb.IntelMarketLive.{PageHelpers, State, Transactions}
 
   @doc """
   Mounts the intel marketplace page.
@@ -22,10 +22,11 @@ defmodule SigilWeb.IntelMarketLive do
       socket
       |> assign(:seal_package_id_override, Map.get(session, "seal_package_id"))
       |> assign(:walrus_client_override, Map.get(session, "walrus_client"))
+      |> assign(:reputation_registry_id_override, Map.get(session, "reputation_registry_id"))
       |> State.assign_base_state()
-      |> assign_seal_config_json()
-      |> maybe_load_marketplace()
-      |> maybe_subscribe_marketplace()
+      |> PageHelpers.assign_seal_config_json()
+      |> PageHelpers.maybe_load_marketplace()
+      |> PageHelpers.maybe_subscribe_marketplace()
 
     {:ok, socket}
   end
@@ -40,7 +41,7 @@ defmodule SigilWeb.IntelMarketLive do
 
   @doc false
   def handle_event("show_section", %{"section" => section}, socket) do
-    {:noreply, assign(socket, :page_section, normalize_section(section))}
+    {:noreply, assign(socket, :page_section, PageHelpers.normalize_section(section))}
   end
 
   @doc false
@@ -51,6 +52,149 @@ defmodule SigilWeb.IntelMarketLive do
   @doc false
   def handle_event("submit_listing", %{"listing" => params}, socket) do
     {:noreply, Transactions.submit_listing(socket, params)}
+  end
+
+  @doc false
+  def handle_event("create_pseudonym", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(
+       pseudonym_error_message: nil,
+       pending_delete_pseudonym: nil,
+       pseudonym_delete_warning: nil
+     )
+     |> push_event("create_pseudonym", %{})}
+  end
+
+  @doc false
+  def handle_event(
+        "pseudonym_created",
+        %{
+          "pseudonym_address" => pseudonym_address,
+          "encrypted_private_key" => encrypted_private_key
+        },
+        socket
+      )
+      when is_binary(pseudonym_address) and is_binary(encrypted_private_key) do
+    attrs = %{
+      pseudonym_address: pseudonym_address,
+      encrypted_private_key: Base.decode64!(encrypted_private_key)
+    }
+
+    case Pseudonyms.create_pseudonym(socket.assigns.sender, attrs) do
+      {:ok, _pseudonym} ->
+        {:noreply,
+         socket
+         |> assign(pending_active_pseudonym: pseudonym_address, pseudonym_error_message: nil)
+         |> State.reload_pseudonyms()
+         |> State.push_pseudonyms()}
+
+      {:error, :limit_reached} ->
+        {:noreply, assign(socket, pseudonym_error_message: "Failed to create pseudonym")}
+
+      {:error, _changeset} ->
+        {:noreply, assign(socket, pseudonym_error_message: "Failed to create pseudonym")}
+    end
+  rescue
+    ArgumentError ->
+      {:noreply, assign(socket, pseudonym_error_message: "Failed to create pseudonym")}
+  end
+
+  @doc false
+  def handle_event(
+        "switch_pseudonym",
+        %{"pseudonym" => %{"active_address" => pseudonym_address}},
+        socket
+      )
+      when is_binary(pseudonym_address) do
+    {:noreply,
+     socket
+     |> assign(pending_active_pseudonym: pseudonym_address, pseudonym_error_message: nil)
+     |> push_event("activate_pseudonym", %{"pseudonym_address" => pseudonym_address})}
+  end
+
+  @doc false
+  def handle_event(
+        "pseudonyms_loaded",
+        %{"addresses" => addresses, "active_address" => active_address},
+        socket
+      )
+      when is_list(addresses) do
+    {:noreply, State.sync_loaded_pseudonyms(socket, addresses, active_address)}
+  end
+
+  @doc false
+  def handle_event(
+        "request_delete_pseudonym",
+        %{"pseudonym_address" => pseudonym_address},
+        socket
+      )
+      when is_binary(pseudonym_address) do
+    if Enum.any?(socket.assigns.pseudonyms, &(&1.pseudonym_address == pseudonym_address)) do
+      {:noreply,
+       assign(socket,
+         pending_delete_pseudonym: pseudonym_address,
+         pseudonym_delete_warning:
+           "Deleting this pseudonym can orphan active listings and prevent cancellation. Confirm before continuing."
+       )}
+    else
+      {:noreply, put_flash(socket, :error, "Pseudonym not found")}
+    end
+  end
+
+  @doc false
+  def handle_event("cancel_delete_pseudonym", _params, socket) do
+    {:noreply, assign(socket, pending_delete_pseudonym: nil, pseudonym_delete_warning: nil)}
+  end
+
+  @doc false
+  def handle_event("delete_pseudonym", %{"pseudonym_address" => pseudonym_address}, socket)
+      when is_binary(pseudonym_address) do
+    if socket.assigns.pending_delete_pseudonym == pseudonym_address do
+      case Pseudonyms.delete_pseudonym(socket.assigns.sender, pseudonym_address) do
+        {:ok, _deleted} ->
+          {:noreply,
+           socket
+           |> assign(
+             pending_active_pseudonym: nil,
+             pending_delete_pseudonym: nil,
+             pseudonym_delete_warning: nil
+           )
+           |> put_flash(:info, "Pseudonym deleted")
+           |> State.refresh_marketplace()}
+
+        {:error, :not_found} ->
+          {:noreply,
+           socket
+           |> assign(pending_delete_pseudonym: nil, pseudonym_delete_warning: nil)
+           |> put_flash(:error, "Pseudonym not found")}
+      end
+    else
+      {:noreply,
+       socket
+       |> assign(pending_delete_pseudonym: nil, pseudonym_delete_warning: nil)
+       |> put_flash(:error, "Confirm deletion before removing pseudonym")}
+    end
+  end
+
+  @doc false
+  def handle_event("pseudonym_activated", %{"pseudonym_address" => pseudonym_address}, socket)
+      when is_binary(pseudonym_address) do
+    {:noreply,
+     socket
+     |> assign(active_pseudonym: pseudonym_address, pending_active_pseudonym: pseudonym_address)
+     |> State.refresh_marketplace()}
+  end
+
+  @doc false
+  def handle_event("pseudonym_error", %{"phase" => phase, "reason" => reason}, socket)
+      when is_binary(phase) and is_binary(reason) do
+    {:noreply, PageHelpers.handle_pseudonym_error(socket, phase, reason)}
+  end
+
+  @doc false
+  def handle_event("pseudonym_error", _params, socket) do
+    {:noreply, assign(socket, pseudonym_error_message: "Failed to switch pseudonym")}
   end
 
   @doc false
@@ -118,6 +262,42 @@ defmodule SigilWeb.IntelMarketLive do
   end
 
   @doc false
+  def handle_event("confirm_quality", %{"listing_id" => listing_id}, socket) do
+    {:noreply,
+     if Map.get(socket.assigns.feedback_recorded || %{}, listing_id, false) do
+       socket |> put_flash(:error, "Feedback already submitted")
+     else
+       Transactions.submit_feedback(socket, listing_id, :confirm_quality)
+     end}
+  end
+
+  @doc false
+  def handle_event("report_bad_quality", %{"listing_id" => listing_id}, socket) do
+    {:noreply,
+     if Map.get(socket.assigns.feedback_recorded || %{}, listing_id, false) do
+       socket |> put_flash(:error, "Feedback already submitted")
+     else
+       Transactions.submit_feedback(socket, listing_id, :report_bad_quality)
+     end}
+  end
+
+  @doc false
+  def handle_event("pseudonym_tx_signed", %{"signature" => signature}, socket)
+      when is_binary(signature) do
+    case socket.assigns[:pending_tx] do
+      %{kind: kind, tx_bytes: tx_bytes}
+      when kind in [:create_listing_pseudonym, :cancel_listing_pseudonym] ->
+        {:noreply, Transactions.finalize_transaction(socket, tx_bytes, signature)}
+
+      _other ->
+        {:noreply,
+         socket
+         |> assign(page_state: :ready, pending_tx: nil, pending_listing: nil, seal_status: nil)
+         |> put_flash(:error, "Transaction failed")}
+    end
+  end
+
+  @doc false
   def handle_event("transaction_signed", %{"bytes" => tx_bytes, "signature" => signature}, socket) do
     case socket.assigns[:pending_tx] do
       %{tx_bytes: ^tx_bytes} ->
@@ -175,8 +355,17 @@ defmodule SigilWeb.IntelMarketLive do
         id="seal-encrypt"
         phx-hook="SealEncrypt"
         data-address={@sender}
+        data-active-pseudonym={@active_pseudonym}
         data-sui-chain={sui_chain()}
         data-config={@seal_config_json}
+        class="hidden"
+      ></div>
+
+      <div
+        id="pseudonym-key"
+        phx-hook="PseudonymKey"
+        data-address={@sender}
+        data-sui-chain={sui_chain()}
         class="hidden"
       ></div>
     <% end %>
@@ -199,7 +388,7 @@ defmodule SigilWeb.IntelMarketLive do
                   type="button"
                   phx-click="show_section"
                   phx-value-section="browsing"
-                  class={section_button_classes(@page_section == :browsing)}
+                  class={PageHelpers.section_button_classes(@page_section == :browsing)}
                 >
                   Browse
                 </button>
@@ -207,7 +396,7 @@ defmodule SigilWeb.IntelMarketLive do
                   type="button"
                   phx-click="show_section"
                   phx-value-section="my_listings"
-                  class={section_button_classes(@page_section == :my_listings)}
+                  class={PageHelpers.section_button_classes(@page_section == :my_listings)}
                 >
                   My Listings
                 </button>
@@ -229,6 +418,7 @@ defmodule SigilWeb.IntelMarketLive do
                 listings={@my_listings}
                 purchased_listings={@purchased_listings}
                 decrypted_intel={@decrypted_intel}
+                feedback_recorded={@feedback_recorded}
                 static_data={@static_data_pid}
               />
             <% else %>
@@ -248,8 +438,10 @@ defmodule SigilWeb.IntelMarketLive do
                       :for={listing <- @filtered_listings}
                       listing={listing}
                       sender={@sender}
+                      active_pseudonym={@active_pseudonym}
                       tribe_id={@tribe_id}
                       static_data={@static_data_pid}
+                      reputation={Map.get(@reputation_cache, listing.seller_address)}
                       decrypted_intel={Map.get(@decrypted_intel, listing.id, %{})}
                     />
                   <% end %>
@@ -261,6 +453,11 @@ defmodule SigilWeb.IntelMarketLive do
                     form={@form}
                     entry_mode={@entry_mode}
                     my_reports={@my_reports}
+                    pseudonyms={@pseudonyms}
+                    active_pseudonym={@active_pseudonym}
+                    pending_delete_pseudonym={@pending_delete_pseudonym}
+                    pseudonym_error_message={@pseudonym_error_message}
+                    pseudonym_delete_warning={@pseudonym_delete_warning}
                     seal_status={@seal_status}
                     solar_systems={@solar_systems}
                     tribe_id={@tribe_id}
@@ -289,54 +486,5 @@ defmodule SigilWeb.IntelMarketLive do
       </div>
     </section>
     """
-  end
-
-  defp maybe_load_marketplace(%{assigns: %{authenticated?: false}} = socket), do: socket
-
-  defp maybe_load_marketplace(%{assigns: %{cache_tables: cache_tables}} = socket)
-       when not is_map(cache_tables) do
-    socket
-  end
-
-  defp maybe_load_marketplace(socket) do
-    case IntelMarket.discover_marketplace(State.market_opts(socket)) do
-      {:ok, nil} ->
-        assign(socket, marketplace_available?: false)
-
-      {:ok, marketplace_info} ->
-        socket
-        |> assign(marketplace_available?: true, marketplace_info: marketplace_info)
-        |> State.sync_and_load_data()
-
-      {:error, _reason} ->
-        assign(socket, marketplace_available?: false)
-    end
-  end
-
-  defp maybe_subscribe_marketplace(socket) do
-    if connected?(socket) and socket.assigns[:authenticated?] and socket.assigns[:pubsub] do
-      Phoenix.PubSub.subscribe(socket.assigns.pubsub, IntelMarket.topic())
-    end
-
-    socket
-  end
-
-  defp assign_seal_config_json(socket) do
-    assign(
-      socket,
-      :seal_config_json,
-      Jason.encode!(IntelMarket.build_seal_config(State.market_opts(socket)))
-    )
-  end
-
-  defp normalize_section("my_listings"), do: :my_listings
-  defp normalize_section(_section), do: :browsing
-
-  defp section_button_classes(true) do
-    "rounded-full border border-quantum-300 bg-quantum-400/10 px-4 py-2 font-mono text-xs uppercase tracking-[0.22em] text-cream"
-  end
-
-  defp section_button_classes(false) do
-    "rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.22em] text-space-500 transition hover:border-quantum-400 hover:text-cream"
   end
 end

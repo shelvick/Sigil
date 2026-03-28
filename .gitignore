@@ -51,3 +51,6 @@ node_modules/
 # Circom build artifacts (regenerated via circuits/scripts/)
 /circuits/build/
 /circuits/node_modules/
+
+# Runtime relay key material
+/.sigil/

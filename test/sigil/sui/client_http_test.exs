@@ -1003,6 +1003,93 @@ defmodule Sigil.Sui.ClientHTTPTest do
     end
   end
 
+  describe "get_coins/2" do
+    test "get_coins returns coin list with refs and balances" do
+      stub_name = stub_name(:get_coins_success)
+      digest_b58 = "11111111111111111111111111111111"
+
+      Req.Test.expect(stub_name, fn conn ->
+        payload = graphql_payload(conn)
+
+        assert payload["query"] =~ "query GetCoins"
+
+        assert payload["variables"] == %{
+                 "owner" => "0xowner",
+                 "type" => "0x2::coin::Coin<0x2::sui::SUI>"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "address" => %{
+              "coins" => %{
+                "nodes" => [
+                  %{
+                    "address" => "0x" <> String.duplicate("ab", 32),
+                    "version" => "7",
+                    "digest" => digest_b58,
+                    "contents" => %{"json" => %{"balance" => "12000000"}}
+                  }
+                ]
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok, [%{object_id: object_id, version: 7, digest: digest, balance: 12_000_000}]} =
+               ClientHTTP.get_coins("0xowner", req_options: [plug: {Req.Test, stub_name}])
+
+      assert object_id == Base.decode16!(String.duplicate("ab", 32), case: :lower)
+      assert digest == <<0::256>>
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_coins returns empty list for unfunded address" do
+      stub_name = stub_name(:get_coins_empty)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "owner" => "0xunfunded",
+                 "type" => "0x2::coin::Coin<0x2::sui::SUI>"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "address" => %{
+              "coins" => %{
+                "nodes" => []
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok, []} =
+               ClientHTTP.get_coins("0xunfunded", req_options: [plug: {Req.Test, stub_name}])
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_coins returns graphql_errors on endpoint error" do
+      stub_name = stub_name(:get_coins_graphql_errors)
+      errors = [%{"message" => "coins unavailable"}]
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "owner" => "0xowner",
+                 "type" => "0x2::coin::Coin<0x2::sui::SUI>"
+               }
+
+        Req.Test.json(conn, %{"errors" => errors})
+      end)
+
+      assert {:error, {:graphql_errors, ^errors}} =
+               ClientHTTP.get_coins("0xowner", req_options: [plug: {Req.Test, stub_name}])
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+  end
+
   describe "configuration and behaviour" do
     test "URL override via opts is used for requests" do
       stub_name = stub_name(:url_override)
