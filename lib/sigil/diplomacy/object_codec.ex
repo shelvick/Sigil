@@ -71,12 +71,18 @@ defmodule Sigil.Diplomacy.ObjectCodec do
         current_leader_votes: current_leader_votes,
         members: members,
         votes_table_id: votes_table_id,
-        vote_tallies_table_id: vote_tallies_table_id
+        vote_tallies_table_id: vote_tallies_table_id,
+        oracle_address: parse_oracle_address(object)
       }
     else
       _invalid -> nil
     end
   end
+
+  @spec parse_oracle_address(map()) :: String.t() | nil
+  defp parse_oracle_address(%{"oracle_address" => oracle}) when is_binary(oracle), do: oracle
+  defp parse_oracle_address(%{"oracleAddress" => oracle}) when is_binary(oracle), do: oracle
+  defp parse_oracle_address(_object), do: nil
 
   @doc "Builds the shared registry reference from a page of chain objects."
   @spec build_registry_ref([map()]) :: {:ok, map()} | {:error, :no_registry_ref}

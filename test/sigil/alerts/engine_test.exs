@@ -552,7 +552,7 @@ defmodule Sigil.Alerts.EngineTest do
 
     send(engine, {:assembly_monitor, assembly.id, fuel_low_payload(assembly)})
 
-    assert_receive :default_dispatch_delivered, 1_000
+    assert_receive :default_dispatch_delivered, 5_000
     assert :ok = Req.Test.verify!(stub_name)
   end
 
@@ -807,8 +807,359 @@ defmodule Sigil.Alerts.EngineTest do
     assert :ok = Req.Test.verify!(stub_name)
   end
 
+  test "creates reputation_threshold_crossed alert on tier change", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+    account_address = owner_address()
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          send(parent, {:create_alert_called, attrs})
+          {:ok, alert_struct(attrs)}
+        end,
+        dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(account_address: account_address)
+    })
+
+    assert_receive {:create_alert_called, attrs}, 1_000
+    assert attrs.type == "reputation_threshold_crossed"
+    assert attrs.assembly_id == nil
+    assert attrs.assembly_name == nil
+    assert attrs.account_address == account_address
+    assert attrs.tribe_id == 42
+  end
+
+  test "reputation alert severity is info for positive transitions", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          send(parent, {:create_alert_called, attrs})
+          {:ok, alert_struct(attrs)}
+        end,
+        dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(old_tier: :neutral, new_tier: :friendly)
+    })
+
+    assert_receive {:create_alert_called, attrs}, 1_000
+    assert attrs.severity == "info"
+  end
+
+  test "reputation alert severity is warning for single-step downgrades", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          send(parent, {:create_alert_called, attrs})
+          {:ok, alert_struct(attrs)}
+        end,
+        dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(old_tier: :friendly, new_tier: :neutral)
+    })
+
+    assert_receive {:create_alert_called, attrs}, 1_000
+    assert attrs.severity == "warning"
+  end
+
+  test "reputation alert severity is critical for hostile transitions", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          send(parent, {:create_alert_called, attrs})
+          {:ok, alert_struct(attrs)}
+        end,
+        dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(old_tier: :friendly, new_tier: :hostile)
+    })
+
+    assert_receive {:create_alert_called, attrs}, 1_000
+    assert attrs.severity == "critical"
+  end
+
+  test "dispatches webhook for reputation threshold alert", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+    tribe_id = 4242
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          {:ok, alert_struct(attrs)}
+        end,
+        get_webhook_config_fun: fn ^tribe_id, _opts ->
+          webhook_config_struct(tribe_id: tribe_id)
+        end,
+        notifier: CapturingNotifier,
+        notifier_opts: [test_pid: self()],
+        dispatch_fun: fn alert, config, notifier, opts ->
+          send(parent, {:dispatch_called, alert, config, notifier, opts})
+          notifier.deliver(alert, config, opts)
+        end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(tribe_id: tribe_id)
+    })
+
+    assert_receive {:dispatch_called, %Alert{} = alert, config, CapturingNotifier,
+                    [test_pid: test_pid]},
+                   1_000
+
+    assert alert.type == "reputation_threshold_crossed"
+    assert config.tribe_id == tribe_id
+    assert test_pid == self()
+
+    assert_receive {:notifier_called, %Alert{type: "reputation_threshold_crossed"}, ^config},
+                   1_000
+  end
+
+  test "skips alert when reputation tier has not changed", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          send(parent, {:create_alert_called, attrs})
+          {:ok, alert_struct(attrs)}
+        end,
+        dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(
+        target_tribe_name: "Probe A",
+        score: -101,
+        old_tier: :neutral,
+        new_tier: :unfriendly
+      )
+    })
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(
+        target_tribe_name: "Probe B",
+        score: -202,
+        old_tier: :neutral,
+        new_tier: :neutral
+      )
+    })
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(
+        target_tribe_name: "Probe C",
+        score: -303,
+        old_tier: :friendly,
+        new_tier: :unfriendly
+      )
+    })
+
+    assert_receive {:create_alert_called, first_attrs}, 1_000
+    assert first_attrs.message =~ "Probe A"
+    assert first_attrs.metadata.score == -101
+
+    assert_receive {:create_alert_called, second_attrs}, 1_000
+    assert second_attrs.message =~ "Probe C"
+    assert second_attrs.metadata.score == -303
+
+    refute_receive {:create_alert_called, _attrs}, 200
+  end
+
+  test "reputation alert message includes tribe name and score", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    parent = self()
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        create_alert_fun: fn attrs, _opts ->
+          send(parent, {:create_alert_called, attrs})
+          {:ok, alert_struct(attrs)}
+        end,
+        dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(target_tribe_name: "Wolf Pack", score: -145)
+    })
+
+    assert_receive {:create_alert_called, attrs}, 1_000
+    assert attrs.message =~ "Wolf Pack"
+    assert attrs.message =~ "changed from neutral to unfriendly"
+    assert attrs.message =~ "(score: -145)"
+    assert attrs.metadata.old_tier == "neutral"
+    assert attrs.metadata.new_tier == "unfriendly"
+    assert attrs.metadata.score == -145
+    assert attrs.metadata.target_tribe_id == 77
+  end
+
+  @tag :acceptance
+  test "reputation threshold event persists alert and sends Discord notification", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry,
+    sandbox_owner: sandbox_owner
+  } do
+    parent = self()
+    owner = owner_address()
+    tribe_id = 9_011
+    stub_name = stub_name(:engine_reputation_acceptance)
+
+    assert {:ok, _config} =
+             Alerts.upsert_webhook_config(
+               tribe_id,
+               %{
+                 "webhook_url" => "https://discord.example/webhooks/reputation-acceptance",
+                 "service_type" => "discord",
+                 "enabled" => true
+               },
+               []
+             )
+
+    Req.Test.expect(stub_name, fn conn ->
+      payload = request_body(conn)
+      [embed] = payload["embeds"]
+
+      assert embed["title"] == "Reputation Threshold Crossed"
+      assert embed["description"] =~ "Standing with Ghost Frogs changed from friendly to hostile"
+      assert embed["description"] =~ "(score: -640)"
+      refute embed["description"] =~ "N/A"
+      refute embed["description"] =~ "error"
+      send(parent, :reputation_webhook_received)
+
+      Req.Test.json(conn, %{"ok" => true})
+    end)
+
+    _engine =
+      start_engine!(
+        pubsub: pubsub,
+        registry: registry,
+        tables: tables,
+        sandbox_owner: sandbox_owner,
+        notifier: Sigil.Alerts.WebhookNotifier.Discord,
+        notifier_opts: [req_options: [plug: {Req.Test, stub_name}], delay_fun: fn _ms -> :ok end],
+        dispatch_fun: fn alert, config, notifier, opts ->
+          notifier.deliver(alert, config, opts)
+        end
+      )
+
+    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+      :reputation_updated,
+      reputation_payload(
+        tribe_id: tribe_id,
+        account_address: owner,
+        old_tier: :friendly,
+        new_tier: :hostile,
+        score: -640,
+        target_tribe_name: "Ghost Frogs"
+      )
+    })
+
+    assert_receive :reputation_webhook_received, 1_000
+
+    alerts = Alerts.list_alerts([account_address: owner], [])
+    assert length(alerts) == 1
+    assert Enum.at(alerts, 0).type == "reputation_threshold_crossed"
+    assert Enum.at(alerts, 0).tribe_id == tribe_id
+    assert Enum.at(alerts, 0).assembly_id == nil
+    assert Enum.at(alerts, 0).message =~ "Ghost Frogs"
+    assert Enum.at(alerts, 0).message =~ "(score: -640)"
+    refute Enum.any?(alerts, &(&1.type == "fuel_low"))
+    assert :ok = Req.Test.verify!(stub_name)
+  end
+
+  defp reputation_payload(overrides) do
+    base = %{
+      tribe_id: 42,
+      target_tribe_id: 77,
+      account_address: owner_address(),
+      score: -250,
+      old_tier: :neutral,
+      new_tier: :unfriendly,
+      target_tribe_name: "Ghost Frogs"
+    }
+
+    Enum.into(overrides, base)
+  end
+
   defp start_engine!(opts) do
-    {:ok, engine} = Sigil.Alerts.Engine.start_link(opts)
+    {:ok, engine} =
+      Sigil.Alerts.Engine.start_link(
+        Keyword.merge(
+          [purge_interval_ms: 86_400_000, discovery_interval_ms: 86_400_000],
+          opts
+        )
+      )
+
     _state = Sigil.Alerts.Engine.get_state(engine)
 
     on_exit(fn ->

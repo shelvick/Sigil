@@ -929,7 +929,7 @@ defmodule Sigil.Sui.ClientHTTPTest do
       assert :ok = Req.Test.verify!(stub_name)
     end
 
-    test "graphql data wins over partial errors" do
+    test "errors key takes precedence over partial data" do
       stub_name = stub_name(:get_dynamic_fields_partial_errors)
 
       Req.Test.expect(stub_name, fn conn ->
@@ -957,14 +957,7 @@ defmodule Sigil.Sui.ClientHTTPTest do
         })
       end)
 
-      assert {:ok,
-              %{
-                data: [
-                  %{name: %{type: "address", json: "0xmember"}, value: %{type: "u64", json: 1}}
-                ],
-                has_next_page: false,
-                end_cursor: nil
-              }} =
+      assert {:error, {:graphql_errors, [%{"message" => "partial failure"}]}} =
                ClientHTTP.get_dynamic_fields("0xparent",
                  req_options: [plug: {Req.Test, stub_name}]
                )
@@ -1087,6 +1080,167 @@ defmodule Sigil.Sui.ClientHTTPTest do
                ClientHTTP.get_coins("0xowner", req_options: [plug: {Req.Test, stub_name}])
 
       assert :ok = Req.Test.verify!(stub_name)
+    end
+  end
+
+  describe "query_events/3" do
+    test "query_events returns events page for valid event type" do
+      stub_name = stub_name(:query_events_success)
+
+      Req.Test.expect(stub_name, fn conn ->
+        payload = graphql_payload(conn)
+
+        assert payload["query"] =~ "query QueryEvents"
+
+        assert payload["variables"] == %{
+                 "after" => nil,
+                 "eventType" => "0x2::killmail::KillmailCreatedEvent",
+                 "first" => 50
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "events" => %{
+              "pageInfo" => %{"hasNextPage" => true, "endCursor" => "cursor-1"},
+              "nodes" => [
+                %{
+                  "type" => %{"repr" => "0x2::killmail::KillmailCreatedEvent"},
+                  "json" =>
+                    Jason.encode!(%{"killmail_id" => "0xkill-1", "attacker" => "0xpilot-1"}),
+                  "timestamp" => "2026-03-26T21:30:00Z",
+                  "bcs" => "AAE="
+                }
+              ]
+            }
+          }
+        })
+      end)
+
+      assert {:ok,
+              %{
+                events: [%{"attacker" => "0xpilot-1", "killmail_id" => "0xkill-1"}],
+                next_cursor: "cursor-1"
+              }} =
+               ClientHTTP.query_events(
+                 "0x2::killmail::KillmailCreatedEvent",
+                 [],
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "query_events passes cursor through and returns next_cursor" do
+      stub_name = stub_name(:query_events_cursor)
+
+      Req.Test.expect(stub_name, fn conn ->
+        payload = graphql_payload(conn)
+
+        assert payload["variables"] == %{
+                 "after" => "cursor-abc",
+                 "eventType" => "0x2::jump::JumpEvent",
+                 "first" => 10
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "events" => %{
+              "pageInfo" => %{"hasNextPage" => true, "endCursor" => "cursor-next"},
+              "nodes" => [
+                %{
+                  "type" => %{"repr" => "0x2::jump::JumpEvent"},
+                  "json" =>
+                    Jason.encode!(%{"character_id" => "0xchar-1", "gate_id" => "0xgate-9"}),
+                  "timestamp" => "2026-03-26T21:31:00Z",
+                  "bcs" => "AAI="
+                }
+              ]
+            }
+          }
+        })
+      end)
+
+      assert {:ok,
+              %{
+                events: [%{"character_id" => "0xchar-1", "gate_id" => "0xgate-9"}],
+                next_cursor: "cursor-next"
+              }} =
+               ClientHTTP.query_events(
+                 "0x2::jump::JumpEvent",
+                 [after: "cursor-abc", limit: 10],
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "query_events returns empty page when no events match" do
+      stub_name = stub_name(:query_events_empty)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "eventType" => "0x2::priority_list::PriorityListUpdatedEvent",
+                 "first" => 50
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "events" => %{
+              "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+              "nodes" => []
+            }
+          }
+        })
+      end)
+
+      assert {:ok, %{events: [], next_cursor: nil}} =
+               ClientHTTP.query_events(
+                 "0x2::priority_list::PriorityListUpdatedEvent",
+                 [],
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "query_events returns graphql_errors on endpoint error" do
+      stub_name = stub_name(:query_events_graphql_errors)
+      errors = [%{"message" => "events unavailable"}]
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "eventType" => "0x2::killmail::KillmailCreatedEvent",
+                 "first" => 50
+               }
+
+        Req.Test.json(conn, %{"errors" => errors})
+      end)
+
+      assert {:error, {:graphql_errors, ^errors}} =
+               ClientHTTP.query_events(
+                 "0x2::killmail::KillmailCreatedEvent",
+                 [],
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "query_events returns timeout on transport timeout" do
+      stub_name = stub_name(:query_events_timeout)
+
+      Req.Test.stub(stub_name, fn conn ->
+        Req.Test.transport_error(conn, :timeout)
+      end)
+
+      assert {:error, :timeout} =
+               ClientHTTP.query_events(
+                 "0x2::killmail::KillmailCreatedEvent",
+                 [],
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
     end
   end
 

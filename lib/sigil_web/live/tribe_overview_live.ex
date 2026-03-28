@@ -75,6 +75,18 @@ defmodule SigilWeb.TribeOverviewLive do
     {:noreply, refresh_standings(socket)}
   end
 
+  def handle_info({:reputation_updated, _payload}, socket) do
+    {:noreply, refresh_standings(socket)}
+  end
+
+  def handle_info({:reputation_pinned, _payload}, socket) do
+    {:noreply, refresh_standings(socket)}
+  end
+
+  def handle_info({:reputation_unpinned, _payload}, socket) do
+    {:noreply, refresh_standings(socket)}
+  end
+
   def handle_info({:intel_updated, %IntelReport{tribe_id: tribe_id}}, socket)
       when tribe_id == socket.assigns.tribe_id do
     {:noreply, load_intel_summary(socket)}
@@ -114,6 +126,9 @@ defmodule SigilWeb.TribeOverviewLive do
             standings_summary={@standings_summary}
             default_standing={@default_standing}
             has_custodian={@has_custodian}
+            reputation_scores={@reputation_scores}
+            auto_managed_count={@auto_managed_count}
+            oracle_enabled={@oracle_enabled}
           />
         <% end %>
       </div>
@@ -136,6 +151,9 @@ defmodule SigilWeb.TribeOverviewLive do
       standings_summary: %{hostile: 0, unfriendly: 0, neutral: 0, friendly: 0, allied: 0},
       default_standing: :neutral,
       has_custodian: false,
+      reputation_scores: %{},
+      auto_managed_count: 0,
+      oracle_enabled: false,
       intel_summary: %{locations: 0, scouting: 0},
       loading: false
     )
@@ -199,10 +217,27 @@ defmodule SigilWeb.TribeOverviewLive do
       standings = Diplomacy.list_standings(opts)
       default_standing = Diplomacy.get_default_standing(opts)
 
+      reputation_scores =
+        opts
+        |> Diplomacy.list_reputation_scores()
+        |> Map.new(&{&1.target_tribe_id, &1})
+
+      auto_managed_count =
+        standings
+        |> Enum.count(fn %{tribe_id: target_tribe_id} ->
+          case Map.get(reputation_scores, target_tribe_id) do
+            %{pinned: true} -> false
+            _other -> true
+          end
+        end)
+
       assign(socket,
         has_custodian: active_custodian != nil,
         standings_summary: compute_standings_summary(standings),
-        default_standing: default_standing
+        default_standing: default_standing,
+        reputation_scores: reputation_scores,
+        auto_managed_count: auto_managed_count,
+        oracle_enabled: Diplomacy.oracle_enabled?(opts)
       )
     else
       socket
@@ -229,6 +264,7 @@ defmodule SigilWeb.TribeOverviewLive do
     if connected?(socket) and pubsub do
       Phoenix.PubSub.subscribe(pubsub, "tribes")
       Phoenix.PubSub.subscribe(pubsub, "diplomacy")
+      Phoenix.PubSub.subscribe(pubsub, "reputation")
 
       if intel_enabled?(socket.assigns.cache_tables) do
         Phoenix.PubSub.subscribe(pubsub, intel_topic(socket.assigns.tribe_id))

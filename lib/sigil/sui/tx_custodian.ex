@@ -217,6 +217,66 @@ defmodule Sigil.Sui.TxCustodian do
     build_opts(tx_opts, inputs, "batch_set_pilot_standings")
   end
 
+  @doc "Builds transaction options for `tribe_custodian::set_oracle`."
+  @spec build_set_oracle(custodian_ref(), character_ref(), PTB.bytes32(), tx_opts()) ::
+          builder_opts()
+  def build_set_oracle(custodian_ref, character_ref, oracle_address, tx_opts)
+      when is_list(tx_opts) do
+    inputs = [
+      shared_mut_input(custodian_ref),
+      shared_imm_input(character_ref),
+      {:pure, BCS.encode_address(validate_address!(oracle_address))}
+    ]
+
+    build_opts(tx_opts, inputs, "set_oracle")
+  end
+
+  @doc "Builds transaction options for `tribe_custodian::remove_oracle`."
+  @spec build_remove_oracle(custodian_ref(), character_ref(), tx_opts()) :: builder_opts()
+  def build_remove_oracle(custodian_ref, character_ref, tx_opts) when is_list(tx_opts) do
+    inputs = [shared_mut_input(custodian_ref), shared_imm_input(character_ref)]
+    build_opts(tx_opts, inputs, "remove_oracle")
+  end
+
+  @doc "Builds transaction options for `tribe_custodian::oracle_set_standing`."
+  @spec build_oracle_set_standing(custodian_ref(), non_neg_integer(), standing(), tx_opts()) ::
+          builder_opts()
+  def build_oracle_set_standing(custodian_ref, tribe_id, standing, tx_opts)
+      when is_integer(tribe_id) and tribe_id >= 0 and is_list(tx_opts) do
+    validate_standing!(standing)
+
+    inputs = [
+      shared_mut_input(custodian_ref),
+      {:pure, BCS.encode_u32(tribe_id)},
+      {:pure, BCS.encode_u8(standing)}
+    ]
+
+    build_opts(tx_opts, inputs, "oracle_set_standing")
+  end
+
+  @doc "Builds transaction options for `tribe_custodian::oracle_batch_set_standings`."
+  @spec build_oracle_batch_set_standings(
+          custodian_ref(),
+          [{non_neg_integer(), standing()}],
+          tx_opts()
+        ) ::
+          builder_opts()
+  def build_oracle_batch_set_standings(custodian_ref, updates, tx_opts)
+      when is_list(updates) and is_list(tx_opts) do
+    ensure_non_empty_batch!(updates)
+
+    {tribe_ids, standings} = Enum.unzip(updates)
+    Enum.each(standings, &validate_standing!/1)
+
+    inputs = [
+      shared_mut_input(custodian_ref),
+      {:pure, BCS.encode_vector(tribe_ids, &BCS.encode_u32/1)},
+      {:pure, BCS.encode_vector(standings, &BCS.encode_u8/1)}
+    ]
+
+    build_opts(tx_opts, inputs, "oracle_batch_set_standings")
+  end
+
   defp build_opts(tx_opts, inputs, function) do
     tx_opts ++ [inputs: inputs, commands: [move_call(function, input_arguments(inputs))]]
   end

@@ -99,9 +99,11 @@ defmodule SigilWeb.DiplomacyLive.GovernanceComponents do
 
   @spec governance_member_rows(map()) :: [map()]
   defp governance_member_rows(assigns) do
+    votes = if assigns.governance_data, do: assigns.governance_data.votes, else: %{}
+
     assigns.active_custodian.members
     |> Enum.map(fn address ->
-      voted_for = Map.get(assigns.governance_data.votes, address)
+      voted_for = Map.get(votes, address)
 
       %{
         address: address,

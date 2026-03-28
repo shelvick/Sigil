@@ -37,7 +37,12 @@ defmodule Sigil.StaticDataTestFixtures do
     start_gate_indexer = Keyword.get(opts, :start_gate_indexer, false)
     start_monitor_supervisor = Keyword.get(opts, :start_monitor_supervisor, false)
     start_alert_engine = Keyword.get(opts, :start_alert_engine, false)
+    start_repo = Keyword.get(opts, :start_repo, false)
+    start_grpc_stream = Keyword.get(opts, :start_grpc_stream, false)
+    start_reputation_engine = Keyword.get(opts, :start_reputation_engine, false)
     monitor_registry = Keyword.get(opts, :monitor_registry, nil)
+    grpc_endpoint = Keyword.get(opts, :grpc_endpoint, "127.0.0.1:1")
+    grpc_connector = Keyword.get(opts, :grpc_connector, nil)
     static_data_dir = Keyword.fetch!(opts, :static_data_dir)
     world_client = Keyword.fetch!(opts, :world_client)
     config_path = Path.join(config_dir, "application_probe_config.exs")
@@ -51,7 +56,12 @@ defmodule Sigil.StaticDataTestFixtures do
       config :sigil, :start_gate_indexer, #{inspect(start_gate_indexer)}
       config :sigil, :start_monitor_supervisor, #{inspect(start_monitor_supervisor)}
       config :sigil, :start_alert_engine, #{inspect(start_alert_engine)}
+      config :sigil, :start_repo, #{inspect(start_repo)}
+      config :sigil, :start_grpc_stream, #{inspect(start_grpc_stream)}
+      config :sigil, :start_reputation_engine, #{inspect(start_reputation_engine)}
       config :sigil, :monitor_registry, #{inspect(monitor_registry)}
+      config :sigil, :grpc_endpoint, #{inspect(grpc_endpoint)}
+      config :sigil, :grpc_connector, #{inspect(grpc_connector)}
       config :sigil, :static_data_dir, #{inspect(static_data_dir)}
       config :sigil, :world_client, #{inspect(world_client)}
       """

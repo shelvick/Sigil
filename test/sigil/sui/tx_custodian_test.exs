@@ -262,6 +262,174 @@ defmodule Sigil.Sui.TxCustodianTest do
     end
   end
 
+  describe "oracle builders" do
+    test "oracle: build_set_oracle produces valid PTB with oracle address" do
+      oracle_address = sample_oracle_address()
+
+      build_opts =
+        TxCustodian.build_set_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          oracle_address,
+          sample_tx_opts()
+        )
+
+      assert build_opts[:inputs] == [
+               {:object, {:shared, object_id(0x11), 9, true}},
+               {:object, {:shared, object_id(0x20), 11, false}},
+               {:pure, BCS.encode_address(oracle_address)}
+             ]
+
+      assert build_opts[:commands] == [
+               {:move_call, @package_id, "tribe_custodian", "set_oracle", [],
+                [{:input, 0}, {:input, 1}, {:input, 2}]}
+             ]
+    end
+
+    test "oracle: build_remove_oracle produces valid PTB" do
+      build_opts =
+        TxCustodian.build_remove_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          sample_tx_opts()
+        )
+
+      assert build_opts[:inputs] == [
+               {:object, {:shared, object_id(0x11), 9, true}},
+               {:object, {:shared, object_id(0x20), 11, false}}
+             ]
+
+      assert build_opts[:commands] == [
+               {:move_call, @package_id, "tribe_custodian", "remove_oracle", [],
+                [{:input, 0}, {:input, 1}]}
+             ]
+    end
+
+    test "oracle set standing builder returns oracle PTB" do
+      build_opts =
+        TxCustodian.build_oracle_set_standing(
+          sample_custodian_ref(),
+          42,
+          3,
+          sample_oracle_tx_opts()
+        )
+
+      assert build_opts[:inputs] == [
+               {:object, {:shared, object_id(0x11), 9, true}},
+               {:pure, BCS.encode_u32(42)},
+               {:pure, BCS.encode_u8(3)}
+             ]
+
+      assert build_opts[:commands] == [
+               {:move_call, @package_id, "tribe_custodian", "oracle_set_standing", [],
+                [{:input, 0}, {:input, 1}, {:input, 2}]}
+             ]
+    end
+
+    test "oracle batch standings builder encodes vectors" do
+      updates = [{1, 0}, {2, 3}]
+
+      build_opts =
+        TxCustodian.build_oracle_batch_set_standings(
+          sample_custodian_ref(),
+          updates,
+          sample_oracle_tx_opts()
+        )
+
+      assert build_opts[:inputs] == [
+               {:object, {:shared, object_id(0x11), 9, true}},
+               {:pure, BCS.encode_vector([1, 2], &BCS.encode_u32/1)},
+               {:pure, BCS.encode_vector([0, 3], &BCS.encode_u8/1)}
+             ]
+
+      assert build_opts[:commands] == [
+               {:move_call, @package_id, "tribe_custodian", "oracle_batch_set_standings", [],
+                [{:input, 0}, {:input, 1}, {:input, 2}]}
+             ]
+    end
+
+    test "oracle builders reject invalid standing values" do
+      assert_raise ArgumentError, fn ->
+        TxCustodian.build_oracle_set_standing(
+          sample_custodian_ref(),
+          42,
+          5,
+          sample_oracle_tx_opts()
+        )
+      end
+
+      assert_raise ArgumentError, fn ->
+        TxCustodian.build_oracle_batch_set_standings(
+          sample_custodian_ref(),
+          [{1, 0}, {2, 5}],
+          sample_oracle_tx_opts()
+        )
+      end
+    end
+
+    test "oracle batch builder rejects empty list" do
+      assert_raise ArgumentError, fn ->
+        TxCustodian.build_oracle_batch_set_standings(
+          sample_custodian_ref(),
+          [],
+          sample_oracle_tx_opts()
+        )
+      end
+    end
+
+    test "oracle: invalid oracle address raises ArgumentError" do
+      assert_raise ArgumentError, fn ->
+        TxCustodian.build_set_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          <<1, 2, 3>>,
+          sample_tx_opts()
+        )
+      end
+    end
+
+    test "oracle builders omit character ref input" do
+      set_standing_build_opts =
+        TxCustodian.build_oracle_set_standing(
+          sample_custodian_ref(),
+          42,
+          1,
+          sample_oracle_tx_opts()
+        )
+
+      batch_build_opts =
+        TxCustodian.build_oracle_batch_set_standings(
+          sample_custodian_ref(),
+          [{1, 0}, {2, 4}],
+          sample_oracle_tx_opts()
+        )
+
+      assert set_standing_build_opts[:inputs] == [
+               {:object, {:shared, object_id(0x11), 9, true}},
+               {:pure, BCS.encode_u32(42)},
+               {:pure, BCS.encode_u8(1)}
+             ]
+
+      assert batch_build_opts[:inputs] == [
+               {:object, {:shared, object_id(0x11), 9, true}},
+               {:pure, BCS.encode_vector([1, 2], &BCS.encode_u32/1)},
+               {:pure, BCS.encode_vector([0, 4], &BCS.encode_u8/1)}
+             ]
+    end
+
+    test "oracle PTB output passes through transaction builder" do
+      build_opts =
+        TxCustodian.build_oracle_set_standing(
+          sample_custodian_ref(),
+          42,
+          0,
+          sample_oracle_tx_opts()
+        )
+
+      assert is_binary(TransactionBuilder.build!(build_opts))
+    end
+  end
+
   describe "shared package and object semantics" do
     test "all move_calls reference the sigil package ID" do
       move_calls = [
@@ -325,6 +493,28 @@ defmodule Sigil.Sui.TxCustodianTest do
           sample_character_ref(),
           [{object_id(0x41), 3}],
           sample_tx_opts()
+        ),
+        TxCustodian.build_set_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          sample_oracle_address(),
+          sample_tx_opts()
+        ),
+        TxCustodian.build_remove_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          sample_tx_opts()
+        ),
+        TxCustodian.build_oracle_set_standing(
+          sample_custodian_ref(),
+          42,
+          1,
+          sample_oracle_tx_opts()
+        ),
+        TxCustodian.build_oracle_batch_set_standings(
+          sample_custodian_ref(),
+          [{1, 0}, {2, 3}],
+          sample_oracle_tx_opts()
         )
       ]
 
@@ -398,6 +588,28 @@ defmodule Sigil.Sui.TxCustodianTest do
           sample_character_ref(),
           [{object_id(0x41), 3}],
           sample_tx_opts()
+        ),
+        TxCustodian.build_set_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          sample_oracle_address(),
+          sample_tx_opts()
+        ),
+        TxCustodian.build_remove_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          sample_tx_opts()
+        ),
+        TxCustodian.build_oracle_set_standing(
+          sample_custodian_ref(),
+          42,
+          1,
+          sample_oracle_tx_opts()
+        ),
+        TxCustodian.build_oracle_batch_set_standings(
+          sample_custodian_ref(),
+          [{1, 0}, {2, 3}],
+          sample_oracle_tx_opts()
         )
       ]
 
@@ -467,6 +679,17 @@ defmodule Sigil.Sui.TxCustodianTest do
           sample_custodian_ref(),
           sample_character_ref(),
           [{object_id(0x41), 3}],
+          sample_tx_opts()
+        ),
+        TxCustodian.build_set_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
+          sample_oracle_address(),
+          sample_tx_opts()
+        ),
+        TxCustodian.build_remove_oracle(
+          sample_custodian_ref(),
+          sample_character_ref(),
           sample_tx_opts()
         )
       ]
@@ -675,6 +898,19 @@ defmodule Sigil.Sui.TxCustodianTest do
       gas_price: 1_000,
       gas_budget: 50_000_000
     ]
+  end
+
+  defp sample_oracle_tx_opts do
+    [
+      sender: sample_oracle_address(),
+      gas_payment: [{object_id(0xBC), 8, object_id(0xCD)}],
+      gas_price: 1_000,
+      gas_budget: 50_000_000
+    ]
+  end
+
+  defp sample_oracle_address do
+    object_id(0x44)
   end
 
   defp object_id(byte) do

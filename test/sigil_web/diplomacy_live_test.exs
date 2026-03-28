@@ -23,7 +23,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
   setup do
     cache_pid =
       start_supervised!(
-        {Cache, tables: [:accounts, :characters, :assemblies, :nonces, :tribes, :standings]}
+        {Cache,
+         tables: [:accounts, :characters, :assemblies, :nonces, :tribes, :standings, :reputation]}
       )
 
     pubsub = unique_pubsub_name()
@@ -1763,6 +1764,488 @@ defmodule SigilWeb.DiplomacyLiveTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Packet 6: Reputation UI integration (R27-R37)
+  # ---------------------------------------------------------------------------
+
+  test "standings table shows reputation score for each tribe", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 271}, 4)
+
+    Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
+      id: 42,
+      name: "Hostile Corp",
+      short_name: "HC"
+    })
+
+    Cache.put(cache_tables.standings, {:world_tribe, 271}, %{
+      id: 271,
+      name: "Friendly Union",
+      short_name: "FU"
+    })
+
+    seed_reputation_score(cache_tables, 42, -320, false, nil)
+    seed_reputation_score(cache_tables, 271, 475, true, :allied)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "-320"
+    assert html =~ "475"
+    refute html =~ "Reputation unavailable"
+  end
+
+  test "score badge uses color gradient based on value", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 51}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 52}, 2)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 53}, 4)
+
+    seed_reputation_score(cache_tables, 51, -5, false, nil)
+    seed_reputation_score(cache_tables, 52, 0, false, nil)
+    seed_reputation_score(cache_tables, 53, 7, false, nil)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "reputation-score-negative"
+    assert html =~ "reputation-score-neutral"
+    assert html =~ "reputation-score-positive"
+  end
+
+  test "auto/manual badge reflects pin state", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 61}, 1)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 62}, 3)
+
+    seed_reputation_score(cache_tables, 61, -150, false, nil)
+    seed_reputation_score(cache_tables, 62, 220, true, :friendly)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "AUTO"
+    assert html =~ "MANUAL"
+  end
+
+  test "leader pin action updates diplomacy row", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 71}, 3)
+    seed_reputation_score(cache_tables, 71, 200, false, nil)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    render_click(view, "pin_standing", %{"target_tribe_id" => "71", "standing" => "friendly"})
+
+    html = render(view)
+    assert html =~ "MANUAL"
+    refute html =~ "AUTO"
+  end
+
+  test "oracle enable triggers signing flow", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    html = render(view)
+
+    assert html =~ "Auto-standings"
+    assert has_element?(view, "button[phx-click=set_oracle]")
+
+    render_click(view, "set_oracle", %{"oracle_address" => "0x" <> String.duplicate("aa", 32)})
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => _tx_bytes})
+    assert render(view) =~ "Approve in your wallet"
+  end
+
+  test "oracle enable signed success updates oracle state", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      {:ok,
+       %{
+         "bcs" => "oracle-enable-effects",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "oracle-enable-digest"}
+       }}
+    end)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    render_click(view, "set_oracle", %{"oracle_address" => "0x" <> String.duplicate("aa", 32)})
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    updated_html = render(view)
+    refute has_element?(view, "button[phx-click=set_oracle]")
+    assert updated_html =~ "aaaa"
+    refute updated_html =~ "Approve in your wallet"
+  end
+
+  test "oracle disable triggers signing flow", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert has_element?(view, "button[phx-click=remove_oracle]")
+
+    render_click(view, "remove_oracle", %{})
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => _tx_bytes})
+    assert render(view) =~ "Approve in your wallet"
+  end
+
+  test "oracle disable signed success clears oracle state", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0x33),
+      object_id_bytes: :binary.copy(<<0x33>>, 32),
+      initial_shared_version: 41,
+      owner: wallet_address,
+      current_leader: wallet_address,
+      current_leader_votes: 1,
+      members: [wallet_address],
+      votes_table_id: table_id(0x34),
+      vote_tallies_table_id: table_id(0x35),
+      tribe_id: @tribe_id,
+      oracle_address: "0x" <> String.duplicate("aa", 32)
+    })
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      {:ok,
+       %{
+         "bcs" => "oracle-disable-effects",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "oracle-disable-digest"}
+       }}
+    end)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    render_click(view, "remove_oracle", %{})
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => tx_bytes,
+      "signature" => "wallet-signature"
+    })
+
+    updated_html = render(view)
+    assert has_element?(view, "button[phx-click=set_oracle]")
+    refute updated_html =~ "aaaaaaaa"
+    refute updated_html =~ "Approve in your wallet"
+  end
+
+  test "invalid oracle address shows validation error", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert has_element?(view, "button[phx-click=set_oracle]")
+
+    render_click(view, "set_oracle", %{"oracle_address" => "not-an-address"})
+
+    html = render(view)
+    assert html =~ "Invalid oracle address"
+    refute html =~ "Approve in your wallet"
+  end
+
+  test "non-leader sees scores but not pin or oracle controls", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    other_leader = unique_wallet_address()
+
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok,
+       %{
+         data: [custodian_object_json(table_id(0x44), other_leader, @tribe_id, 18)],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0x44),
+      object_id_bytes: :binary.copy(<<0x44>>, 32),
+      initial_shared_version: 18,
+      current_leader: other_leader,
+      current_leader_votes: 1,
+      members: [other_leader],
+      votes_table_id: table_id(0x45),
+      vote_tallies_table_id: table_id(0x46),
+      tribe_id: @tribe_id
+    })
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 81}, 2)
+    seed_reputation_score(cache_tables, 81, 10, false, nil)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "AUTO"
+    refute html =~ "pin-toggle"
+    refute html =~ "Auto-standings"
+  end
+
+  test "reputation pubsub refreshes diplomacy scores", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 91}, 2)
+    seed_reputation_score(cache_tables, 91, 10, false, nil)
+
+    {:ok, view, initial_html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert initial_html =~ "10"
+
+    seed_reputation_score(cache_tables, 91, 222, true, :friendly)
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      "reputation",
+      {:reputation_updated, %{tribe_id: @tribe_id, target_tribe_id: 91, score: 222}}
+    )
+
+    updated_html = render(view)
+    assert updated_html =~ "222"
+    assert updated_html =~ "MANUAL"
+  end
+
+  @tag :acceptance
+  test "leader sees reputation controls on diplomacy route", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 101}, 3)
+    seed_reputation_score(cache_tables, 101, 380, false, nil)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "Score"
+    assert html =~ "AUTO"
+    assert html =~ "Configure Scoring"
+    assert html =~ "Auto-standings"
+    refute html =~ "Only the tribe leader can modify standings"
+    refute html =~ "Transaction failed"
+  end
+
+  @tag :acceptance
+  test "configure scoring link opens reputation config view", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    {:ok, view, html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert html =~ "Configure Scoring"
+
+    updated_html =
+      view
+      |> element("a", "Configure Scoring")
+      |> render_click()
+
+    assert updated_html =~ "Scoring Configuration"
+    assert updated_html =~ "Decay half-life"
+    assert updated_html =~ "Transitive weight"
+    assert updated_html =~ "Kill multipliers"
+    refute updated_html =~ "Create Tribe Custodian"
+    refute updated_html =~ "Custodian discovery failed"
+  end
+
+  test "reputation config panel shows current scoring rules", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    seed_active_custodian(cache_tables, wallet_address)
+    seed_single_custodian_discovery(wallet_address)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy?view=reputation"
+             )
+
+    assert html =~ "Hostile"
+    assert html =~ "Unfriendly"
+    assert html =~ "Friendly"
+    assert html =~ "Allied"
+    assert html =~ "Jump bonus"
+  end
+
+  # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
 
@@ -2027,6 +2510,17 @@ defmodule SigilWeb.DiplomacyLiveTest do
   end
 
   defp challenger_label(address), do: String.slice(address, 0, 6)
+
+  defp seed_reputation_score(cache_tables, target_tribe_id, score, pinned, pinned_standing) do
+    Cache.put(cache_tables.reputation, {:reputation_score, @tribe_id, target_tribe_id}, %{
+      tribe_id: @tribe_id,
+      target_tribe_id: target_tribe_id,
+      score: score,
+      pinned: pinned,
+      pinned_standing: pinned_standing,
+      updated_at: DateTime.utc_now()
+    })
+  end
 
   defp unique_pubsub_name do
     :"diplomacy_live_pubsub_#{System.unique_integer([:positive])}"

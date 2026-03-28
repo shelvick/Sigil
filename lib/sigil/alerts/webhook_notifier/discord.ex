@@ -75,14 +75,29 @@ defmodule Sigil.Alerts.WebhookNotifier.Discord do
       "description" => alert.message,
       "color" => severity_color(alert.severity),
       "fields" => [
-        %{"name" => "Assembly", "value" => alert.assembly_name, "inline" => true},
-        %{"name" => "Type", "value" => alert.type, "inline" => true},
-        %{"name" => "Severity", "value" => alert.severity, "inline" => true}
+        %{"name" => "Assembly", "value" => assembly_field_value(alert), "inline" => true},
+        %{"name" => "Type", "value" => to_string(alert.type), "inline" => true},
+        %{"name" => "Severity", "value" => to_string(alert.severity), "inline" => true}
       ],
       "timestamp" => timestamp(alert.inserted_at),
       "footer" => %{"text" => @default_footer_text}
     }
   end
+
+  @spec assembly_field_value(Alert.t()) :: String.t()
+  defp assembly_field_value(%Alert{assembly_name: assembly_name})
+       when is_binary(assembly_name) and assembly_name != "",
+       do: assembly_name
+
+  defp assembly_field_value(%Alert{metadata: metadata}) when is_map(metadata) do
+    case Map.get(metadata, :target_tribe_id) || Map.get(metadata, "target_tribe_id") do
+      value when is_integer(value) -> "Tribe ##{value}"
+      value when is_binary(value) and value != "" -> "Tribe ##{value}"
+      _other -> "N/A"
+    end
+  end
+
+  defp assembly_field_value(_alert), do: "N/A"
 
   @spec severity_color(String.t() | nil) :: non_neg_integer()
   defp severity_color("critical"), do: @critical_color

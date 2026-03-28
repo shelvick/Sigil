@@ -7,7 +7,8 @@ defmodule Sigil.DiplomacyTest do
 
   import Hammox
 
-  alias Sigil.{Cache, Diplomacy}
+  alias Sigil.{Cache, Diplomacy, Repo}
+  alias Sigil.Reputation.ReputationScore
   alias Sigil.Sui.{TransactionBuilder, TxCustodian}
 
   @sigil_package_id "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1"
@@ -19,7 +20,7 @@ defmodule Sigil.DiplomacyTest do
   setup :verify_on_exit!
 
   setup do
-    cache_pid = start_supervised!({Cache, tables: [:standings]})
+    cache_pid = start_supervised!({Cache, tables: [:standings, :reputation]})
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
@@ -918,7 +919,8 @@ defmodule Sigil.DiplomacyTest do
                current_leader_votes: 3,
                members: [leader, member],
                votes_table_id: votes_table_id,
-               vote_tallies_table_id: tallies_table_id
+               vote_tallies_table_id: tallies_table_id,
+               oracle_address: nil
              }
     end
   end
@@ -1240,6 +1242,453 @@ defmodule Sigil.DiplomacyTest do
     end
   end
 
+  describe "reputation integration" do
+    test "pin_standing/3 updates both DB and ETS", %{
+      tables: tables,
+      source_tribe_id: tribe_id,
+      sender: sender
+    } do
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+
+      target_tribe_id = 808
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(tribe_id: tribe_id, current_leader: sender)
+      )
+
+      assert {:ok, _row} =
+               %ReputationScore{}
+               |> ReputationScore.changeset(%{
+                 source_tribe_id: tribe_id,
+                 target_tribe_id: target_tribe_id,
+                 score: 120,
+                 pinned: false,
+                 pinned_standing: nil
+               })
+               |> Repo.insert()
+
+      assert :ok =
+               Diplomacy.pin_standing(target_tribe_id, :friendly,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      persisted =
+        Repo.get_by!(ReputationScore,
+          source_tribe_id: tribe_id,
+          target_tribe_id: target_tribe_id
+        )
+
+      assert persisted.pinned == true
+      assert persisted.pinned_standing == 3
+
+      assert %{
+               tribe_id: ^tribe_id,
+               target_tribe_id: ^target_tribe_id,
+               score: 120,
+               pinned: true,
+               pinned_standing: :friendly
+             } = Cache.get(tables.reputation, {:reputation_score, tribe_id, target_tribe_id})
+    end
+
+    test "unpin_standing/2 clears pin in both DB and ETS", %{
+      tables: tables,
+      source_tribe_id: tribe_id,
+      sender: sender
+    } do
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+
+      target_tribe_id = 809
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(tribe_id: tribe_id, current_leader: sender)
+      )
+
+      assert {:ok, _row} =
+               %ReputationScore{}
+               |> ReputationScore.changeset(%{
+                 source_tribe_id: tribe_id,
+                 target_tribe_id: target_tribe_id,
+                 score: 240,
+                 pinned: true,
+                 pinned_standing: 4
+               })
+               |> Repo.insert()
+
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, target_tribe_id}, %{
+        tribe_id: tribe_id,
+        target_tribe_id: target_tribe_id,
+        score: 240,
+        pinned: true,
+        pinned_standing: :allied,
+        updated_at: DateTime.utc_now()
+      })
+
+      assert :ok =
+               Diplomacy.unpin_standing(target_tribe_id,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      persisted =
+        Repo.get_by!(ReputationScore,
+          source_tribe_id: tribe_id,
+          target_tribe_id: target_tribe_id
+        )
+
+      assert persisted.pinned == false
+      assert persisted.pinned_standing == nil
+
+      assert %{pinned: false, pinned_standing: nil} =
+               Cache.get(tables.reputation, {:reputation_score, tribe_id, target_tribe_id})
+    end
+
+    test "pinned?/2 reflects current ETS pin state", %{tables: tables, source_tribe_id: tribe_id} do
+      target_tribe_id = 810
+
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, target_tribe_id}, %{
+        tribe_id: tribe_id,
+        target_tribe_id: target_tribe_id,
+        score: 0,
+        pinned: true,
+        pinned_standing: :neutral,
+        updated_at: DateTime.utc_now()
+      })
+
+      assert Diplomacy.pinned?(target_tribe_id, tables: tables, tribe_id: tribe_id)
+
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, target_tribe_id}, %{
+        tribe_id: tribe_id,
+        target_tribe_id: target_tribe_id,
+        score: 0,
+        pinned: false,
+        pinned_standing: nil,
+        updated_at: DateTime.utc_now()
+      })
+
+      refute Diplomacy.pinned?(target_tribe_id, tables: tables, tribe_id: tribe_id)
+    end
+
+    test "get_reputation_score/2 returns score from ETS", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      target_tribe_id = 811
+
+      expected = %{
+        tribe_id: tribe_id,
+        target_tribe_id: target_tribe_id,
+        score: -375,
+        pinned: true,
+        pinned_standing: :hostile,
+        updated_at: DateTime.utc_now()
+      }
+
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, target_tribe_id}, expected)
+
+      assert Diplomacy.get_reputation_score(target_tribe_id, tables: tables, tribe_id: tribe_id) ==
+               expected
+    end
+
+    test "list_reputation_scores/1 returns all tribe scores", %{
+      tables: tables,
+      source_tribe_id: tribe_id,
+      other_source_tribe_id: other_tribe_id
+    } do
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, 1}, %{
+        tribe_id: tribe_id,
+        target_tribe_id: 1,
+        score: 100,
+        pinned: false,
+        pinned_standing: nil,
+        updated_at: DateTime.utc_now()
+      })
+
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, 2}, %{
+        tribe_id: tribe_id,
+        target_tribe_id: 2,
+        score: -50,
+        pinned: true,
+        pinned_standing: :hostile,
+        updated_at: DateTime.utc_now()
+      })
+
+      Cache.put(tables.reputation, {:reputation_score, other_tribe_id, 3}, %{
+        tribe_id: other_tribe_id,
+        target_tribe_id: 3,
+        score: 999,
+        pinned: false,
+        pinned_standing: nil,
+        updated_at: DateTime.utc_now()
+      })
+
+      scores =
+        Diplomacy.list_reputation_scores(tables: tables, tribe_id: tribe_id)
+        |> Enum.sort_by(& &1.target_tribe_id)
+
+      assert Enum.map(scores, &{&1.target_tribe_id, &1.score, &1.pinned}) == [
+               {1, 100, false},
+               {2, -50, true}
+             ]
+    end
+
+    test "set_oracle_address/3 builds set_oracle transaction", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      custodian =
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          object_id: address(0xC3),
+          oracle_address: nil
+        )
+
+      character = character_ref(object_id: object_id(0xC4), initial_shared_version: 43)
+      oracle_address = address(0xC5)
+
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, custodian)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Diplomacy.set_oracle_address(tribe_id, oracle_address,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      assert tx_bytes == expected_set_oracle_kind_bytes(custodian, character, oracle_address)
+    end
+
+    test "remove_oracle_address/2 builds remove_oracle transaction", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      custodian =
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          object_id: address(0xC6),
+          oracle_address: address(0xC7)
+        )
+
+      character = character_ref(object_id: object_id(0xC8), initial_shared_version: 44)
+
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, custodian)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Diplomacy.remove_oracle_address(tribe_id,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      assert tx_bytes == expected_remove_oracle_kind_bytes(custodian, character)
+    end
+
+    test "submit_signed_transaction applies oracle pending ops on success", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      custodian =
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          object_id: address(0xCD),
+          oracle_address: nil
+        )
+
+      character = character_ref(object_id: object_id(0xCE), initial_shared_version: 45)
+      oracle_address = address(0xCF)
+
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, custodian)
+
+      assert {:ok, %{tx_bytes: set_tx_bytes}} =
+               Diplomacy.set_oracle_address(tribe_id, oracle_address,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^set_tx_bytes,
+                                                            ["wallet-signature"],
+                                                            [] ->
+        {:ok, success_effects("set-oracle-success")}
+      end)
+
+      assert {:ok, %{digest: "set-oracle-success", effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
+               Diplomacy.submit_signed_transaction(set_tx_bytes, "wallet-signature",
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      assert Cache.get(tables.standings, {:pending_tx, set_tx_bytes}) == nil
+
+      assert %{oracle_address: ^oracle_address} =
+               Cache.get(tables.standings, {:active_custodian, tribe_id})
+
+      assert {:ok, %{tx_bytes: remove_tx_bytes}} =
+               Diplomacy.remove_oracle_address(tribe_id,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^remove_tx_bytes,
+                                                            ["wallet-signature"],
+                                                            [] ->
+        {:ok, success_effects("remove-oracle-success")}
+      end)
+
+      assert {:ok, %{digest: "remove-oracle-success", effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
+               Diplomacy.submit_signed_transaction(remove_tx_bytes, "wallet-signature",
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      assert Cache.get(tables.standings, {:pending_tx, remove_tx_bytes}) == nil
+
+      assert %{oracle_address: nil} =
+               Cache.get(tables.standings, {:active_custodian, tribe_id})
+    end
+
+    test "oracle_enabled?/1 reflects cached custodian oracle state", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, %{
+        object_id: address(0xC9),
+        object_id_bytes: object_id(0xC9),
+        initial_shared_version: 12,
+        tribe_id: tribe_id,
+        current_leader: sender_address(),
+        oracle_address: address(0xCA)
+      })
+
+      assert Diplomacy.oracle_enabled?(tables: tables, tribe_id: tribe_id)
+
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, %{
+        object_id: address(0xCB),
+        object_id_bytes: object_id(0xCB),
+        initial_shared_version: 12,
+        tribe_id: tribe_id,
+        current_leader: sender_address(),
+        oracle_address: nil
+      })
+
+      refute Diplomacy.oracle_enabled?(tables: tables, tribe_id: tribe_id)
+    end
+
+    test "pin_standing broadcasts reputation_pinned event", %{
+      tables: tables,
+      pubsub: pubsub,
+      source_tribe_id: tribe_id,
+      sender: sender
+    } do
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+
+      target_tribe_id = 812
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(tribe_id: tribe_id, current_leader: sender)
+      )
+
+      :ok = Phoenix.PubSub.subscribe(pubsub, "reputation")
+
+      assert {:ok, _row} =
+               %ReputationScore{}
+               |> ReputationScore.changeset(%{
+                 source_tribe_id: tribe_id,
+                 target_tribe_id: target_tribe_id,
+                 score: 15,
+                 pinned: false,
+                 pinned_standing: nil
+               })
+               |> Repo.insert()
+
+      assert :ok =
+               Diplomacy.pin_standing(target_tribe_id, :friendly,
+                 tables: tables,
+                 pubsub: pubsub,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      assert_receive {:reputation_pinned,
+                      %{tribe_id: ^tribe_id, target_tribe_id: ^target_tribe_id}}
+    end
+
+    test "unpin_standing broadcasts reputation_unpinned event", %{
+      tables: tables,
+      pubsub: pubsub,
+      source_tribe_id: tribe_id,
+      sender: sender
+    } do
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(Repo, shared: false)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+
+      target_tribe_id = 813
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(tribe_id: tribe_id, current_leader: sender)
+      )
+
+      :ok = Phoenix.PubSub.subscribe(pubsub, "reputation")
+
+      assert {:ok, _row} =
+               %ReputationScore{}
+               |> ReputationScore.changeset(%{
+                 source_tribe_id: tribe_id,
+                 target_tribe_id: target_tribe_id,
+                 score: 25,
+                 pinned: true,
+                 pinned_standing: 3
+               })
+               |> Repo.insert()
+
+      Cache.put(tables.reputation, {:reputation_score, tribe_id, target_tribe_id}, %{
+        tribe_id: tribe_id,
+        target_tribe_id: target_tribe_id,
+        score: 25,
+        pinned: true,
+        pinned_standing: :friendly,
+        updated_at: DateTime.utc_now()
+      })
+
+      assert :ok =
+               Diplomacy.unpin_standing(target_tribe_id,
+                 tables: tables,
+                 pubsub: pubsub,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      assert_receive {:reputation_unpinned,
+                      %{tribe_id: ^tribe_id, target_tribe_id: ^target_tribe_id}}
+    end
+  end
+
   @tag :acceptance
   test "leader submits hostile standing update and sees source tribe cache change", %{
     tables: tables,
@@ -1443,6 +1892,22 @@ defmodule Sigil.DiplomacyTest do
       name: %{type: Keyword.get(opts, :name_type, "address"), json: name_json},
       value: %{type: Keyword.get(opts, :value_type, "address"), json: value_json}
     }
+  end
+
+  defp expected_set_oracle_kind_bytes(custodian, character, oracle_address) do
+    custodian
+    |> custodian_ref_from_info()
+    |> TxCustodian.build_set_oracle(character, hex_to_bytes(oracle_address), [])
+    |> TransactionBuilder.build_kind!()
+    |> Base.encode64()
+  end
+
+  defp expected_remove_oracle_kind_bytes(custodian, character) do
+    custodian
+    |> custodian_ref_from_info()
+    |> TxCustodian.build_remove_oracle(character, [])
+    |> TransactionBuilder.build_kind!()
+    |> Base.encode64()
   end
 
   defp custodian_ref_from_info(custodian) do

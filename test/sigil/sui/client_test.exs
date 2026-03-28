@@ -245,6 +245,77 @@ defmodule Sigil.Sui.ClientTest do
     end
   end
 
+  test "Client module defines query_events callback and event pagination types" do
+    callbacks = Sigil.Sui.Client.behaviour_info(:callbacks)
+    {:ok, types} = Code.Typespec.fetch_types(Sigil.Sui.Client)
+    {:ok, callbacks_ast} = Code.Typespec.fetch_callbacks(Sigil.Sui.Client)
+
+    assert {:query_events, 3} in callbacks
+
+    type_names =
+      Enum.map(types, fn {:type, {name, _, _}} -> name end)
+
+    assert :event_type in type_names
+    assert :events_query_opt in type_names
+    assert :events_query_opts in type_names
+    assert :events_page in type_names
+
+    query_events_callback =
+      Enum.find(callbacks_ast, fn
+        {{:query_events, 3}, _callback_ast} -> true
+        _other -> false
+      end)
+
+    assert {{:query_events, 3},
+            [
+              {:type, _, :fun,
+               [
+                 {:type, _, :product,
+                  [
+                    {:user_type, _, :event_type, []},
+                    {:user_type, _, :events_query_opts, []},
+                    {:user_type, _, :request_opts, []}
+                  ]},
+                 {:type, _, :union,
+                  [
+                    {:type, _, :tuple, [{:atom, _, :ok}, {:user_type, _, :events_page, []}]},
+                    {:type, _, :tuple, [{:atom, _, :error}, {:user_type, _, :error_reason, []}]}
+                  ]}
+               ]}
+            ]} = query_events_callback
+  end
+
+  test "ClientMock accepts query_events pages matching the behaviour contract" do
+    page = %{events: [%{"killmail_id" => "0xkill-1"}], next_cursor: "cursor-1"}
+    opts = [req_options: [plug: {Req.Test, :sui_stub}]]
+
+    expect(Sigil.Sui.ClientMock, :query_events, fn "0x2::killmail::KillmailCreatedEvent",
+                                                   [after: "cursor-0", limit: 10],
+                                                   ^opts ->
+      {:ok, page}
+    end)
+
+    assert Sigil.Sui.ClientMock.query_events(
+             "0x2::killmail::KillmailCreatedEvent",
+             [after: "cursor-0", limit: 10],
+             opts
+           ) == {:ok, page}
+  end
+
+  test "Hammox enforces query_events return types on mock expectations" do
+    opts = [req_options: [plug: {Req.Test, :sui_stub}]]
+
+    expect(Sigil.Sui.ClientMock, :query_events, fn "0x2::killmail::KillmailCreatedEvent",
+                                                   [],
+                                                   ^opts ->
+      {:ok, [%{"killmail_id" => "0xkill-1"}]}
+    end)
+
+    assert_raise Hammox.TypeMatchError, fn ->
+      Sigil.Sui.ClientMock.query_events("0x2::killmail::KillmailCreatedEvent", [], opts)
+    end
+  end
+
   test "test environment uses ClientMock" do
     assert Application.fetch_env!(:sigil, :sui_client) == Sigil.Sui.ClientMock
   end

@@ -32,6 +32,13 @@ defmodule Sigil.ApplicationTestWorldClient do
   def fetch_tribes(_opts), do: {:ok, []}
 end
 
+defmodule Sigil.ApplicationTestGrpcConnector do
+  @moduledoc false
+
+  @spec connect(String.t(), non_neg_integer() | nil) :: {:ok, reference()}
+  def connect(_endpoint, _cursor), do: {:ok, make_ref()}
+end
+
 defmodule Sigil.DiplomacyTestWorldClient do
   @moduledoc """
   Returns caller-supplied tribe records for diplomacy probe subprocesses.
@@ -143,4 +150,9 @@ defmodule Sigil.DiplomacyTestSuiClient do
           {:error, :not_found}
   def verify_zklogin_signature(_bytes, _signature, _intent_scope, _author, _opts),
     do: {:error, :not_found}
+
+  @doc "Returns an empty event page because diplomacy probes do not query historical events."
+  @impl true
+  @spec query_events(String.t(), keyword(), keyword()) :: {:ok, Sigil.Sui.Client.events_page()}
+  def query_events(_event_type, _query_opts, _opts), do: {:ok, %{events: [], next_cursor: nil}}
 end

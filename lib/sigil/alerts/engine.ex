@@ -8,12 +8,10 @@ defmodule Sigil.Alerts.Engine do
 
   require Logger
 
-  alias Ecto.Adapters.SQL.Sandbox
   alias Sigil.Alerts
   alias Sigil.Alerts.{Alert, WebhookConfig}
-  alias Sigil.Alerts.Engine.{Dispatcher, RuleEvaluator}
+  alias Sigil.Alerts.Engine.{Dispatcher, RuleEvaluator, Runtime}
   alias Sigil.Cache
-  alias Sigil.GameState.MonitorSupervisor
 
   @default_discovery_interval_ms 60_000
   @default_purge_interval_ms 86_400_000
@@ -21,6 +19,7 @@ defmodule Sigil.Alerts.Engine do
   @default_cooldown_ms 14_400_000
   @default_pubsub Sigil.PubSub
   @monitor_lifecycle_topic "monitors:lifecycle"
+  @reputation_topic "reputation"
   @resolve_retry_ms 500
   @default_notifier Application.compile_env(
                       :sigil,
@@ -94,36 +93,24 @@ defmodule Sigil.Alerts.Engine do
   @impl true
   @spec init(options()) :: {:ok, state(), {:continue, :post_init}}
   def init(opts) do
-    base_state = %{
-      pubsub: Keyword.get(opts, :pubsub, @default_pubsub),
-      registry: Keyword.get(opts, :registry),
-      resolve_registry: Keyword.get(opts, :resolve_registry, &default_resolve_registry/0),
-      tables: Keyword.get(opts, :tables),
-      resolve_tables: Keyword.get(opts, :resolve_tables, &default_resolve_tables/0),
-      watched_ids: MapSet.new(),
-      discovery_interval_ms:
-        Keyword.get(opts, :discovery_interval_ms, @default_discovery_interval_ms),
-      purge_interval_ms: Keyword.get(opts, :purge_interval_ms, @default_purge_interval_ms),
-      purge_after_days: Keyword.get(opts, :purge_after_days, @default_purge_after_days),
-      cooldown_ms: Keyword.get(opts, :cooldown_ms, @default_cooldown_ms),
-      now_fun: Keyword.get(opts, :now_fun, &DateTime.utc_now/0),
-      create_alert_fun: Keyword.get(opts, :create_alert_fun, &create_alert/2),
-      get_webhook_config_fun:
-        Keyword.get(opts, :get_webhook_config_fun, &Alerts.get_webhook_config/2),
-      notifier: Keyword.get(opts, :notifier, @default_notifier),
-      notifier_opts: Keyword.get(opts, :notifier_opts, []),
-      dispatch_fun: nil,
-      subscribe_fun:
-        Keyword.get(opts, :subscribe_fun, fn assembly_id ->
-          Phoenix.PubSub.subscribe(
-            Keyword.get(opts, :pubsub, @default_pubsub),
-            assembly_topic(assembly_id)
-          )
-        end),
-      owner_pid: Keyword.fetch!(opts, :owner_pid),
-      sandbox_owner: Keyword.get(opts, :sandbox_owner),
-      mox_owner: Keyword.get(opts, :mox_owner)
+    defaults = %{
+      default_resolve_registry: &Runtime.default_resolve_registry/0,
+      default_resolve_tables: &Runtime.default_resolve_tables/0,
+      default_discovery_interval_ms: @default_discovery_interval_ms,
+      default_purge_interval_ms: @default_purge_interval_ms,
+      default_purge_after_days: @default_purge_after_days,
+      default_cooldown_ms: @default_cooldown_ms,
+      default_get_webhook_config_fun: &Alerts.get_webhook_config/2
     }
+
+    base_state =
+      Runtime.build_base_state(
+        opts,
+        defaults,
+        @default_pubsub,
+        @default_notifier,
+        &create_alert/2
+      )
 
     dispatch_fun =
       Keyword.get_lazy(opts, :dispatch_fun, fn ->
@@ -145,12 +132,13 @@ defmodule Sigil.Alerts.Engine do
   @impl true
   @spec handle_continue(:post_init, state()) :: {:noreply, state()}
   def handle_continue(:post_init, state) do
-    :ok = maybe_allow_sandbox_owner(state.sandbox_owner)
+    :ok = Runtime.maybe_allow_sandbox_owner(state.sandbox_owner)
     :ok = Dispatcher.maybe_allow_mock_owner(state.mox_owner || state.owner_pid, state.notifier)
     :ok = Dispatcher.maybe_allow_req_test_owner(state.owner_pid, state.notifier_opts)
     :ok = Phoenix.PubSub.subscribe(state.pubsub, @monitor_lifecycle_topic)
+    :ok = Phoenix.PubSub.subscribe(state.pubsub, @reputation_topic)
     send(self(), :discover_monitors)
-    schedule_purge(state.purge_interval_ms)
+    Runtime.schedule_purge(state.purge_interval_ms)
     {:noreply, state}
   end
 
@@ -164,6 +152,7 @@ defmodule Sigil.Alerts.Engine do
           | :purge_old_dismissed
           | {:assembly_monitor, String.t(), map()}
           | {:monitor_started, String.t()}
+          | {:reputation_updated, map()}
           | {:assembly_updated, term()},
           state()
         ) ::
@@ -171,9 +160,9 @@ defmodule Sigil.Alerts.Engine do
   def handle_info(:discover_monitors, state) do
     next_state =
       state
-      |> maybe_resolve_registry()
-      |> maybe_resolve_tables()
-      |> discover_monitors()
+      |> Runtime.maybe_resolve_registry()
+      |> Runtime.maybe_resolve_tables()
+      |> Runtime.discover_monitors(state.pubsub)
 
     interval =
       case {next_state.registry, next_state.tables} do
@@ -184,18 +173,18 @@ defmodule Sigil.Alerts.Engine do
           @resolve_retry_ms
       end
 
-    schedule_discovery(interval)
+    Runtime.schedule_discovery(interval)
     {:noreply, next_state}
   end
 
   def handle_info(:purge_old_dismissed, state) do
     _result = Alerts.purge_old_dismissed(state.purge_after_days, [])
-    schedule_purge(state.purge_interval_ms)
+    Runtime.schedule_purge(state.purge_interval_ms)
     {:noreply, state}
   end
 
   def handle_info({:assembly_monitor, assembly_id, payload}, state) when is_binary(assembly_id) do
-    next_state = state |> maybe_resolve_tables() |> maybe_resolve_registry()
+    next_state = state |> Runtime.maybe_resolve_tables() |> Runtime.maybe_resolve_registry()
     updated_state = process_monitor_event(assembly_id, payload, next_state)
     {:noreply, updated_state}
   end
@@ -203,11 +192,16 @@ defmodule Sigil.Alerts.Engine do
   def handle_info({:monitor_started, assembly_id}, state) when is_binary(assembly_id) do
     next_state =
       state
-      |> maybe_resolve_registry()
-      |> maybe_resolve_tables()
-      |> maybe_subscribe_for_event(assembly_id)
+      |> Runtime.maybe_resolve_registry()
+      |> Runtime.maybe_resolve_tables()
+      |> Runtime.maybe_subscribe_for_event(assembly_id)
 
     {:noreply, next_state}
+  end
+
+  def handle_info({:reputation_updated, payload}, state) when is_map(payload) do
+    :ok = process_reputation_event(payload, state)
+    {:noreply, state}
   end
 
   # Ignore {:assembly_updated, _} broadcasts from Assemblies.sync_assembly/2.
@@ -216,97 +210,9 @@ defmodule Sigil.Alerts.Engine do
     {:noreply, state}
   end
 
-  @spec maybe_resolve_registry(state()) :: state()
-  defp maybe_resolve_registry(%{registry: registry} = state)
-       when is_atom(registry) and not is_nil(registry) do
-    if Process.whereis(registry) do
-      state
-    else
-      %{state | registry: nil}
-    end
-  end
-
-  defp maybe_resolve_registry(state) do
-    case state.resolve_registry.() do
-      registry when is_atom(registry) and not is_nil(registry) ->
-        if Process.whereis(registry) do
-          %{state | registry: registry}
-        else
-          %{state | registry: nil}
-        end
-
-      _other ->
-        %{state | registry: nil}
-    end
-  end
-
-  @spec maybe_resolve_tables(state()) :: state()
-  defp maybe_resolve_tables(%{tables: %{assemblies: assemblies, accounts: accounts}} = state) do
-    if tables_exist?(assemblies, accounts), do: state, else: %{state | tables: nil}
-  end
-
-  defp maybe_resolve_tables(state) do
-    case state.resolve_tables.() do
-      %{assemblies: assemblies, accounts: accounts} = tables ->
-        if tables_exist?(assemblies, accounts) do
-          %{state | tables: tables}
-        else
-          %{state | tables: nil}
-        end
-
-      _other ->
-        %{state | tables: nil}
-    end
-  end
-
-  @spec tables_exist?(Cache.table_id(), Cache.table_id()) :: boolean()
-  defp tables_exist?(assemblies, accounts),
-    do: :ets.info(assemblies) != :undefined and :ets.info(accounts) != :undefined
-
-  @spec maybe_subscribe_for_event(state(), String.t()) :: state()
-  defp maybe_subscribe_for_event(%{watched_ids: watched_ids} = state, assembly_id) do
-    if MapSet.member?(watched_ids, assembly_id) do
-      state
-    else
-      :ok = state.subscribe_fun.(assembly_id)
-      %{state | watched_ids: MapSet.put(watched_ids, assembly_id)}
-    end
-  rescue
-    error ->
-      Logger.warning(
-        "alert engine failed to subscribe for #{assembly_id}: #{Exception.message(error)}"
-      )
-
-      state
-  end
-
-  @spec discover_monitors(state()) :: state()
-  defp discover_monitors(%{registry: nil} = state), do: state
-  defp discover_monitors(%{tables: nil} = state), do: state
-
-  defp discover_monitors(state) do
-    current_ids =
-      state.registry
-      |> MonitorSupervisor.list_monitors()
-      |> Enum.map(fn {assembly_id, _pid} -> assembly_id end)
-      |> MapSet.new()
-
-    new_ids = MapSet.difference(current_ids, state.watched_ids)
-    removed_ids = MapSet.difference(state.watched_ids, current_ids)
-
-    Enum.each(new_ids, &state.subscribe_fun.(&1))
-    Enum.each(removed_ids, &Phoenix.PubSub.unsubscribe(state.pubsub, assembly_topic(&1)))
-
-    %{state | watched_ids: current_ids}
-  rescue
-    error ->
-      Logger.warning("alert engine discovery failed: #{Exception.message(error)}")
-      state
-  end
-
   @spec process_monitor_event(String.t(), map(), state()) :: state()
   defp process_monitor_event(assembly_id, payload, state) do
-    state = maybe_subscribe_for_event(state, assembly_id)
+    state = Runtime.maybe_subscribe_for_event(state, assembly_id)
 
     case owner_context(assembly_id, payload, state.tables) do
       {:ok, context} ->
@@ -319,6 +225,14 @@ defmodule Sigil.Alerts.Engine do
     end
 
     state
+  end
+
+  @spec process_reputation_event(map(), state()) :: :ok
+  defp process_reputation_event(payload, state) do
+    case RuleEvaluator.evaluate_reputation_change(payload) do
+      {:fire, attrs} -> persist_and_dispatch(attrs, state)
+      :skip -> :ok
+    end
   end
 
   @spec owner_context(
@@ -441,60 +355,4 @@ defmodule Sigil.Alerts.Engine do
       {key, value} -> {key, value}
     end)
   end
-
-  @spec default_resolve_registry() :: atom() | nil
-  defp default_resolve_registry do
-    case Application.get_env(:sigil, :monitor_registry) do
-      registry when is_atom(registry) -> registry
-      _other -> nil
-    end
-  end
-
-  @spec default_resolve_tables() ::
-          %{assemblies: Cache.table_id(), accounts: Cache.table_id()} | nil
-  defp default_resolve_tables do
-    case Process.whereis(Sigil.Supervisor) do
-      pid when is_pid(pid) ->
-        pid
-        |> Supervisor.which_children()
-        |> Enum.find_value(fn
-          {Sigil.Cache, cache_pid, _kind, _modules} when is_pid(cache_pid) ->
-            case Cache.tables(cache_pid) do
-              %{assemblies: _assemblies, accounts: _accounts} = tables -> tables
-              _other -> nil
-            end
-
-          _other ->
-            nil
-        end)
-
-      _other ->
-        nil
-    end
-  end
-
-  @spec maybe_allow_sandbox_owner(pid() | nil) :: :ok
-  defp maybe_allow_sandbox_owner(owner) when owner in [nil, self()], do: :ok
-
-  defp maybe_allow_sandbox_owner(owner) when is_pid(owner) do
-    if Code.ensure_loaded?(Sandbox) and function_exported?(Sandbox, :allow, 3) do
-      Sandbox.allow(Sigil.Repo, owner, self())
-    end
-
-    :ok
-  rescue
-    _error -> :ok
-  end
-
-  @spec schedule_discovery(pos_integer()) :: reference()
-  defp schedule_discovery(interval_ms) do
-    Process.send_after(self(), :discover_monitors, interval_ms)
-  end
-
-  @spec schedule_purge(pos_integer()) :: reference()
-  defp schedule_purge(interval_ms) do
-    Process.send_after(self(), :purge_old_dismissed, interval_ms)
-  end
-
-  defp assembly_topic(assembly_id), do: "assembly:#{assembly_id}"
 end

@@ -35,3 +35,21 @@
 - `Sigil.Tribes` — member label lookup for governance display
 - `Sigil.Cache` — ETS cache for governance data and pending tx checks
 - `SigilWeb.TransactionHelpers` — localnet detection and signer address
+- `SigilWeb.DiplomacyLive` (`../diplomacy_live.ex`) — LiveView mount, handle_params, render only. Delegates events/info to Events, state management to State
+- `SigilWeb.DiplomacyLive.Events` (`events.ex`) — All `handle_event/3` clauses (create_custodian, set_standing, batch_set_standings, add_pilot_override, set_default_standing, filter_tribes, set_oracle, remove_oracle, pin/unpin_standing, transaction_signed/error) and `handle_info/2` clauses (standing_updated, custodian_discovered, reputation_updated/pinned/unpinned, etc.)
+- `SigilWeb.DiplomacyLive.State` (`state.ex`) — `assign_base_state/2`, `discover_custodian_state/1`, `load_standings/1`, `diplomacy_opts/1`, `maybe_subscribe/1`, `valid_address?/1`, `standing_from_param/1`, `maybe_refresh_after_submission/1`, `apply_discovered_custodian/2`, `apply_cached_custodian_state/1`
+- `SigilWeb.DiplomacyLive.Transactions` (`transactions.ex`) — `build_transaction/2`, `enter_signing/2`, `sign_and_submit_locally/2`
+- `SigilWeb.DiplomacyLive.Components.Sections` (`components/sections.ex`) — Large HEEx template sections extracted from diplomacy_components.ex
+
+## Patterns
+
+- Parent LiveView is thin (mount + handle_params + render)
+- Events module imports Phoenix.LiveView for `clear_flash/put_flash`, delegates to State/Transactions
+- State module manages all socket assign operations and diplomacy opts construction
+- Transactions module handles wallet signing flow state machine
+- Components.Sections holds large template blocks delegated from diplomacy_components.ex via `defdelegate`
+
+## Dependencies
+
+- `Sigil.Diplomacy` for all context operations
+- `Phoenix.PubSub` for `"diplomacy"` and `"reputation"` topic subscriptions

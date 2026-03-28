@@ -4,7 +4,7 @@ defmodule Sigil.Application do
 
   Starts the supervision tree with Telemetry, Repo, PubSub, Cache, optional
   StaticData, optional GateIndexer, optional MonitorRegistry + MonitorSupervisor,
-  optional AlertEngine, and Endpoint.
+  optional AlertEngine, optional GrpcStream, and Endpoint.
   """
 
   use Application
@@ -18,7 +18,8 @@ defmodule Sigil.Application do
     :nonces,
     :gate_network,
     :intel,
-    :intel_market
+    :intel_market,
+    :reputation
   ]
 
   @doc false
@@ -27,14 +28,19 @@ defmodule Sigil.Application do
   def start(_type, _args) do
     children =
       [
-        SigilWeb.Telemetry,
-        Sigil.Repo,
-        {Phoenix.PubSub, name: Sigil.PubSub},
-        cache_child()
+        SigilWeb.Telemetry
       ] ++
+        maybe_repo() ++
+        [
+          {Phoenix.PubSub, name: Sigil.PubSub},
+          cache_child()
+        ] ++
         maybe_static_data() ++
         maybe_gate_indexer() ++
-        maybe_monitor_supervisor() ++ maybe_alert_engine() ++ [SigilWeb.Endpoint]
+        maybe_monitor_supervisor() ++
+        maybe_alert_engine() ++
+        maybe_grpc_stream() ++
+        maybe_reputation_engine() ++ [SigilWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Sigil.Supervisor]
     Supervisor.start_link(children, opts)
@@ -48,6 +54,15 @@ defmodule Sigil.Application do
   def config_change(changed, _new, removed) do
     SigilWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  @spec maybe_repo() :: [module()]
+  defp maybe_repo do
+    if Application.get_env(:sigil, :start_repo, true) do
+      [Sigil.Repo]
+    else
+      []
+    end
   end
 
   @spec cache_child() :: Supervisor.child_spec()
@@ -99,6 +114,27 @@ defmodule Sigil.Application do
   defp maybe_alert_engine do
     if Application.get_env(:sigil, :start_alert_engine, true) do
       [Supervisor.child_spec({Sigil.Alerts.Engine, []}, id: Sigil.Alerts.Engine)]
+    else
+      []
+    end
+  end
+
+  @spec maybe_grpc_stream() :: [Supervisor.child_spec()]
+  defp maybe_grpc_stream do
+    if Application.get_env(:sigil, :start_grpc_stream, false) do
+      [
+        Supervisor.child_spec({GRPC.Client.Supervisor, []}, id: GRPC.Client.Supervisor),
+        Supervisor.child_spec({Sigil.Sui.GrpcStream, []}, id: Sigil.Sui.GrpcStream)
+      ]
+    else
+      []
+    end
+  end
+
+  @spec maybe_reputation_engine() :: [Supervisor.child_spec()]
+  defp maybe_reputation_engine do
+    if Application.get_env(:sigil, :start_reputation_engine, false) do
+      [Supervisor.child_spec({Sigil.Reputation.Engine, []}, id: Sigil.Reputation.Engine)]
     else
       []
     end

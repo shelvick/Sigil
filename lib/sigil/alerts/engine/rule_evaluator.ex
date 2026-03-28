@@ -18,6 +18,50 @@ defmodule Sigil.Alerts.Engine.RuleEvaluator do
       fuel_alerts(payload, context, now)
   end
 
+  @doc "Evaluates a reputation update payload and returns alert attrs when a threshold is crossed."
+  @spec evaluate_reputation_change(map()) :: {:fire, map()} | :skip
+  def evaluate_reputation_change(
+        %{
+          tribe_id: tribe_id,
+          account_address: account_address,
+          target_tribe_id: target_tribe_id,
+          score: score,
+          old_tier: old_tier,
+          new_tier: new_tier
+        } = payload
+      )
+      when is_integer(tribe_id) and is_binary(account_address) and account_address != "" and
+             is_integer(target_tribe_id) and is_integer(score) do
+    if old_tier == new_tier do
+      :skip
+    else
+      {:fire,
+       %{
+         type: "reputation_threshold_crossed",
+         severity: reputation_severity(old_tier, new_tier),
+         assembly_id: nil,
+         assembly_name: nil,
+         account_address: account_address,
+         tribe_id: tribe_id,
+         message:
+           reputation_message(
+             target_tribe_label(payload[:target_tribe_name], target_tribe_id),
+             old_tier,
+             new_tier,
+             score
+           ),
+         metadata: %{
+           old_tier: tier_name(old_tier),
+           new_tier: tier_name(new_tier),
+           score: score,
+           target_tribe_id: target_tribe_id
+         }
+       }}
+    end
+  end
+
+  def evaluate_reputation_change(_payload), do: :skip
+
   @spec offline_alerts(map(), context()) :: [map()]
   defp offline_alerts(%{changes: changes} = payload, context) when is_list(changes) do
     Enum.flat_map(changes, fn
@@ -124,6 +168,39 @@ defmodule Sigil.Alerts.Engine.RuleEvaluator do
        do: "Extension changed from #{previous_extension} to #{new_extension}"
 
   defp extension_message(_previous_extension, _new_extension), do: "Extension changed"
+
+  @spec reputation_severity(atom(), atom()) :: String.t()
+  defp reputation_severity(old_tier, new_tier) do
+    drop = tier_rank(old_tier) - tier_rank(new_tier)
+
+    case {new_tier, drop} do
+      {:hostile, _drop} -> "critical"
+      {_tier, drop} when drop >= 2 -> "critical"
+      {_tier, 1} -> "warning"
+      _other -> "info"
+    end
+  end
+
+  @spec reputation_message(String.t(), atom(), atom(), integer()) :: String.t()
+  defp reputation_message(target_tribe, old_tier, new_tier, score) do
+    "Standing with #{target_tribe} changed from #{tier_name(old_tier)} to #{tier_name(new_tier)} (score: #{score})"
+  end
+
+  @spec target_tribe_label(String.t() | nil, integer()) :: String.t()
+  defp target_tribe_label(name, _target_tribe_id) when is_binary(name) and name != "", do: name
+
+  defp target_tribe_label(_name, target_tribe_id), do: "Tribe ##{target_tribe_id}"
+
+  @spec tier_name(atom()) :: String.t()
+  defp tier_name(tier), do: Atom.to_string(tier)
+
+  @spec tier_rank(atom()) :: integer()
+  defp tier_rank(:hostile), do: 0
+  defp tier_rank(:unfriendly), do: 1
+  defp tier_rank(:neutral), do: 2
+  defp tier_rank(:friendly), do: 3
+  defp tier_rank(:allied), do: 4
+  defp tier_rank(_unknown), do: 2
 
   @spec base_attrs(String.t(), String.t(), map(), context()) :: map()
   defp base_attrs(type, severity, payload, context) do

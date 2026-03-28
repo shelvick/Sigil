@@ -16,19 +16,20 @@ defmodule Sigil.Alerts do
           | {:cooldown_ms, non_neg_integer()}
           | {:authorized_account_address, String.t()}
   @type options() :: [option()]
+  @type dedup_subject() :: {:assembly, String.t()} | {:reputation_target_tribe, String.t()}
 
   @doc "Creates a new alert unless an active duplicate or cooldown suppresses it."
   @spec create_alert(map(), options()) ::
           {:ok, Alert.t()} | {:ok, :duplicate} | {:ok, :cooldown} | {:error, Ecto.Changeset.t()}
   def create_alert(attrs, opts) when is_map(attrs) and is_list(opts) do
     account_address = attr(attrs, :account_address)
-    assembly_id = attr(attrs, :assembly_id)
     type = attr(attrs, :type)
+    dedup_subject = dedup_subject(attrs, type)
 
-    if Enum.any?([account_address, assembly_id, type], &missing_dedup_key?/1) do
+    if Enum.any?([account_address, type], &missing_dedup_key?/1) or is_nil(dedup_subject) do
       insert_alert(attrs, opts)
     else
-      create_deduped_alert(attrs, account_address, assembly_id, type, opts)
+      create_deduped_alert(attrs, account_address, type, dedup_subject, opts)
     end
   end
 
@@ -110,11 +111,18 @@ defmodule Sigil.Alerts do
   @spec active_alert_exists?(String.t(), String.t(), String.t(), options()) :: boolean()
   def active_alert_exists?(account_address, assembly_id, type, _opts)
       when is_binary(account_address) and is_binary(assembly_id) and is_binary(type) do
+    active_alert_exists_for_subject?(account_address, type, {:assembly, assembly_id})
+  end
+
+  @spec active_alert_exists_for_subject?(String.t(), String.t(), dedup_subject()) :: boolean()
+  defp active_alert_exists_for_subject?(account_address, type, dedup_subject)
+       when is_binary(account_address) and is_binary(type) do
     from(a in Alert,
       where:
-        a.account_address == ^account_address and a.assembly_id == ^assembly_id and
-          a.type == ^type and a.status in ["new", "acknowledged"]
+        a.account_address == ^account_address and a.type == ^type and
+          a.status in ["new", "acknowledged"]
     )
+    |> dedup_subject_where(dedup_subject)
     |> Repo.exists?()
   end
 
@@ -167,11 +175,11 @@ defmodule Sigil.Alerts do
   @spec topic(String.t()) :: String.t()
   def topic(account_address) when is_binary(account_address), do: "alerts:#{account_address}"
 
-  @spec create_deduped_alert(map(), String.t(), String.t(), String.t(), options()) ::
+  @spec create_deduped_alert(map(), String.t(), String.t(), dedup_subject(), options()) ::
           {:ok, Alert.t()} | {:ok, :duplicate} | {:ok, :cooldown} | {:error, Ecto.Changeset.t()}
-  defp create_deduped_alert(attrs, account_address, assembly_id, type, opts) do
-    case {active_alert_exists?(account_address, assembly_id, type, opts),
-          cooldown_active?(account_address, assembly_id, type, cooldown_ms(opts))} do
+  defp create_deduped_alert(attrs, account_address, type, dedup_subject, opts) do
+    case {active_alert_exists_for_subject?(account_address, type, dedup_subject),
+          cooldown_active_for_subject?(account_address, type, dedup_subject, cooldown_ms(opts))} do
       {true, _} -> {:ok, :duplicate}
       {false, true} -> {:ok, :cooldown}
       {false, false} -> insert_alert(attrs, opts)
@@ -259,9 +267,10 @@ defmodule Sigil.Alerts do
 
   defp maybe_broadcast(result, _event, _opts), do: result
 
-  @spec cooldown_active?(String.t(), String.t(), String.t(), non_neg_integer()) :: boolean()
-  defp cooldown_active?(account_address, assembly_id, type, cooldown_ms) do
-    case latest_dismissed_at(account_address, assembly_id, type) do
+  @spec cooldown_active_for_subject?(String.t(), String.t(), dedup_subject(), non_neg_integer()) ::
+          boolean()
+  defp cooldown_active_for_subject?(account_address, type, dedup_subject, cooldown_ms) do
+    case latest_dismissed_at_for_subject(account_address, type, dedup_subject) do
       %DateTime{} = dismissed_at ->
         DateTime.diff(DateTime.utc_now(), dismissed_at, :millisecond) < cooldown_ms
 
@@ -270,22 +279,71 @@ defmodule Sigil.Alerts do
     end
   end
 
-  @spec latest_dismissed_at(String.t(), String.t(), String.t()) :: DateTime.t() | nil
-  defp latest_dismissed_at(account_address, assembly_id, type) do
+  @spec latest_dismissed_at_for_subject(String.t(), String.t(), dedup_subject()) ::
+          DateTime.t() | nil
+  defp latest_dismissed_at_for_subject(account_address, type, dedup_subject) do
     from(a in Alert,
       where:
-        a.account_address == ^account_address and a.assembly_id == ^assembly_id and
-          a.type == ^type and a.status == "dismissed",
+        a.account_address == ^account_address and a.type == ^type and a.status == "dismissed",
       where: not is_nil(a.dismissed_at),
       order_by: [desc: a.dismissed_at, desc: a.id],
       limit: 1,
       select: a.dismissed_at
     )
+    |> dedup_subject_where(dedup_subject)
     |> Repo.one()
   end
 
   @spec cooldown_ms(options()) :: non_neg_integer()
   defp cooldown_ms(opts), do: Keyword.get(opts, :cooldown_ms, @default_cooldown_ms)
+
+  @spec dedup_subject(map(), String.t() | nil) :: dedup_subject() | nil
+  defp dedup_subject(attrs, "reputation_threshold_crossed") do
+    case reputation_target_tribe_id(attrs) do
+      nil -> nil
+      value -> {:reputation_target_tribe, value}
+    end
+  end
+
+  defp dedup_subject(attrs, _type) do
+    case attr(attrs, :assembly_id) do
+      value when is_binary(value) and value != "" -> {:assembly, value}
+      value when is_integer(value) -> {:assembly, Integer.to_string(value)}
+      _other -> nil
+    end
+  end
+
+  @spec reputation_target_tribe_id(map()) :: String.t() | nil
+  defp reputation_target_tribe_id(attrs) do
+    metadata = attr(attrs, :metadata)
+
+    value =
+      if is_map(metadata) do
+        Map.get(metadata, :target_tribe_id) || Map.get(metadata, "target_tribe_id")
+      end
+
+    case value do
+      int when is_integer(int) -> Integer.to_string(int)
+      bin when is_binary(bin) and bin != "" -> bin
+      _other -> nil
+    end
+  end
+
+  @spec dedup_subject_where(Ecto.Query.t(), dedup_subject()) :: Ecto.Query.t()
+  defp dedup_subject_where(query, {:assembly, assembly_id}),
+    do: from(a in query, where: a.assembly_id == ^assembly_id)
+
+  defp dedup_subject_where(query, {:reputation_target_tribe, target_tribe_id}) do
+    from(a in query,
+      where:
+        fragment(
+          "COALESCE((?->>'target_tribe_id'), (?->'target_tribe_id')::text)",
+          a.metadata,
+          a.metadata
+        ) ==
+          ^target_tribe_id
+    )
+  end
 
   @spec attr(map(), atom()) :: term()
   defp attr(attrs, key), do: Map.get(attrs, Atom.to_string(key)) || Map.get(attrs, key)
@@ -295,6 +353,11 @@ defmodule Sigil.Alerts do
 
   @spec duplicate_constraint?(Exception.t()) :: boolean()
   defp duplicate_constraint?(%Ecto.ConstraintError{constraint: constraint}) do
-    constraint in ["alerts_active_unique_index", :alerts_active_unique_index]
+    constraint in [
+      "alerts_active_unique_index",
+      :alerts_active_unique_index,
+      "alerts_active_reputation_unique_index",
+      :alerts_active_reputation_unique_index
+    ]
   end
 end

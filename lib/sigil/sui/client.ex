@@ -112,4 +112,23 @@ defmodule Sigil.Sui.Client do
   @doc "Fetches SUI coins owned by an address for gas selection."
   @callback get_coins(String.t(), request_opts()) ::
               {:ok, [coin_info()]} | {:error, error_reason()}
+
+  @typedoc "Full Move event type queried from Sui GraphQL."
+  @type event_type :: String.t()
+
+  @typedoc "Single option for historical event queries."
+  @type events_query_opt :: {:after, String.t()} | {:limit, pos_integer()}
+
+  @typedoc "Options accepted by historical event queries."
+  @type events_query_opts :: [events_query_opt()]
+
+  @typedoc "Single events query page returned from Sui."
+  @type events_page :: %{
+          events: [map()],
+          next_cursor: String.t() | nil
+        }
+
+  @doc "Fetches a single page of historical events for one Move event type."
+  @callback query_events(event_type(), events_query_opts(), request_opts()) ::
+              {:ok, events_page()} | {:error, error_reason()}
 end
