@@ -31,7 +31,7 @@ defmodule SigilWeb.AssemblyDetailLive do
           |> assign(
             assembly: assembly,
             assembly_type: assembly_type(assembly),
-            page_title: assembly_name(assembly),
+            page_title: assembly_name(assembly, socket.assigns[:static_data]),
             signing_state: :idle,
             depletion: initial_depletion(assembly),
             is_owner: owner?(socket, assembly_id)
@@ -127,7 +127,7 @@ defmodule SigilWeb.AssemblyDetailLive do
          assign(socket,
            assembly: assembly,
            assembly_type: assembly_type(assembly),
-           page_title: assembly_name(assembly),
+           page_title: assembly_name(assembly, socket.assigns[:static_data]),
            depletion: depletion,
            signing_state: reset_signing_state(socket.assigns.signing_state)
          )}
@@ -137,7 +137,7 @@ defmodule SigilWeb.AssemblyDetailLive do
          assign(socket,
            assembly: assembly,
            assembly_type: assembly_type(assembly),
-           page_title: assembly_name(assembly),
+           page_title: assembly_name(assembly, socket.assigns[:static_data]),
            depletion: initial_depletion(assembly),
            signing_state: reset_signing_state(socket.assigns.signing_state)
          )}
@@ -176,7 +176,7 @@ defmodule SigilWeb.AssemblyDetailLive do
             <p class="font-mono text-xs uppercase tracking-[0.35em] text-quantum-300">Assembly uplink</p>
             <div class="mt-4 flex flex-wrap items-center gap-3">
               <span class={type_badge_classes(@assembly)}>
-                <%= assembly_type_label(@assembly) %>
+                <%= assembly_type_label(@assembly, @static_data) %>
               </span>
               <span class={status_badge_classes(@assembly)}><%= assembly_status(@assembly) %></span>
             </div>
@@ -365,7 +365,7 @@ defmodule SigilWeb.AssemblyDetailLive do
                tribe_id: tribe_id,
                assembly_id: socket.assigns.assembly.id,
                solar_system_id: solar_system.id,
-               label: assembly_name(socket.assigns.assembly),
+               label: assembly_name(socket.assigns.assembly, socket.assigns[:static_data]),
                notes: "Assembly location update",
                reported_by: socket.assigns.current_account.address,
                reported_by_name: IntelHelpers.character_name(active_character),
@@ -428,12 +428,15 @@ defmodule SigilWeb.AssemblyDetailLive do
   defp assembly_type(%StorageUnit{}), do: :storage_unit
   defp assembly_type(%Assembly{}), do: :assembly
 
-  @spec assembly_name(Assemblies.assembly()) :: String.t()
-  defp assembly_name(%{metadata: %{name: name}}) when is_binary(name) and byte_size(name) > 0,
-    do: name
+  @spec assembly_name(Assemblies.assembly(), pid() | nil) :: String.t()
+  defp assembly_name(assembly, static_data \\ nil)
 
-  defp assembly_name(assembly) do
-    "#{assembly_type_label(assembly)} #{truncate_id(assembly.id)}"
+  defp assembly_name(%{metadata: %{name: name}}, _static_data)
+       when is_binary(name) and byte_size(name) > 0,
+       do: name
+
+  defp assembly_name(assembly, static_data) do
+    "#{assembly_type_label(assembly, static_data)} #{truncate_id(assembly.id)}"
   end
 
   @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()

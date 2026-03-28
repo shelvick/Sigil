@@ -119,7 +119,7 @@ defmodule SigilWeb.TribeOverviewLive do
           </div>
         <% else %>
           <SigilWeb.TribeOverviewLive.Components.members_panel members={@members} active_character={@active_character} />
-          <SigilWeb.TribeOverviewLive.Components.assemblies_panel member_assemblies={@member_assemblies} />
+          <SigilWeb.TribeOverviewLive.Components.assemblies_panel member_assemblies={@member_assemblies} static_data={@static_data} />
           <SigilWeb.TribeOverviewLive.Components.intel_panel tribe_id={@tribe_id} intel_summary={@intel_summary} />
           <SigilWeb.TribeOverviewLive.Components.standings_panel
             tribe_id={@tribe_id}

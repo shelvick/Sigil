@@ -117,7 +117,7 @@ defmodule SigilWeb.TribeOverviewLive.Components do
 
     type_counts =
       all_assemblies
-      |> Enum.group_by(&assembly_type_label/1)
+      |> Enum.group_by(&assembly_type_label(&1, assigns[:static_data]))
       |> Enum.map(fn {type, list} -> {type, length(list)} end)
       |> Enum.sort_by(fn {type, _count} -> type end)
 
@@ -158,7 +158,7 @@ defmodule SigilWeb.TribeOverviewLive.Components do
                     <%= for assembly <- assemblies do %>
                       <tr class="cursor-pointer rounded-2xl bg-space-900/70 text-sm text-foreground transition hover:bg-space-800/80" phx-click={JS.navigate(~p"/assembly/#{assembly.id}")}>
                         <td class={["rounded-l-2xl px-3 py-3 font-mono text-xs uppercase tracking-[0.2em]", type_text_color(assembly)]}>
-                          <%= assembly_type_label(assembly) %>
+                          <%= assembly_type_label(assembly, assigns[:static_data]) %>
                         </td>
                         <td class="px-3 py-3">
                           <.link navigate={~p"/assembly/#{assembly.id}"} class="font-semibold text-cream hover:text-quantum-300">

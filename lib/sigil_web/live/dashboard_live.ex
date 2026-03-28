@@ -48,7 +48,10 @@ defmodule SigilWeb.DashboardLive do
   def handle_info({:assemblies_discovered, assemblies}, socket) when is_list(assemblies) do
     {:noreply,
      socket
-     |> assign(assemblies: sort_assemblies(assemblies), discovery_error: false)
+     |> assign(
+       assemblies: sort_assemblies(assemblies, socket.assigns[:static_data]),
+       discovery_error: false
+     )
      |> subscribe_to_assembly_topics(assemblies)
      |> maybe_ensure_monitors_for(assemblies)}
   end
@@ -237,6 +240,7 @@ defmodule SigilWeb.DashboardLive do
             discovery_error={@discovery_error}
             alert_summary={@alert_summary}
             unread_count={@unread_count}
+            static_data={@static_data}
           />
         <% else %>
           <.wallet_connect_view
@@ -302,7 +306,10 @@ defmodule SigilWeb.DashboardLive do
              socket.assigns[:pubsub]
            ) do
         {:ok, assemblies} ->
-          assign(socket, assemblies: sort_assemblies(assemblies), discovery_error: false)
+          assign(socket,
+            assemblies: sort_assemblies(assemblies, socket.assigns[:static_data]),
+            discovery_error: false
+          )
 
         {:error, _reason} ->
           socket
@@ -311,7 +318,11 @@ defmodule SigilWeb.DashboardLive do
       end
     else
       assign(socket,
-        assemblies: sort_assemblies(list_assemblies(address, socket.assigns[:cache_tables])),
+        assemblies:
+          sort_assemblies(
+            list_assemblies(address, socket.assigns[:cache_tables]),
+            socket.assigns[:static_data]
+          ),
         discovery_error: false
       )
     end
@@ -478,11 +489,11 @@ defmodule SigilWeb.DashboardLive do
   @spec assembly_topic(String.t()) :: String.t()
   defp assembly_topic(assembly_id), do: @assembly_topic_prefix <> assembly_id
 
-  @spec sort_assemblies([Assemblies.assembly()]) :: [Assemblies.assembly()]
-  defp sort_assemblies(assemblies) do
+  @spec sort_assemblies([Assemblies.assembly()], pid() | nil) :: [Assemblies.assembly()]
+  defp sort_assemblies(assemblies, static_data) do
     Enum.sort_by(assemblies, fn assembly ->
       status_priority = if assembly.status.status == :offline, do: 0, else: 1
-      type_label = SigilWeb.AssemblyHelpers.assembly_type_label(assembly)
+      type_label = SigilWeb.AssemblyHelpers.assembly_type_label(assembly, static_data)
       {status_priority, type_label}
     end)
   end
