@@ -35,10 +35,30 @@ defmodule Sigil.Sui.Client do
   @type object_filter :: [object_filter_key()]
 
   @typedoc "Single client request option."
-  @type request_opt :: {:url, String.t()} | {:req_options, keyword()}
+  @type request_opt ::
+          {:url, String.t()}
+          | {:req_options, keyword()}
+          | {:cursor, String.t()}
+          | {:limit, pos_integer()}
 
   @typedoc "Client request options."
   @type request_opts :: [request_opt()]
+
+  @typedoc "Dynamic field name metadata returned from Sui."
+  @type dynamic_field_name :: %{type: String.t(), json: term()}
+
+  @typedoc "Normalized dynamic field value returned from Sui."
+  @type dynamic_field_value :: %{type: String.t(), json: term()}
+
+  @typedoc "Single dynamic field entry returned from Sui."
+  @type dynamic_field_entry :: %{name: dynamic_field_name(), value: dynamic_field_value()}
+
+  @typedoc "Single dynamic fields query page returned from Sui."
+  @type dynamic_fields_page :: %{
+          data: [dynamic_field_entry()],
+          has_next_page: boolean(),
+          end_cursor: String.t() | nil
+        }
 
   @doc "Fetches a single object by id."
   @callback get_object(String.t(), request_opts()) ::
@@ -57,6 +77,10 @@ defmodule Sigil.Sui.Client do
   @doc "Fetches objects matching the supplied filters."
   @callback get_objects(object_filter(), request_opts()) ::
               {:ok, objects_page()} | {:error, error_reason()}
+
+  @doc "Fetches dynamic fields owned by a parent object."
+  @callback get_dynamic_fields(String.t(), request_opts()) ::
+              {:ok, dynamic_fields_page()} | {:error, error_reason()}
 
   @typedoc "Intent scope used for zkLogin signature verification."
   @type zklogin_intent_scope :: String.t()

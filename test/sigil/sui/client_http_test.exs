@@ -574,6 +574,435 @@ defmodule Sigil.Sui.ClientHTTPTest do
     end
   end
 
+  describe "get_dynamic_fields/2" do
+    test "get_dynamic_fields returns entries with name and value for valid parent" do
+      stub_name = stub_name(:get_dynamic_fields_success)
+
+      Req.Test.expect(stub_name, fn conn ->
+        payload = graphql_payload(conn)
+
+        assert payload["query"] =~ "query GetDynamicFields"
+
+        assert payload["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => true, "endCursor" => "cursor-1"},
+                "nodes" => [
+                  %{
+                    "name" => %{
+                      "type" => %{"repr" => "address"},
+                      "json" => "0xmember"
+                    },
+                    "value" => %{
+                      "type" => %{"repr" => "u64"},
+                      "json" => 3
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok,
+              %{
+                data: [
+                  %{
+                    name: %{type: "address", json: "0xmember"},
+                    value: %{type: "u64", json: 3}
+                  }
+                ],
+                has_next_page: true,
+                end_cursor: "cursor-1"
+              }} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields normalizes MoveValue entries" do
+      stub_name = stub_name(:get_dynamic_fields_move_value)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => [
+                  %{
+                    "name" => %{"type" => %{"repr" => "u64"}, "json" => 9},
+                    "value" => %{
+                      "type" => %{"repr" => "vector<address>"},
+                      "json" => ["0x1", "0x2"]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok,
+              %{
+                data: [%{value: %{type: "vector<address>", json: ["0x1", "0x2"]}}],
+                has_next_page: false,
+                end_cursor: nil
+              }} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields normalizes MoveObject entries" do
+      stub_name = stub_name(:get_dynamic_fields_move_object)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => [
+                  %{
+                    "name" => %{"type" => %{"repr" => "address"}, "json" => "0xchild"},
+                    "value" => %{
+                      "contents" => %{
+                        "type" => %{"repr" => "0x2::table::Entry"},
+                        "json" => %{"value" => %{"candidate" => "0xleader"}}
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok,
+              %{
+                data: [
+                  %{
+                    value: %{
+                      type: "0x2::table::Entry",
+                      json: %{"value" => %{"candidate" => "0xleader"}}
+                    }
+                  }
+                ],
+                has_next_page: false,
+                end_cursor: nil
+              }} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields returns not_found for null parent object" do
+      stub_name = stub_name(:get_dynamic_fields_not_found)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xmissing"
+               }
+
+        Req.Test.json(conn, %{"data" => %{"object" => nil}})
+      end)
+
+      assert {:error, :not_found} =
+               ClientHTTP.get_dynamic_fields("0xmissing",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields returns empty page for object with no dynamic fields" do
+      stub_name = stub_name(:get_dynamic_fields_empty)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => []
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok, %{data: [], has_next_page: false, end_cursor: nil}} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields passes cursor as after variable" do
+      stub_name = stub_name(:get_dynamic_fields_cursor)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => "cursor-abc",
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => []
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok, %{data: [], has_next_page: false, end_cursor: nil}} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 cursor: "cursor-abc",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields returns graphql_errors on endpoint error" do
+      stub_name = stub_name(:get_dynamic_fields_graphql_errors)
+      errors = [%{"message" => "query rejected"}]
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{"errors" => errors})
+      end)
+
+      assert {:error, {:graphql_errors, ^errors}} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields returns timeout on transport timeout" do
+      stub_name = stub_name(:get_dynamic_fields_timeout)
+
+      Req.Test.stub(stub_name, fn conn ->
+        Req.Test.transport_error(conn, :timeout)
+      end)
+
+      assert {:error, :timeout} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+    end
+
+    test "get_dynamic_fields returns rate_limited on HTTP 429" do
+      stub_name = stub_name(:get_dynamic_fields_rate_limited)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        json_response(conn, 429, %{"errors" => [%{"message" => "slow down"}]})
+      end)
+
+      assert {:error, :rate_limited} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields returns invalid_response for malformed body" do
+      stub_name = stub_name(:get_dynamic_fields_invalid_response)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => [
+                  %{
+                    "name" => %{"type" => %{"repr" => "address"}, "json" => "0xchild"},
+                    "value" => %{}
+                  }
+                ]
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:error, :invalid_response} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "get_dynamic_fields passes limit as first variable" do
+      stub_name = stub_name(:get_dynamic_fields_limit)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 100,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => []
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:ok, %{data: [], has_next_page: false, end_cursor: nil}} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 limit: 100,
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "graphql data wins over partial errors" do
+      stub_name = stub_name(:get_dynamic_fields_partial_errors)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        Req.Test.json(conn, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => [
+                  %{
+                    "name" => %{"type" => %{"repr" => "address"}, "json" => "0xmember"},
+                    "value" => %{"type" => %{"repr" => "u64"}, "json" => 1}
+                  }
+                ]
+              }
+            }
+          },
+          "errors" => [%{"message" => "partial failure"}]
+        })
+      end)
+
+      assert {:ok,
+              %{
+                data: [
+                  %{name: %{type: "address", json: "0xmember"}, value: %{type: "u64", json: 1}}
+                ],
+                has_next_page: false,
+                end_cursor: nil
+              }} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "http 429 returns rate_limited" do
+      stub_name = stub_name(:get_dynamic_fields_429_short_circuit)
+
+      Req.Test.expect(stub_name, fn conn ->
+        assert graphql_payload(conn)["variables"] == %{
+                 "after" => nil,
+                 "first" => 50,
+                 "id" => "0xparent"
+               }
+
+        json_response(conn, 429, %{
+          "data" => %{
+            "object" => %{
+              "dynamicFields" => %{
+                "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                "nodes" => []
+              }
+            }
+          }
+        })
+      end)
+
+      assert {:error, :rate_limited} =
+               ClientHTTP.get_dynamic_fields("0xparent",
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+  end
+
   describe "configuration and behaviour" do
     test "URL override via opts is used for requests" do
       stub_name = stub_name(:url_override)

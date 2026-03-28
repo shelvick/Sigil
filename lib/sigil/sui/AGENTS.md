@@ -4,7 +4,7 @@
 
 - `Sigil.Sui.BCS` — Pure BCS encoder/decoder for Sui transaction serialization
 - `Sigil.Sui.Signer` — Ed25519 signing, verification, Sui address derivation
-- `Sigil.Sui.Client` — Behaviour contract for Sui GraphQL access (4 callbacks: get_object, get_objects, execute_transaction, verify_zklogin_signature)
+- `Sigil.Sui.Client` — Behaviour contract for Sui GraphQL access (6 callbacks: get_object, get_object_with_ref, get_objects, get_dynamic_fields, execute_transaction, verify_zklogin_signature)
 - `Sigil.Sui.Client.HTTP` — Req-backed HTTP implementation of Client behaviour (see `client/AGENTS.md`)
 - `Sigil.Sui.ZkLoginVerifier` — Challenge nonce lifecycle + zkLogin signature verification. Pure function module over injected ETS + Sui client
 - `Sigil.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
@@ -47,7 +47,9 @@
 
 ### Client (client.ex)
 - `get_object/2`: Fetch single object by id
+- `get_object_with_ref/2`: Fetch single object with on-chain reference (id, version, digest)
 - `get_objects/2`: Fetch objects by filter (type, owner, cursor, limit)
+- `get_dynamic_fields/2`: Fetch dynamic field entries for a parent object (votes/tallies tables)
 - `execute_transaction/3`: Submit signed tx (tx_bytes + signatures)
 - `verify_zklogin_signature/5`: Verify zkLogin signature via Sui GraphQL (bytes, sig, scope, author, opts)
 

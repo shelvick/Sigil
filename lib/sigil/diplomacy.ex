@@ -4,8 +4,8 @@ defmodule Sigil.Diplomacy do
   """
 
   alias Sigil.Cache
-  alias Sigil.Diplomacy.{LocalSigner, ObjectCodec, PendingOps}
-  alias Sigil.Sui.{Client, TransactionBuilder, TxCustodian}
+  alias Sigil.Diplomacy.{Governance, LocalSigner, ObjectCodec, PendingOps}
+  alias Sigil.Sui.Client
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
 
@@ -23,8 +23,21 @@ defmodule Sigil.Diplomacy do
           object_id_bytes: <<_::256>>,
           initial_shared_version: non_neg_integer(),
           tribe_id: non_neg_integer(),
-          current_leader: String.t()
+          current_leader: String.t(),
+          current_leader_votes: non_neg_integer(),
+          members: [String.t()],
+          votes_table_id: String.t(),
+          vote_tallies_table_id: String.t()
         }
+
+  @typedoc "Cached governance votes keyed by voter address."
+  @type vote_map() :: %{String.t() => String.t()}
+
+  @typedoc "Cached governance tallies keyed by candidate address."
+  @type tally_map() :: %{String.t() => non_neg_integer()}
+
+  @typedoc "Cached governance state for a tribe."
+  @type governance_data() :: %{votes: vote_map(), tallies: tally_map()}
 
   @typedoc "Shared object reference for a character."
   @type character_ref() :: %{
@@ -231,141 +244,66 @@ defmodule Sigil.Diplomacy do
   @spec build_set_standing_tx(non_neg_integer(), standing_value(), options()) ::
           {:ok, %{tx_bytes: String.t()}}
           | {:error, :no_active_custodian | :no_character_ref | term()}
-  def build_set_standing_tx(target_tribe_id, standing, opts)
-      when is_integer(target_tribe_id) and is_integer(standing) and is_list(opts) do
-    with {:ok, active_custodian} <- require_active_custodian(opts),
-         {:ok, character_ref} <- require_character_ref(opts) do
-      tx_bytes =
-        active_custodian
-        |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_standing(character_ref, target_tribe_id, standing, [])
-        |> TransactionBuilder.build_kind!()
-        |> Base.encode64()
-
-      store_pending_tx(
-        opts,
-        tx_bytes,
-        {:set_standing, source_tribe_id(opts), target_tribe_id, standing}
-      )
-
-      {:ok, %{tx_bytes: tx_bytes}}
-    end
-  end
+  defdelegate build_set_standing_tx(target_tribe_id, standing, opts), to: Governance
 
   @doc "Builds transaction kind bytes for creating a custodian."
   @spec build_create_custodian_tx(options()) ::
           {:ok, %{tx_bytes: String.t()}} | {:error, :no_registry_ref | :no_character_ref | term()}
-  def build_create_custodian_tx(opts) when is_list(opts) do
-    with {:ok, registry_ref} <- resolve_registry_ref(opts),
-         {:ok, character_ref} <- require_character_ref(opts) do
-      tx_bytes =
-        registry_ref
-        |> TxCustodian.build_create_custodian(character_ref, [])
-        |> TransactionBuilder.build_kind!()
-        |> Base.encode64()
-
-      store_pending_tx(opts, tx_bytes, :create_custodian)
-
-      {:ok, %{tx_bytes: tx_bytes}}
-    end
-  end
+  defdelegate build_create_custodian_tx(opts), to: Governance
 
   @doc "Builds transaction kind bytes for setting multiple tribe standings."
   @spec build_batch_set_standings_tx([{non_neg_integer(), standing_value()}], options()) ::
           {:ok, %{tx_bytes: String.t()}}
           | {:error, :no_active_custodian | :no_character_ref | term()}
-  def build_batch_set_standings_tx(updates, opts) when is_list(updates) and is_list(opts) do
-    with {:ok, active_custodian} <- require_active_custodian(opts),
-         {:ok, character_ref} <- require_character_ref(opts) do
-      tx_bytes =
-        active_custodian
-        |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_batch_set_standings(character_ref, updates, [])
-        |> TransactionBuilder.build_kind!()
-        |> Base.encode64()
-
-      store_pending_tx(opts, tx_bytes, {:batch_set_standings, source_tribe_id(opts), updates})
-
-      {:ok, %{tx_bytes: tx_bytes}}
-    end
-  end
+  defdelegate build_batch_set_standings_tx(updates, opts), to: Governance
 
   @doc "Builds transaction kind bytes for setting a pilot standing."
   @spec build_set_pilot_standing_tx(String.t(), standing_value(), options()) ::
           {:ok, %{tx_bytes: String.t()}}
           | {:error, :no_active_custodian | :no_character_ref | term()}
-  def build_set_pilot_standing_tx(pilot, standing, opts)
-      when is_binary(pilot) and is_integer(standing) and is_list(opts) do
-    with {:ok, active_custodian} <- require_active_custodian(opts),
-         {:ok, character_ref} <- require_character_ref(opts) do
-      tx_bytes =
-        active_custodian
-        |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_pilot_standing(
-          character_ref,
-          ObjectCodec.hex_to_bytes(pilot),
-          standing,
-          []
-        )
-        |> TransactionBuilder.build_kind!()
-        |> Base.encode64()
-
-      store_pending_tx(
-        opts,
-        tx_bytes,
-        {:set_pilot_standing, source_tribe_id(opts), pilot, standing}
-      )
-
-      {:ok, %{tx_bytes: tx_bytes}}
-    end
-  end
+  defdelegate build_set_pilot_standing_tx(pilot, standing, opts), to: Governance
 
   @doc "Builds transaction kind bytes for setting the default standing."
   @spec build_set_default_standing_tx(standing_value(), options()) ::
           {:ok, %{tx_bytes: String.t()}}
           | {:error, :no_active_custodian | :no_character_ref | term()}
-  def build_set_default_standing_tx(standing, opts) when is_integer(standing) and is_list(opts) do
-    with {:ok, active_custodian} <- require_active_custodian(opts),
-         {:ok, character_ref} <- require_character_ref(opts) do
-      tx_bytes =
-        active_custodian
-        |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_default_standing(character_ref, standing, [])
-        |> TransactionBuilder.build_kind!()
-        |> Base.encode64()
-
-      store_pending_tx(opts, tx_bytes, {:set_default_standing, source_tribe_id(opts), standing})
-
-      {:ok, %{tx_bytes: tx_bytes}}
-    end
-  end
+  defdelegate build_set_default_standing_tx(standing, opts), to: Governance
 
   @doc "Builds transaction kind bytes for setting multiple pilot standings."
   @spec build_batch_set_pilot_standings_tx([{String.t(), standing_value()}], options()) ::
           {:ok, %{tx_bytes: String.t()}}
           | {:error, :no_active_custodian | :no_character_ref | term()}
-  def build_batch_set_pilot_standings_tx(updates, opts) when is_list(updates) and is_list(opts) do
-    with {:ok, active_custodian} <- require_active_custodian(opts),
-         {:ok, character_ref} <- require_character_ref(opts) do
-      encoded_updates =
-        Enum.map(updates, fn {pilot, standing} -> {ObjectCodec.hex_to_bytes(pilot), standing} end)
+  defdelegate build_batch_set_pilot_standings_tx(updates, opts), to: Governance
 
-      tx_bytes =
-        active_custodian
-        |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_batch_set_pilot_standings(character_ref, encoded_updates, [])
-        |> TransactionBuilder.build_kind!()
-        |> Base.encode64()
+  @doc "Builds transaction kind bytes for voting for a leader candidate."
+  @spec build_vote_leader_tx(String.t(), options()) ::
+          {:ok, %{tx_bytes: String.t()}}
+          | {:error, :no_active_custodian | :no_character_ref | term()}
+  defdelegate build_vote_leader_tx(candidate, opts), to: Governance
 
-      store_pending_tx(
-        opts,
-        tx_bytes,
-        {:batch_set_pilot_standings, source_tribe_id(opts), updates}
-      )
+  @doc "Builds transaction kind bytes for claiming tribe leadership."
+  @spec build_claim_leadership_tx(options()) ::
+          {:ok, %{tx_bytes: String.t()}}
+          | {:error, :no_active_custodian | :no_character_ref | term()}
+  defdelegate build_claim_leadership_tx(opts), to: Governance
 
-      {:ok, %{tx_bytes: tx_bytes}}
-    end
+  @doc "Loads and caches governance votes and tallies for the active custodian."
+  @spec load_governance_data(options()) :: {:ok, governance_data()} | {:error, term()}
+  defdelegate load_governance_data(opts), to: Governance
+
+  @doc "Returns true when the sender is a member of the active custodian."
+  @spec member?(options()) :: boolean()
+  defdelegate member?(opts), to: Governance
+
+  @doc "Returns the tribe-scoped diplomacy topic."
+  @spec topic(non_neg_integer()) :: String.t()
+  def topic(tribe_id) when is_integer(tribe_id) and tribe_id >= 0 do
+    "diplomacy:#{tribe_id}"
   end
+
+  @doc "Returns the legacy shared diplomacy topic used by standings consumers."
+  @spec legacy_topic() :: String.t()
+  def legacy_topic, do: @diplomacy_topic
 
   @doc "Submits a wallet-signed transaction and updates cache on success."
   @spec submit_signed_transaction(String.t(), String.t(), options()) ::
@@ -377,7 +315,7 @@ defmodule Sigil.Diplomacy do
 
     case client.execute_transaction(tx_bytes, [signature], req_options) do
       {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}} = effects} ->
-        PendingOps.apply(standings_table(opts), opts, tx_bytes)
+        :ok = PendingOps.apply(standings_table(opts), opts, tx_bytes)
         {:ok, %{digest: digest, effects_bcs: effects["bcs"]}}
 
       {:ok, effects} ->
@@ -427,13 +365,15 @@ defmodule Sigil.Diplomacy do
     Cache.get(standings_table(opts), {:world_tribe, tribe_id})
   end
 
+  @doc "Returns the standings ETS table from opts. Used by Diplomacy submodules."
   @spec standings_table(options()) :: Cache.table_id()
-  defp standings_table(opts) do
+  def standings_table(opts) do
     opts |> Keyword.fetch!(:tables) |> Map.fetch!(:standings)
   end
 
+  @doc "Returns the source tribe ID from opts. Used by Diplomacy submodules."
   @spec source_tribe_id(options()) :: non_neg_integer()
-  defp source_tribe_id(opts) do
+  def source_tribe_id(opts) do
     case Keyword.fetch(opts, :tribe_id) do
       {:ok, tribe_id} -> tribe_id
       :error -> raise KeyError, key: :tribe_id, term: opts
@@ -445,17 +385,19 @@ defmodule Sigil.Diplomacy do
     Map.get(custodian, :tribe_id, Keyword.fetch!(opts, :tribe_id))
   end
 
+  @doc "Fetches the active custodian or returns an error. Used by Diplomacy submodules."
   @spec require_active_custodian(options()) ::
           {:ok, custodian_info()} | {:error, :no_active_custodian}
-  defp require_active_custodian(opts) do
+  def require_active_custodian(opts) do
     case get_active_custodian(opts) do
       nil -> {:error, :no_active_custodian}
       active_custodian -> {:ok, active_custodian}
     end
   end
 
+  @doc "Resolves the character ref from opts or chain. Used by Diplomacy submodules."
   @spec require_character_ref(options()) :: {:ok, character_ref()} | {:error, term()}
-  defp require_character_ref(opts) do
+  def require_character_ref(opts) do
     cond do
       character_ref = Keyword.get(opts, :character_ref) ->
         {:ok, character_ref}
@@ -468,8 +410,9 @@ defmodule Sigil.Diplomacy do
     end
   end
 
+  @doc "Stores a pending transaction operation in the ETS cache. Used by Diplomacy submodules."
   @spec store_pending_tx(options(), String.t(), term()) :: :ok
-  defp store_pending_tx(opts, tx_bytes, operation) do
+  def store_pending_tx(opts, tx_bytes, operation) do
     Cache.put(standings_table(opts), {:pending_tx, tx_bytes}, operation)
   end
 

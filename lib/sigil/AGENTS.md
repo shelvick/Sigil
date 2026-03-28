@@ -6,6 +6,7 @@
 - `Sigil.IntelMarket` (`intel_market.ex`) — marketplace context for discovery, sync, unsigned PTB building, signed submission reconciliation, Seal/Walrus config generation, seller/purchased listing queries, and blob-availability preflight.
 - `Sigil.IntelMarket.Listings` (`intel_market/listings.ex`) — chain parsing, listing upsert/reconcile helpers, cache writes, and stale-listing cleanup under configurable grace windows.
 - `Sigil.IntelMarket.PendingOps` (`intel_market/pending_ops.ex`) — applies create/purchase/cancel pending operations after successful signed transactions.
+- `Sigil.Diplomacy.Governance` (`diplomacy/governance.ex`) — extracted transaction builders (standings + governance) and governance data loading. Delegated from `Sigil.Diplomacy`.
 - `Sigil.WalrusClient` (`walrus_client.ex`) — behavior for Walrus blob storage operations.
 - `Sigil.WalrusClient.HTTP` (`walrus_client/http.ex`) — Req-backed Walrus implementation for upload, read, and HEAD existence checks.
 

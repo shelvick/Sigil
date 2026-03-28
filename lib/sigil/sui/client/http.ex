@@ -106,6 +106,8 @@ defmodule Sigil.Sui.Client.HTTP do
   }
   """
 
+  alias Sigil.Sui.Client.HTTP.DynamicFields
+
   @doc "Fetches a single Sui object by address."
   @impl Client
   @spec get_object(String.t(), Client.request_opts()) ::
@@ -199,6 +201,22 @@ defmodule Sigil.Sui.Client.HTTP do
     end
   end
 
+  @doc "Fetches a single page of dynamic fields for a parent object."
+  @impl Client
+  @spec get_dynamic_fields(String.t(), Client.request_opts()) ::
+          {:ok, Client.dynamic_fields_page()} | {:error, Client.error_reason()}
+  def get_dynamic_fields(parent_id, opts \\ []) when is_binary(parent_id) and is_list(opts) do
+    variables = %{
+      "id" => parent_id,
+      "first" => Keyword.get(opts, :limit, @default_limit),
+      "after" => Keyword.get(opts, :cursor)
+    }
+
+    with {:ok, data} <- graphql_request(DynamicFields.query(), variables, opts) do
+      DynamicFields.build_page(data)
+    end
+  end
+
   @doc "Verifies a zkLogin signature against the Sui GraphQL API."
   @impl Client
   @spec verify_zklogin_signature(
@@ -249,14 +267,14 @@ defmodule Sigil.Sui.Client.HTTP do
 
   @spec map_graphql_response({:ok, Req.Response.t()} | {:error, Exception.t()}) ::
           {:ok, map()} | {:error, Client.error_reason()}
-  defp map_graphql_response({:ok, %Req.Response{status: 200, body: %{"errors" => errors}}})
-       when is_list(errors) do
-    {:error, {:graphql_errors, errors}}
-  end
-
   defp map_graphql_response({:ok, %Req.Response{status: 200, body: %{"data" => data}}})
        when is_map(data) do
     {:ok, data}
+  end
+
+  defp map_graphql_response({:ok, %Req.Response{status: 200, body: %{"errors" => errors}}})
+       when is_list(errors) do
+    {:error, {:graphql_errors, errors}}
   end
 
   defp map_graphql_response({:ok, %Req.Response{status: 429}}), do: {:error, :rate_limited}

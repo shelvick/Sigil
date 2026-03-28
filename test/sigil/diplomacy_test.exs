@@ -625,6 +625,578 @@ defmodule Sigil.DiplomacyTest do
     end
   end
 
+  describe "governance transaction building" do
+    test "build_vote_leader_tx returns tx_bytes for valid candidate", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      candidate = address(0xB9)
+
+      custodian =
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          current_leader_votes: 1,
+          members: [sender, candidate],
+          votes_table_id: address(0xBA),
+          vote_tallies_table_id: address(0xBB),
+          object_id: address(0xBC)
+        )
+
+      character = character_ref(object_id: object_id(0xBD), initial_shared_version: 42)
+
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, custodian)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Diplomacy.build_vote_leader_tx(candidate,
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      assert tx_bytes == expected_vote_leader_kind_bytes(custodian, character, candidate)
+      assert Cache.get(tables.standings, {:pending_tx, tx_bytes}) == {:vote_leader, candidate}
+      assert Cache.get(tables.standings, {:governance_refresh, tx_bytes}) == tribe_id
+    end
+
+    test "build_vote_leader_tx fails without active custodian", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      assert Diplomacy.build_vote_leader_tx(address(0xBE),
+               tables: tables,
+               tribe_id: tribe_id,
+               sender: sender,
+               character_ref: character_ref()
+             ) == {:error, :no_active_custodian}
+    end
+
+    test "build_claim_leadership_tx returns tx_bytes", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      custodian =
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: address(0xBF),
+          current_leader_votes: 1,
+          members: [sender, address(0xC0)],
+          votes_table_id: address(0xC1),
+          vote_tallies_table_id: address(0xC2),
+          object_id: address(0xC3)
+        )
+
+      character = character_ref(object_id: object_id(0xC4), initial_shared_version: 43)
+
+      Cache.put(tables.standings, {:active_custodian, tribe_id}, custodian)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Diplomacy.build_claim_leadership_tx(
+                 tables: tables,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      assert tx_bytes == expected_claim_leadership_kind_bytes(custodian, character)
+      assert Cache.get(tables.standings, {:pending_tx, tx_bytes}) == :claim_leadership
+      assert Cache.get(tables.standings, {:governance_refresh, tx_bytes}) == tribe_id
+    end
+
+    test "build_claim_leadership_tx fails without custodian", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      assert Diplomacy.build_claim_leadership_tx(
+               tables: tables,
+               tribe_id: tribe_id,
+               sender: sender,
+               character_ref: character_ref()
+             ) == {:error, :no_active_custodian}
+    end
+
+    test "build_claim_leadership_tx fails without character ref", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          current_leader_votes: 2,
+          members: [sender],
+          votes_table_id: address(0xC5),
+          vote_tallies_table_id: address(0xC6),
+          object_id: address(0xC7)
+        )
+      )
+
+      assert Diplomacy.build_claim_leadership_tx(
+               tables: tables,
+               tribe_id: tribe_id,
+               sender: sender
+             ) == {:error, :no_character_ref}
+
+      assert Cache.match(tables.standings, {{:pending_tx, :_}, :_}) == []
+    end
+  end
+
+  describe "governance data loading" do
+    test "load_governance_data reads all governance pages", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      votes_table_id = address(0xC8)
+      tallies_table_id = address(0xC9)
+      voter_one = address(0xCA)
+      voter_two = address(0xCB)
+      candidate_one = address(0xCC)
+      candidate_two = address(0xCD)
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: candidate_one,
+          current_leader_votes: 2,
+          members: [voter_one, voter_two],
+          votes_table_id: votes_table_id,
+          vote_tallies_table_id: tallies_table_id,
+          object_id: address(0xCE)
+        )
+      )
+
+      expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 4, fn table_id, opts ->
+        case {table_id, opts} do
+          {^votes_table_id, []} ->
+            {:ok,
+             page([dynamic_field_entry(voter_one, candidate_one)],
+               has_next_page: true,
+               end_cursor: "votes-1"
+             )}
+
+          {^votes_table_id, [cursor: "votes-1"]} ->
+            {:ok, page([dynamic_field_entry(voter_two, candidate_two)])}
+
+          {^tallies_table_id, []} ->
+            {:ok,
+             page([dynamic_field_entry(candidate_one, 2, value_type: "u64")],
+               has_next_page: true,
+               end_cursor: "tallies-1"
+             )}
+
+          {^tallies_table_id, [cursor: "tallies-1"]} ->
+            {:ok, page([dynamic_field_entry(candidate_two, 1, value_type: "u64")])}
+        end
+      end)
+
+      assert {:ok, governance_data} =
+               Diplomacy.load_governance_data(tables: tables, tribe_id: tribe_id)
+
+      assert governance_data == %{
+               votes: %{
+                 voter_one => candidate_one,
+                 voter_two => candidate_two
+               },
+               tallies: %{
+                 candidate_one => 2,
+                 candidate_two => 1
+               }
+             }
+    end
+
+    test "load_governance_data caches governance data in ETS", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      votes_table_id = address(0xCF)
+      tallies_table_id = address(0xD0)
+      candidate = address(0xD1)
+      voter = address(0xD2)
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: candidate,
+          current_leader_votes: 1,
+          members: [voter],
+          votes_table_id: votes_table_id,
+          vote_tallies_table_id: tallies_table_id,
+          object_id: address(0xD3)
+        )
+      )
+
+      expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 2, fn table_id, opts ->
+        case {table_id, opts} do
+          {^votes_table_id, []} ->
+            {:ok, page([dynamic_field_entry(voter, candidate)])}
+
+          {^tallies_table_id, []} ->
+            {:ok, page([dynamic_field_entry(candidate, 1, value_type: "u64")])}
+        end
+      end)
+
+      assert {:ok, governance_data} =
+               Diplomacy.load_governance_data(tables: tables, tribe_id: tribe_id)
+
+      assert Cache.get(tables.standings, {:governance_data, tribe_id}) == governance_data
+    end
+
+    test "load_governance_data fails without partial cache", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      votes_table_id = address(0xD4)
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: address(0xD5),
+          current_leader_votes: 1,
+          members: [address(0xD6)],
+          votes_table_id: votes_table_id,
+          vote_tallies_table_id: address(0xD7),
+          object_id: address(0xD8)
+        )
+      )
+
+      expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn ^votes_table_id, [] ->
+        {:error, :timeout}
+      end)
+
+      assert Diplomacy.load_governance_data(tables: tables, tribe_id: tribe_id) ==
+               {:error, :timeout}
+
+      assert Cache.get(tables.standings, {:governance_data, tribe_id}) == nil
+    end
+
+    test "load_governance_data fails without custodian", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      assert Diplomacy.load_governance_data(tables: tables, tribe_id: tribe_id) ==
+               {:error, :no_active_custodian}
+    end
+
+    test "to_custodian_info parses governance ids and leader data" do
+      leader = address(0xD9)
+      member = address(0xDA)
+      votes_table_id = address(0xDB)
+      tallies_table_id = address(0xDC)
+      object_id = address(0xDD)
+
+      object =
+        custodian_object_json(
+          object_id: object_id,
+          tribe_id: @source_tribe_id,
+          current_leader: leader,
+          current_leader_votes: 3,
+          members: [leader, member],
+          votes_table_id: votes_table_id,
+          vote_tallies_table_id: tallies_table_id
+        )
+
+      assert Sigil.Diplomacy.ObjectCodec.to_custodian_info(object) == %{
+               object_id: object_id,
+               object_id_bytes: hex_to_bytes(object_id),
+               initial_shared_version: 17,
+               tribe_id: @source_tribe_id,
+               current_leader: leader,
+               current_leader_votes: 3,
+               members: [leader, member],
+               votes_table_id: votes_table_id,
+               vote_tallies_table_id: tallies_table_id
+             }
+    end
+  end
+
+  describe "governance membership and refresh" do
+    test "member? returns true for custodian member and false for non-member", %{
+      tables: tables,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: address(0xDE),
+          current_leader_votes: 1,
+          members: [sender, address(0xDF)],
+          votes_table_id: address(0xE0),
+          vote_tallies_table_id: address(0xE1),
+          object_id: address(0xE2)
+        )
+      )
+
+      assert Diplomacy.member?(tables: tables, tribe_id: tribe_id, sender: sender)
+      refute Diplomacy.member?(tables: tables, tribe_id: tribe_id, sender: address(0xE3))
+    end
+
+    test "member? returns false without custodian", %{
+      tables: tables,
+      source_tribe_id: tribe_id
+    } do
+      refute Diplomacy.member?(tables: tables, tribe_id: tribe_id, sender: address(0xE4))
+    end
+
+    test "governance ops broadcast on tribe topic", %{
+      tables: tables,
+      pubsub: pubsub,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      topic = "diplomacy:#{tribe_id}"
+      Phoenix.PubSub.subscribe(pubsub, topic)
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          current_leader_votes: 1,
+          members: [sender, address(0xE5)],
+          votes_table_id: address(0xE6),
+          vote_tallies_table_id: address(0xE7),
+          object_id: address(0xE8)
+        )
+      )
+
+      for {tx_bytes, pending_op, digest} <- [
+            {"vote-governance-tx", {:vote_leader, address(0xE5)}, "vote-governance-success"},
+            {"claim-governance-tx", :claim_leadership, "claim-governance-success"}
+          ] do
+        Cache.put(tables.standings, {:pending_tx, tx_bytes}, pending_op)
+        Cache.put(tables.standings, {:governance_refresh, tx_bytes}, tribe_id)
+
+        expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^tx_bytes,
+                                                              ["wallet-signature"],
+                                                              [] ->
+          {:ok, success_effects(digest)}
+        end)
+
+        expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+          {:ok,
+           page([
+             custodian_object_json(
+               object_id: address(0xE8),
+               tribe_id: tribe_id,
+               current_leader: sender,
+               current_leader_votes: 1,
+               members: [sender, address(0xE5)],
+               votes_table_id: address(0xE6),
+               vote_tallies_table_id: address(0xE7),
+               initial_shared_version: 17
+             )
+           ])}
+        end)
+
+        votes_table_id = address(0xE6)
+        tallies_table_id = address(0xE7)
+
+        expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 2, fn table_id, opts ->
+          case {table_id, opts} do
+            {^votes_table_id, []} -> {:ok, page([])}
+            {^tallies_table_id, []} -> {:ok, page([])}
+          end
+        end)
+
+        assert {:ok, %{digest: ^digest, effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
+                 Diplomacy.submit_signed_transaction(tx_bytes, "wallet-signature",
+                   tables: tables,
+                   pubsub: pubsub,
+                   tribe_id: tribe_id,
+                   sender: sender
+                 )
+
+        assert_receive {:governance_updated, %{tribe_id: ^tribe_id}}
+        refute_receive {:governance_updated, %{tribe_id: ^tribe_id}}
+      end
+
+      refute_receive {:standing_updated, _}
+    end
+
+    test "vote submission refreshes governance state", %{
+      tables: tables,
+      pubsub: pubsub,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      topic = "diplomacy:#{tribe_id}"
+      Phoenix.PubSub.subscribe(pubsub, topic)
+
+      candidate = address(0xE9)
+      votes_table_id = address(0xEA)
+      tallies_table_id = address(0xEB)
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          current_leader_votes: 1,
+          members: [sender, candidate],
+          votes_table_id: votes_table_id,
+          vote_tallies_table_id: tallies_table_id,
+          object_id: address(0xEC)
+        )
+      )
+
+      character = character_ref(object_id: object_id(0xED), initial_shared_version: 44)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Diplomacy.build_vote_leader_tx(candidate,
+                 tables: tables,
+                 pubsub: pubsub,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^tx_bytes, ["wallet-signature"], [] ->
+        {:ok, success_effects("vote-refresh-success")}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+        {:ok,
+         page([
+           custodian_object_json(
+             object_id: address(0xEC),
+             tribe_id: tribe_id,
+             current_leader: sender,
+             current_leader_votes: 2,
+             members: [sender, candidate],
+             votes_table_id: votes_table_id,
+             vote_tallies_table_id: tallies_table_id
+           )
+         ])}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 2, fn table_id, opts ->
+        case {table_id, opts} do
+          {^votes_table_id, []} ->
+            {:ok, page([dynamic_field_entry(sender, candidate)])}
+
+          {^tallies_table_id, []} ->
+            {:ok, page([dynamic_field_entry(candidate, 2, value_type: "u64")])}
+        end
+      end)
+
+      assert {:ok, %{digest: "vote-refresh-success", effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
+               Diplomacy.submit_signed_transaction(tx_bytes, "wallet-signature",
+                 tables: tables,
+                 pubsub: pubsub,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      assert Cache.get(tables.standings, {:governance_data, tribe_id}) == %{
+               votes: %{sender => candidate},
+               tallies: %{candidate => 2}
+             }
+
+      assert_receive {:governance_updated, %{tribe_id: ^tribe_id}}
+    end
+
+    test "failed governance refresh retains marker for retry", %{
+      tables: tables,
+      pubsub: pubsub,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      votes_table_id = address(0xEE)
+      tallies_table_id = address(0xEF)
+      candidate = address(0xF0)
+
+      Cache.put(
+        tables.standings,
+        {:active_custodian, tribe_id},
+        custodian_info(
+          tribe_id: tribe_id,
+          current_leader: sender,
+          current_leader_votes: 1,
+          members: [sender, candidate],
+          votes_table_id: votes_table_id,
+          vote_tallies_table_id: tallies_table_id,
+          object_id: address(0xF1)
+        )
+      )
+
+      character = character_ref(object_id: object_id(0xF2), initial_shared_version: 45)
+
+      assert {:ok, %{tx_bytes: tx_bytes}} =
+               Diplomacy.build_vote_leader_tx(candidate,
+                 tables: tables,
+                 pubsub: pubsub,
+                 tribe_id: tribe_id,
+                 sender: sender,
+                 character_ref: character
+               )
+
+      expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^tx_bytes, ["wallet-signature"], [] ->
+        {:ok, success_effects("vote-refresh-transient-failure")}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+        {:error, :timeout}
+      end)
+
+      assert {:ok, %{digest: "vote-refresh-transient-failure", effects_bcs: "dGVzdC1lZmZlY3Rz"}} =
+               Diplomacy.submit_signed_transaction(tx_bytes, "wallet-signature",
+                 tables: tables,
+                 pubsub: pubsub,
+                 tribe_id: tribe_id,
+                 sender: sender
+               )
+
+      assert Cache.get(tables.standings, {:governance_refresh, tx_bytes}) == tribe_id
+      assert Cache.get(tables.standings, {:pending_tx, tx_bytes}) == {:vote_leader, candidate}
+      assert Cache.get(tables.standings, {:pending_tx_inflight, tx_bytes}) == nil
+      assert Cache.get(tables.standings, {:governance_data, tribe_id}) == nil
+      refute_receive {:governance_updated, %{tribe_id: ^tribe_id}}
+    end
+
+    test "markerless governance fallback clears inflight state", %{
+      tables: tables,
+      pubsub: pubsub,
+      sender: sender,
+      source_tribe_id: tribe_id
+    } do
+      topic = "diplomacy:#{tribe_id}"
+      Phoenix.PubSub.subscribe(pubsub, topic)
+
+      tx_bytes = "markerless-claim-tx"
+      Cache.put(tables.standings, {:pending_tx, tx_bytes}, :claim_leadership)
+      Cache.put(tables.standings, {:pending_tx_inflight, tx_bytes}, :claim_leadership)
+
+      assert :ok =
+               Sigil.Diplomacy.PendingOps.apply(
+                 tables.standings,
+                 [pubsub: pubsub, tribe_id: tribe_id, sender: sender],
+                 tx_bytes
+               )
+
+      assert Cache.get(tables.standings, {:pending_tx_inflight, tx_bytes}) == nil
+      assert_receive {:governance_updated, %{tribe_id: ^tribe_id}}
+    end
+  end
+
   describe "tribe name resolution" do
     test "resolve_tribe_names fetches and caches tribe data", %{tables: tables} do
       tribe_id = @source_tribe_id
@@ -733,7 +1305,11 @@ defmodule Sigil.DiplomacyTest do
         object_id_bytes: hex_to_bytes(object_id_hex),
         initial_shared_version: 17,
         tribe_id: @source_tribe_id,
-        current_leader: sender_address()
+        current_leader: sender_address(),
+        current_leader_votes: 1,
+        members: [sender_address()],
+        votes_table_id: address(0xE4),
+        vote_tallies_table_id: address(0xE5)
       },
       overrides
     )
@@ -771,6 +1347,10 @@ defmodule Sigil.DiplomacyTest do
       "id" => object_id_hex,
       "tribe_id" => Keyword.get(overrides, :tribe_id, @source_tribe_id),
       "current_leader" => Keyword.get(overrides, :current_leader, sender_address()),
+      "current_leader_votes" => Keyword.get(overrides, :current_leader_votes, 1),
+      "members" => Keyword.get(overrides, :members, [sender_address()]),
+      "votes" => %{"id" => Keyword.get(overrides, :votes_table_id, address(0xF2))},
+      "vote_tallies" => %{"id" => Keyword.get(overrides, :vote_tallies_table_id, address(0xF3))},
       "shared" => %{"initialSharedVersion" => Integer.to_string(initial_shared_version)},
       "initialSharedVersion" => Integer.to_string(initial_shared_version)
     }
@@ -784,8 +1364,12 @@ defmodule Sigil.DiplomacyTest do
     }
   end
 
-  defp page(entries) do
-    %{data: entries, has_next_page: false, end_cursor: nil}
+  defp page(entries, overrides \\ []) do
+    %{
+      data: entries,
+      has_next_page: Keyword.get(overrides, :has_next_page, false),
+      end_cursor: Keyword.get(overrides, :end_cursor)
+    }
   end
 
   defp expected_set_standing_kind_bytes(custodian, character, tribe_id, standing) do
@@ -836,6 +1420,29 @@ defmodule Sigil.DiplomacyTest do
     |> TxCustodian.build_batch_set_pilot_standings(character, encoded_updates, [])
     |> TransactionBuilder.build_kind!()
     |> Base.encode64()
+  end
+
+  defp expected_vote_leader_kind_bytes(custodian, character, candidate) do
+    custodian
+    |> custodian_ref_from_info()
+    |> TxCustodian.build_vote_leader(character, hex_to_bytes(candidate), [])
+    |> TransactionBuilder.build_kind!()
+    |> Base.encode64()
+  end
+
+  defp expected_claim_leadership_kind_bytes(custodian, character) do
+    custodian
+    |> custodian_ref_from_info()
+    |> TxCustodian.build_claim_leadership(character, [])
+    |> TransactionBuilder.build_kind!()
+    |> Base.encode64()
+  end
+
+  defp dynamic_field_entry(name_json, value_json, opts \\ []) do
+    %{
+      name: %{type: Keyword.get(opts, :name_type, "address"), json: name_json},
+      value: %{type: Keyword.get(opts, :value_type, "address"), json: value_json}
+    }
   end
 
   defp custodian_ref_from_info(custodian) do
