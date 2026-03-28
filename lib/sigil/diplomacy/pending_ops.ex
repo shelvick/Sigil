@@ -62,10 +62,19 @@ defmodule Sigil.Diplomacy.PendingOps do
       :claim_leadership ->
         refresh_governance_state(table, opts, tx_bytes)
 
+      {:set_oracle, tribe_id, oracle_address} ->
+        update_oracle_address(table, tribe_id, oracle_address)
+
+      {:remove_oracle, tribe_id} ->
+        update_oracle_address(table, tribe_id, nil)
+
       :create_custodian ->
         broadcast(opts, {:custodian_created, nil})
 
       nil ->
+        :ok
+
+      _unknown ->
         :ok
     end
 
@@ -131,6 +140,22 @@ defmodule Sigil.Diplomacy.PendingOps do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  @spec update_oracle_address(Cache.table_id(), non_neg_integer(), String.t() | nil) :: :ok
+  defp update_oracle_address(table, tribe_id, oracle_address) do
+    case Cache.get(table, {:active_custodian, tribe_id}) do
+      %{object_id: _, object_id_bytes: _, initial_shared_version: _, current_leader: _} =
+          custodian ->
+        Cache.put(
+          table,
+          {:active_custodian, tribe_id},
+          Map.put(custodian, :oracle_address, oracle_address)
+        )
+
+      _other ->
+        :ok
     end
   end
 

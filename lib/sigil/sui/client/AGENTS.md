@@ -4,6 +4,10 @@
 
 - `Sigil.Sui.Client.HTTP` — Req-backed HTTP implementation of the `Sui.Client` behaviour
 - `Sigil.Sui.Client.HTTP.DynamicFields` (`http/dynamic_fields.ex`) — extracted GraphQL query and response parsing for dynamic field operations (MoveValue/MoveObject normalization)
+- `Sigil.Sui.Client.HTTP` (`http.ex`) — Public API + behaviour callbacks, delegates internals to submodules
+- `Sigil.Sui.Client.HTTP.Codec` (`http/codec.ex`) — GraphQL response parsing, BCS decoding, object normalization
+- `Sigil.Sui.Client.HTTP.Paging` (`http/paging.ex`) — Paginated object fetching with cursor-based iteration
+- `Sigil.Sui.Client.HTTP.Request` (`http/request.ex`) — GraphQL query construction, Req.post wrapper, error handling
 
 ## Key Functions
 
@@ -28,6 +32,7 @@
 ## Patterns
 
 - `@behaviour Sigil.Sui.Client` — implements 6 callbacks (get_object, get_object_with_ref, get_objects, get_dynamic_fields, execute_transaction, verify_zklogin_signature)
+- `@behaviour Sigil.Sui.Client` — implements 6 callbacks
 - GraphQL queries as module attributes (`@get_object_query`, `@get_objects_query`, `@execute_transaction_mutation`)
 - Req.Test plug injection via `opts[:req_options]` for test isolation
 - Custom `retry?/2` instead of `:transient` — excludes 429 rate limits

@@ -218,6 +218,13 @@ defmodule SigilWeb.TribeOverviewLive.Components do
   """
   @spec standings_panel(map()) :: Phoenix.LiveView.Rendered.t()
   def standings_panel(assigns) do
+    reputation_rows =
+      assigns.reputation_scores
+      |> Map.values()
+      |> Enum.sort_by(& &1.target_tribe_id)
+
+    assigns = assign(assigns, :reputation_rows, reputation_rows)
+
     ~H"""
     <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
       <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Tribe Custodian</p>
@@ -230,6 +237,22 @@ defmodule SigilWeb.TribeOverviewLive.Components do
           <.standing_count_badge label="Neutral" count={@standings_summary.neutral} standing={:neutral} />
           <.standing_count_badge label="Friendly" count={@standings_summary.friendly} standing={:friendly} />
           <.standing_count_badge label="Allied" count={@standings_summary.allied} standing={:allied} />
+        </div>
+
+        <p :if={@oracle_enabled} class="mt-4 text-sm text-cream">
+          <%= @auto_managed_count %> standings auto-managed
+        </p>
+
+        <div :if={@reputation_rows != []} class="mt-4 space-y-2">
+          <%= for row <- @reputation_rows do %>
+            <div class="flex items-center justify-between rounded-xl border border-space-600/60 bg-space-800/60 px-3 py-2">
+              <span class="font-mono text-xs text-space-500">Tribe #<%= row.target_tribe_id %></span>
+              <div class="flex items-center gap-2">
+                <span class={score_badge_classes(row.score)}><%= row.score %></span>
+                <span class={chip_classes(row.pinned)}><%= if row.pinned, do: "MANUAL", else: "AUTO" %></span>
+              </div>
+            </div>
+          <% end %>
         </div>
 
         <div class="mt-4">
@@ -270,6 +293,28 @@ defmodule SigilWeb.TribeOverviewLive.Components do
     </span>
     """
   end
+
+  @spec score_badge_classes(integer()) :: String.t()
+  defp score_badge_classes(score) when score < 0,
+    do:
+      "reputation-score-negative rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 font-mono text-xs text-warning"
+
+  defp score_badge_classes(score) when score > 0,
+    do:
+      "reputation-score-positive rounded-full border border-success/40 bg-success/10 px-2 py-0.5 font-mono text-xs text-success"
+
+  defp score_badge_classes(_score),
+    do:
+      "reputation-score-neutral rounded-full border border-space-600/80 bg-space-900/70 px-2 py-0.5 font-mono text-xs text-space-500"
+
+  @spec chip_classes(boolean()) :: String.t()
+  defp chip_classes(true),
+    do:
+      "rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 font-mono text-xs uppercase tracking-[0.2em] text-warning"
+
+  defp chip_classes(false),
+    do:
+      "rounded-full border border-quantum-400/40 bg-quantum-400/10 px-2 py-0.5 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300"
 
   @spec standing_count_classes(Diplomacy.standing_atom()) :: String.t()
   defp standing_count_classes(:hostile) do

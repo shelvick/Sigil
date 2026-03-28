@@ -13,6 +13,8 @@ const EMismatchedLengths: u64 = 4;
 const ECandidateNotMember: u64 = 5;
 const EOperatorNotMember: u64 = 6;
 const ENotLeaderCandidate: u64 = 7;
+const ENotOracle: u64 = 8;
+const EOracleNotSet: u64 = 9;
 
 public struct TribeCustodianRegistry has key {
     id: UID,
@@ -31,6 +33,7 @@ public struct Custodian has key {
     operators: VecSet<address>,
     votes: Table<address, address>,
     vote_tallies: Table<address, u64>,
+    oracle: Option<address>,
 }
 
 /// Module initializer: creates the TribeCustodianRegistry singleton as a shared object.
@@ -76,6 +79,7 @@ public fun create_custodian(
         operators: vec_set::empty(),
         votes,
         vote_tallies,
+        oracle: option::none(),
     };
 
     table::add(&mut registry.tribes, tribe_id, object::id(&custodian));
@@ -317,6 +321,72 @@ public fun is_leader(custodian: &Custodian, addr: address): bool {
     custodian.current_leader == addr
 }
 
+/// Set the oracle address. Leader only.
+public fun set_oracle(
+    custodian: &mut Custodian,
+    character: &Character,
+    oracle_address: address,
+    ctx: &mut TxContext,
+) {
+    assert_authorized_member(custodian, character, ctx);
+    assert_leader(custodian, ctx.sender());
+    custodian.oracle = option::some(oracle_address);
+}
+
+/// Remove the oracle address. Leader only.
+public fun remove_oracle(
+    custodian: &mut Custodian,
+    character: &Character,
+    ctx: &mut TxContext,
+) {
+    assert_authorized_member(custodian, character, ctx);
+    assert_leader(custodian, ctx.sender());
+    custodian.oracle = option::none();
+}
+
+/// Set a tribe standing via the configured oracle.
+public fun oracle_set_standing(
+    custodian: &mut Custodian,
+    tribe_id: u32,
+    standing: u8,
+    ctx: &mut TxContext,
+) {
+    assert_oracle(custodian, ctx);
+    assert_valid_standing(standing);
+    upsert_standing(&mut custodian.standings, tribe_id, standing);
+}
+
+/// Batch set tribe standings via the configured oracle.
+public fun oracle_batch_set_standings(
+    custodian: &mut Custodian,
+    tribe_ids: vector<u32>,
+    standings: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    assert_oracle(custodian, ctx);
+    assert!(tribe_ids.length() == standings.length(), EMismatchedLengths);
+
+    let mut i = 0;
+    while (i < tribe_ids.length()) {
+        let tribe_id = tribe_ids[i];
+        let standing = standings[i];
+        assert_valid_standing(standing);
+        upsert_standing(&mut custodian.standings, tribe_id, standing);
+        i = i + 1;
+    };
+}
+
+/// Returns whether the custodian has an oracle configured.
+public fun has_oracle(custodian: &Custodian): bool {
+    option::is_some(&custodian.oracle)
+}
+
+/// Returns the oracle address.
+public fun get_oracle(custodian: &Custodian): address {
+    assert!(option::is_some(&custodian.oracle), EOracleNotSet);
+    *option::borrow(&custodian.oracle)
+}
+
 fun share_registry(ctx: &mut TxContext) {
     let registry = TribeCustodianRegistry {
         id: object::new(ctx),
@@ -336,6 +406,11 @@ fun assert_sender_controls_character(character: &Character, ctx: &TxContext) {
 
 fun assert_leader(custodian: &Custodian, sender: address) {
     assert!(custodian.current_leader == sender, ENotLeader);
+}
+
+fun assert_oracle(custodian: &Custodian, ctx: &TxContext) {
+    assert!(option::is_some(&custodian.oracle), EOracleNotSet);
+    assert!(*option::borrow(&custodian.oracle) == ctx.sender(), ENotOracle);
 }
 
 fun assert_valid_standing(standing: u8) {

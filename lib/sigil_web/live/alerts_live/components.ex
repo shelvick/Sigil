@@ -64,18 +64,22 @@ defmodule SigilWeb.AlertsLive.Components do
                 </div>
 
                 <div class="space-y-2">
-                  <.link
-                    navigate={~p"/assembly/#{alert.assembly_id}"}
-                    title={alert.assembly_id}
-                    class="text-lg font-semibold text-cream transition hover:text-quantum-300"
-                  >
-                    <%= alert.assembly_name %>
-                  </.link>
+                  <%= if alert_linkable?(alert) do %>
+                    <.link
+                      navigate={~p"/assembly/#{alert.assembly_id}"}
+                      title={alert.assembly_id}
+                      class="text-lg font-semibold text-cream transition hover:text-quantum-300"
+                    >
+                      <%= alert_heading(alert) %>
+                    </.link>
+                  <% else %>
+                    <p class="text-lg font-semibold text-cream"><%= alert_heading(alert) %></p>
+                  <% end %>
                   <p class={message_classes(alert.status)}><%= alert.message %></p>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3 text-xs text-space-500">
-                  <span class="font-mono uppercase tracking-[0.2em]"><%= alert.assembly_id %></span>
+                  <span class="font-mono uppercase tracking-[0.2em]"><%= alert_scope_label(alert) %></span>
                   <span><%= timestamp_label(alert) %></span>
                 </div>
               </div>
@@ -133,4 +137,39 @@ defmodule SigilWeb.AlertsLive.Components do
 
   defp sentinel_classes(false),
     do: "mt-6 hidden text-center font-mono text-xs uppercase tracking-[0.2em] text-space-500"
+
+  @spec alert_linkable?(map()) :: boolean()
+  defp alert_linkable?(%{assembly_id: assembly_id})
+       when is_binary(assembly_id) and assembly_id != "",
+       do: true
+
+  defp alert_linkable?(_alert), do: false
+
+  @spec alert_heading(map()) :: String.t()
+  defp alert_heading(%{assembly_name: assembly_name})
+       when is_binary(assembly_name) and assembly_name != "",
+       do: assembly_name
+
+  defp alert_heading(alert), do: alert_scope_label(alert)
+
+  @spec alert_scope_label(map()) :: String.t()
+  defp alert_scope_label(%{assembly_id: assembly_id})
+       when is_binary(assembly_id) and assembly_id != "",
+       do: assembly_id
+
+  defp alert_scope_label(%{metadata: metadata}), do: reputation_scope_label(metadata)
+  defp alert_scope_label(_alert), do: "Tribe alert"
+
+  @spec reputation_scope_label(map() | nil) :: String.t()
+  defp reputation_scope_label(metadata) when is_map(metadata) do
+    target_tribe_id = Map.get(metadata, :target_tribe_id) || Map.get(metadata, "target_tribe_id")
+
+    case target_tribe_id do
+      value when is_integer(value) -> "Tribe ##{value}"
+      value when is_binary(value) and value != "" -> "Tribe ##{value}"
+      _other -> "Tribe alert"
+    end
+  end
+
+  defp reputation_scope_label(_metadata), do: "Tribe alert"
 end

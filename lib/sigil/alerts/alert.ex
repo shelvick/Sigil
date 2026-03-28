@@ -7,7 +7,7 @@ defmodule Sigil.Alerts.Alert do
 
   import Ecto.Changeset
 
-  @valid_types ~w(fuel_low fuel_critical assembly_offline extension_changed hostile_activity)
+  @valid_types ~w(fuel_low fuel_critical assembly_offline extension_changed hostile_activity reputation_threshold_crossed)
   @valid_severities ~w(info warning critical)
   @valid_statuses ~w(new acknowledged dismissed)
 
@@ -60,15 +60,8 @@ defmodule Sigil.Alerts.Alert do
       :dismissed_at
     ])
     |> put_default_metadata()
-    |> validate_required([
-      :type,
-      :severity,
-      :status,
-      :assembly_id,
-      :assembly_name,
-      :account_address,
-      :message
-    ])
+    |> validate_required([:type, :severity, :status, :account_address, :message])
+    |> validate_assembly_fields_for_type()
     |> validate_inclusion(:type, @valid_types)
     |> validate_inclusion(:severity, @valid_severities)
     |> validate_inclusion(:status, @valid_statuses)
@@ -81,6 +74,18 @@ defmodule Sigil.Alerts.Alert do
     |> cast(attrs, [:status, :dismissed_at])
     |> validate_required([:status])
     |> validate_inclusion(:status, @valid_statuses)
+  end
+
+  @spec validate_assembly_fields_for_type(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp validate_assembly_fields_for_type(changeset) do
+    case get_field(changeset, :type) do
+      "reputation_threshold_crossed" ->
+        changeset
+
+      _other ->
+        changeset
+        |> validate_required([:assembly_id, :assembly_name])
+    end
   end
 
   @spec put_default_metadata(Ecto.Changeset.t()) :: Ecto.Changeset.t()

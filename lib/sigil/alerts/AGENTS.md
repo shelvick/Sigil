@@ -5,7 +5,8 @@
 - `Sigil.Alerts` (`../alerts.ex`) — Alert lifecycle context: create/dedup/cooldown/acknowledge/dismiss, webhook config upsert, PubSub broadcast. First Repo-backed context
 - `Sigil.Alerts.Alert` (`alert.ex`) — Ecto schema: type/severity/status enums, partial unique index for active dedup, status_changeset for lifecycle transitions
 - `Sigil.Alerts.WebhookConfig` (`webhook_config.ex`) — Ecto schema: per-tribe Discord webhook URL with service_type validation
-- `Sigil.Alerts.Engine` (`engine.ex`) — Singleton GenServer: discovers monitors from Registry, subscribes to PubSub topics, evaluates rules, persists alerts, dispatches webhooks
+- `Sigil.Alerts.Engine` (`engine.ex`) — Singleton GenServer: event handling, timer logic, rule dispatch, webhook dispatch
+- `Sigil.Alerts.Engine.Runtime` (`engine/runtime.ex`) — Init state building, default resolver functions, subscription wiring, sandbox owner handling
 - `Sigil.Alerts.Engine.Dispatcher` (`engine/dispatcher.ex`) — Async Task.start webhook delivery with Mox/Req.Test ownership wiring for spawned tasks
 - `Sigil.Alerts.Engine.RuleEvaluator` (`engine/rule_evaluator.ex`) — Pure rule evaluation: fuel_low (<20%), fuel_critical (<2h depletion, suppresses fuel_low), assembly_offline, extension_changed
 - `Sigil.Alerts.WebhookNotifier` (`webhook_notifier.ex`) — Behaviour: `deliver/3` callback for webhook delivery implementations

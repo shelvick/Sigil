@@ -24,7 +24,16 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     cache_pid =
       start_supervised!(
         {Cache,
-         tables: [:accounts, :characters, :assemblies, :nonces, :tribes, :standings, :intel]}
+         tables: [
+           :accounts,
+           :characters,
+           :assemblies,
+           :nonces,
+           :tribes,
+           :standings,
+           :intel,
+           :reputation
+         ]}
       )
 
     pubsub = unique_pubsub_name()
@@ -784,6 +793,193 @@ defmodule SigilWeb.TribeOverviewLiveTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Packet 6: Reputation summary integration (R20-R23)
+  # ---------------------------------------------------------------------------
+
+  test "standings summary shows reputation scores", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [member_fixture("0xchar-rep-1", "Leader", true, wallet_address)])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0xD1),
+      object_id_bytes: :binary.copy(<<0xD1>>, 32),
+      initial_shared_version: 1,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id,
+      oracle_address: "0x" <> String.duplicate("ab", 32)
+    })
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 43}, 3)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
+      id: 42,
+      name: "Hostile Corp",
+      short_name: "HC"
+    })
+
+    Cache.put(cache_tables.standings, {:world_tribe, 43}, %{
+      id: 43,
+      name: "Friendly Union",
+      short_name: "FU"
+    })
+
+    seed_reputation_score(cache_tables, 42, -300, false, nil)
+    seed_reputation_score(cache_tables, 43, 220, true, :friendly)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "-300"
+    assert html =~ "220"
+    refute html =~ "Reputation unavailable"
+  end
+
+  test "standings summary shows auto/manual badges", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [member_fixture("0xchar-rep-2", "Leader", true, wallet_address)])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0xD2),
+      object_id_bytes: :binary.copy(<<0xD2>>, 32),
+      initial_shared_version: 1,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id,
+      oracle_address: "0x" <> String.duplicate("ac", 32)
+    })
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 52}, 1)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 53}, 4)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    seed_reputation_score(cache_tables, 52, -10, false, nil)
+    seed_reputation_score(cache_tables, 53, 400, true, :allied)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "AUTO"
+    assert html =~ "MANUAL"
+  end
+
+  test "overview shows auto managed standings count", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [member_fixture("0xchar-rep-3", "Leader", true, wallet_address)])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0xD3),
+      object_id_bytes: :binary.copy(<<0xD3>>, 32),
+      initial_shared_version: 1,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id,
+      oracle_address: "0x" <> String.duplicate("ad", 32)
+    })
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 62}, 1)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 63}, 4)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 64}, 2)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    seed_reputation_score(cache_tables, 62, -10, false, nil)
+    seed_reputation_score(cache_tables, 63, 400, true, :allied)
+    seed_reputation_score(cache_tables, 64, 5, false, nil)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "2 standings auto-managed"
+    refute html =~ "0 standings auto-managed"
+  end
+
+  @tag :acceptance
+  test "tribe overview shows reputation summary to member", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    tribe =
+      tribe_fixture(@tribe_id, [
+        member_fixture("0xchar-rep-acceptance", "Leader", true, wallet_address)
+      ])
+
+    Cache.put(cache_tables.tribes, @tribe_id, tribe)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0xD4),
+      object_id_bytes: :binary.copy(<<0xD4>>, 32),
+      initial_shared_version: 1,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id,
+      oracle_address: "0x" <> String.duplicate("ae", 32)
+    })
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 72}, 0)
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 73}, 3)
+    Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+
+    seed_reputation_score(cache_tables, 72, -280, false, nil)
+    seed_reputation_score(cache_tables, 73, 350, true, :friendly)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}"
+             )
+
+    assert html =~ "Standings Summary"
+    assert html =~ "-280"
+    assert html =~ "350"
+    assert html =~ "AUTO"
+    assert html =~ "MANUAL"
+    refute html =~ "No Tribe Custodian configured"
+    refute html =~ "Not your tribe"
+  end
+
+  # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
 
@@ -824,6 +1020,17 @@ defmodule SigilWeb.TribeOverviewLiveTest do
 
   defp seed_default_standings(cache_tables) do
     Cache.put(cache_tables.standings, {:default_standing, @tribe_id}, 2)
+  end
+
+  defp seed_reputation_score(cache_tables, target_tribe_id, score, pinned, pinned_standing) do
+    Cache.put(cache_tables.reputation, {:reputation_score, @tribe_id, target_tribe_id}, %{
+      tribe_id: @tribe_id,
+      target_tribe_id: target_tribe_id,
+      score: score,
+      pinned: pinned,
+      pinned_standing: pinned_standing,
+      updated_at: DateTime.utc_now()
+    })
   end
 
   defp seed_location_report!(attrs) do

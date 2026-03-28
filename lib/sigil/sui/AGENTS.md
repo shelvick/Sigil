@@ -6,6 +6,12 @@
 - `Sigil.Sui.Signer` — Ed25519 signing, verification, Sui address derivation
 - `Sigil.Sui.Client` — Behaviour contract for Sui GraphQL access (7 callbacks: get_object, get_object_with_ref, get_objects, get_dynamic_fields, execute_transaction, verify_zklogin_signature, get_coins)
 - `Sigil.Sui.Client.HTTP` — Req-backed HTTP implementation of Client behaviour (see `client/AGENTS.md`)
+- `Sigil.Sui.Client` — Behaviour contract for Sui GraphQL access (6 callbacks: get_object, get_object_with_ref, get_objects, execute_transaction, verify_zklogin_signature, query_events)
+- `Sigil.Sui.Client.HTTP` — Req-backed HTTP implementation of Client behaviour, delegates to HTTP.Codec/Paging/Request submodules (see `client/AGENTS.md`)
+- `Sigil.Sui.GrpcStream` — gRPC checkpoint stream GenServer with reconnect/timer logic
+- `Sigil.Sui.GrpcStream.Codec` — Event filtering, normalization, protobuf value conversion
+- `Sigil.Sui.GrpcStream.Connector` — gRPC connection, stream forwarding, subscribe request building
+- `Sigil.Sui.GrpcStream.CursorStore` — Postgres checkpoint cursor persistence (load/save/sandbox)
 - `Sigil.Sui.ZkLoginVerifier` — Challenge nonce lifecycle + zkLogin signature verification. Pure function module over injected ETS + Sui client
 - `Sigil.Sui.TransactionBuilder` — PTB construction, digest, sign+submit (public API)
 - `Sigil.Sui.TransactionBuilder.PTB` — BCS encoding for all PTB struct types
@@ -50,11 +56,13 @@
 ### Client (client.ex)
 - `get_object/2`: Fetch single object by id
 - `get_object_with_ref/2`: Fetch single object with on-chain reference (id, version, digest)
+- `get_object_with_ref/2`: Fetch object with shared-object ref (version + digest)
 - `get_objects/2`: Fetch objects by filter (type, owner, cursor, limit)
 - `get_dynamic_fields/2`: Fetch dynamic field entries for a parent object (votes/tallies tables)
 - `execute_transaction/3`: Submit signed tx (tx_bytes + signatures)
 - `verify_zklogin_signature/5`: Verify zkLogin signature via Sui GraphQL (bytes, sig, scope, author, opts)
 - `get_coins/2`: Fetch SUI coins owned by an address for gas selection; returns `[coin_info()]`
+- `query_events/3`: Query events by Move event type with cursor pagination
 
 ### ZkLoginVerifier (zklogin_verifier.ex)
 - `generate_nonce/2`: address × opts → {:ok, %{nonce, message}} — stores nonce+expected_message in ETS
@@ -103,6 +111,14 @@
 - `build_set_pilot_standing/5`: custodian_ref × character_ref × pilot × standing × tx_opts → builder_opts
 - `build_batch_set_standings/4`: custodian_ref × character_ref × [{tribe_id, standing}] × tx_opts → builder_opts
 - `build_batch_set_pilot_standings/4`: custodian_ref × character_ref × [{pilot, standing}] × tx_opts → builder_opts
+- `build_set_oracle/4`: custodian_ref × character_ref × oracle_address × tx_opts → builder_opts
+- `build_remove_oracle/3`: custodian_ref × character_ref × tx_opts → builder_opts
+- `build_oracle_set_standing/5`: custodian_ref × character_ref × tribe_id × standing × tx_opts → builder_opts
+- `build_oracle_batch_set_standings/4`: custodian_ref × character_ref × [{tribe_id, standing}] × tx_opts → builder_opts
+
+### GrpcStream (grpc_stream.ex)
+- `start_link/1`: opts → GenServer.on_start()
+- `child_spec/1`: keyword() → Supervisor.child_spec()
 
 ### GasRelay (gas_relay.ex)
 - `prepare_sponsored/3`: kind_opts x pseudonym_address x opts -> {:ok, %{tx_bytes, relay_signature}} — builds full TransactionData with relay gas payment, signs with relay keypair

@@ -48,6 +48,8 @@ defmodule Sigil.MixProject do
       # HTTP client + data
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
+      {:grpc, "~> 0.11.5"},
+      {:protobuf, "~> 0.16.0"},
 
       # Crypto (for Sui integration)
       {:blake2, "~> 1.0"},

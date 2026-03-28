@@ -12,6 +12,8 @@ use world::{
 };
 
 const OUTSIDER: address = @0xE;
+const ORACLE: address = @0xF;
+const ORACLE_TWO: address = @0x10;
 
 const TRIBE_ALPHA: u32 = 42;
 const TRIBE_BETA: u32 = 7;
@@ -189,6 +191,48 @@ fun batch_set_pilot_standings(
         let character = ts::take_shared_by_id<Character>(ts, character_id);
         tribe_custodian::batch_set_pilot_standings(&mut custodian, &character, pilots, standings, ts.ctx());
         ts::return_shared(character);
+        ts::return_shared(custodian);
+    }
+}
+
+fun set_oracle(ts: &mut ts::Scenario, caller: address, character_id: ID, oracle: address) {
+    ts::next_tx(ts, caller);
+    {
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        let character = ts::take_shared_by_id<Character>(ts, character_id);
+        tribe_custodian::set_oracle(&mut custodian, &character, oracle, ts.ctx());
+        ts::return_shared(character);
+        ts::return_shared(custodian);
+    }
+}
+
+fun remove_oracle(ts: &mut ts::Scenario, caller: address, character_id: ID) {
+    ts::next_tx(ts, caller);
+    {
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        let character = ts::take_shared_by_id<Character>(ts, character_id);
+        tribe_custodian::remove_oracle(&mut custodian, &character, ts.ctx());
+        ts::return_shared(character);
+        ts::return_shared(custodian);
+    }
+}
+
+fun oracle_set_standing(ts: &mut ts::Scenario, caller: address, tribe_id: u32, standing: u8) {
+    ts::next_tx(ts, caller);
+    {
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        tribe_custodian::oracle_set_standing(&mut custodian, tribe_id, standing, ts.ctx());
+        ts::return_shared(custodian);
+    }
+}
+
+fun oracle_batch_set_standings(
+    ts: &mut ts::Scenario, caller: address, tribe_ids: vector<u32>, standings: vector<u8>,
+) {
+    ts::next_tx(ts, caller);
+    {
+        let mut custodian = ts::take_shared<tribe_custodian::Custodian>(ts);
+        tribe_custodian::oracle_batch_set_standings(&mut custodian, tribe_ids, standings, ts.ctx());
         ts::return_shared(custodian);
     }
 }
@@ -1226,6 +1270,273 @@ fun test_nbsi_nrds_via_default_standing() {
     {
         let c = scenario.take_shared<tribe_custodian::Custodian>();
         assert!(tribe_custodian::get_standing(&c, UNKNOWN_TRIBE) == NEUTRAL);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+// ── R_O1-R_O16: Oracle management, validation, and integration ──
+
+#[test]
+fun test_oracle_leader_sets_oracle_address() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(tribe_custodian::has_oracle(&c));
+        assert!(tribe_custodian::get_oracle(&c) == ORACLE);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::ENotLeader)]
+fun test_oracle_non_leader_set_oracle_rejected() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    let member_id = create_character(&mut scenario, user_b(), TRIBE_ALPHA, CHARACTER_B_ITEM_ID, b"member");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    join_custodian(&mut scenario, user_b(), member_id);
+    set_oracle(&mut scenario, user_b(), member_id, ORACLE);
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_oracle_sets_tribe_standing() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_set_standing(&mut scenario, ORACLE, TRIBE_BETA, ALLIED);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(tribe_custodian::get_standing(&c, TRIBE_BETA) == ALLIED);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::ENotOracle)]
+fun test_oracle_non_oracle_address_rejected_from_oracle_set_standing() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_set_standing(&mut scenario, OUTSIDER, TRIBE_BETA, HOSTILE);
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_leader_removes_oracle() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    remove_oracle(&mut scenario, user_a(), leader_id);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(!tribe_custodian::has_oracle(&c));
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::EOracleNotSet)]
+fun test_oracle_leader_removes_oracle_get_oracle_rejected() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    remove_oracle(&mut scenario, user_a(), leader_id);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        let _oracle = tribe_custodian::get_oracle(&c);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_batch_set_standings_updates_all_tribes() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_batch_set_standings(&mut scenario, ORACLE, vector[TRIBE_BETA, TRIBE_GAMMA], vector[HOSTILE, FRIENDLY]);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(tribe_custodian::get_standing(&c, TRIBE_BETA) == HOSTILE);
+        assert!(tribe_custodian::get_standing(&c, TRIBE_GAMMA) == FRIENDLY);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::ENotTribeMember)]
+fun test_oracle_oracle_address_cannot_call_governance_functions() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    let member_id = create_character(&mut scenario, user_b(), TRIBE_ALPHA, CHARACTER_B_ITEM_ID, b"member");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    join_custodian(&mut scenario, user_b(), member_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    add_operator(&mut scenario, ORACLE, member_id, user_b());
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::EOracleNotSet)]
+fun test_oracle_operations_rejected_when_no_oracle_configured() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    oracle_set_standing(&mut scenario, ORACLE, TRIBE_BETA, HOSTILE);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::EInvalidStanding)]
+fun test_oracle_invalid_standing_rejected_for_oracle_set_standing() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_set_standing(&mut scenario, ORACLE, TRIBE_BETA, 5);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::EInvalidStanding)]
+fun test_oracle_invalid_standing_rejected_for_oracle_batch_set_standings() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_batch_set_standings(&mut scenario, ORACLE, vector[TRIBE_BETA], vector[5]);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::EMismatchedLengths)]
+fun test_oracle_batch_mismatched_lengths_rejected() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_batch_set_standings(&mut scenario, ORACLE, vector[TRIBE_BETA, TRIBE_GAMMA], vector[HOSTILE]);
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_leader_overwrites_existing_oracle() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE_TWO);
+    oracle_set_standing(&mut scenario, ORACLE_TWO, TRIBE_BETA, FRIENDLY);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(tribe_custodian::get_oracle(&c) == ORACLE_TWO);
+        assert!(tribe_custodian::get_standing(&c, TRIBE_BETA) == FRIENDLY);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::ENotOracle)]
+fun test_oracle_old_oracle_rejected_after_overwrite() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE_TWO);
+    oracle_set_standing(&mut scenario, ORACLE, TRIBE_BETA, HOSTILE);
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_standings_persist_across_oracle_removal_and_reassignment() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_set_standing(&mut scenario, ORACLE, TRIBE_BETA, ALLIED);
+    remove_oracle(&mut scenario, user_a(), leader_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE_TWO);
+    oracle_set_standing(&mut scenario, ORACLE_TWO, TRIBE_GAMMA, HOSTILE);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(tribe_custodian::get_standing(&c, TRIBE_BETA) == ALLIED);
+        assert!(tribe_custodian::get_standing(&c, TRIBE_GAMMA) == HOSTILE);
+        assert!(tribe_custodian::get_oracle(&c) == ORACLE_TWO);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_leader_and_oracle_standings_coexist() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    set_standing(&mut scenario, user_a(), leader_id, TRIBE_BETA, FRIENDLY);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    oracle_set_standing(&mut scenario, ORACLE, TRIBE_GAMMA, HOSTILE);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(tribe_custodian::get_standing(&c, TRIBE_BETA) == FRIENDLY);
+        assert!(tribe_custodian::get_standing(&c, TRIBE_GAMMA) == HOSTILE);
+        ts::return_shared(c);
+    };
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = tribe_custodian::ENotLeader)]
+fun test_oracle_non_leader_remove_oracle_rejected() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    let member_id = create_character(&mut scenario, user_b(), TRIBE_ALPHA, CHARACTER_B_ITEM_ID, b"member");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    join_custodian(&mut scenario, user_b(), member_id);
+    set_oracle(&mut scenario, user_a(), leader_id, ORACLE);
+    remove_oracle(&mut scenario, user_b(), member_id);
+    scenario.end();
+}
+
+#[test]
+fun test_oracle_new_custodian_has_no_oracle() {
+    let mut scenario = ts::begin(user_a());
+    setup(&mut scenario);
+    let leader_id = create_character(&mut scenario, user_a(), TRIBE_ALPHA, CHARACTER_A_ITEM_ID, b"leader");
+    create_custodian(&mut scenario, user_a(), leader_id);
+    scenario.next_tx(user_a());
+    {
+        let c = scenario.take_shared<tribe_custodian::Custodian>();
+        assert!(!tribe_custodian::has_oracle(&c));
         ts::return_shared(c);
     };
     scenario.end();

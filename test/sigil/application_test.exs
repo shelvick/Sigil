@@ -120,6 +120,79 @@ defmodule Sigil.ApplicationTest do
     assert snapshot.alert_engine_index > snapshot.endpoint_index
   end
 
+  test "supervision tree includes GrpcStream when enabled" do
+    snapshot = configured_application_snapshot!(start_grpc_stream: true)
+
+    assert snapshot.grpc_stream_running
+    assert inspect(Sigil.Sui.GrpcStream) in snapshot.child_ids
+  end
+
+  test "application cache includes reputation table" do
+    tables = application_cache_tables!()
+    reputation_table = Map.fetch!(tables, :reputation)
+
+    assert :reputation in Map.keys(tables)
+    assert :ets.info(reputation_table) != :undefined
+  end
+
+  test "supervision tree includes ReputationEngine when enabled" do
+    snapshot = configured_application_snapshot!(start_reputation_engine: true)
+
+    assert snapshot.reputation_engine_running
+    assert inspect(Sigil.Reputation.Engine) in snapshot.child_ids
+  end
+
+  test "AlertEngine precedes GrpcStream and GrpcStream precedes Endpoint when enabled" do
+    snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: true,
+        start_alert_engine: true,
+        start_grpc_stream: true
+      )
+
+    # which_children returns reverse start order: higher index = started earlier
+    assert is_integer(snapshot.grpc_stream_index)
+    assert snapshot.alert_engine_index > snapshot.grpc_stream_index
+    assert snapshot.grpc_stream_index > snapshot.endpoint_index
+  end
+
+  test "GrpcStream precedes ReputationEngine and Endpoint" do
+    snapshot =
+      configured_application_snapshot!(
+        start_grpc_stream: true,
+        start_reputation_engine: true
+      )
+
+    # which_children returns reverse start order: higher index = started earlier
+    assert is_integer(snapshot.grpc_stream_index)
+    assert is_integer(snapshot.reputation_engine_index)
+    assert snapshot.grpc_stream_index > snapshot.reputation_engine_index
+    assert snapshot.reputation_engine_index > snapshot.endpoint_index
+  end
+
+  test "GrpcStream excluded when config is false" do
+    enabled_snapshot = configured_application_snapshot!(start_grpc_stream: true)
+    assert enabled_snapshot.grpc_stream_running
+
+    disabled_snapshot = configured_application_snapshot!(start_grpc_stream: false)
+
+    refute disabled_snapshot.grpc_stream_running
+    refute inspect(Sigil.Sui.GrpcStream) in disabled_snapshot.child_ids
+  end
+
+  test "ReputationEngine excluded when config is false" do
+    enabled_snapshot =
+      configured_application_snapshot!(start_grpc_stream: true, start_reputation_engine: true)
+
+    assert enabled_snapshot.reputation_engine_running
+
+    disabled_snapshot =
+      configured_application_snapshot!(start_grpc_stream: true, start_reputation_engine: false)
+
+    refute disabled_snapshot.reputation_engine_running
+    refute inspect(Sigil.Reputation.Engine) in disabled_snapshot.child_ids
+  end
+
   test "Cache includes gate_network table" do
     tables = application_cache_tables!()
     gate_network_table = Map.fetch!(tables, :gate_network)
@@ -182,6 +255,7 @@ defmodule Sigil.ApplicationTest do
         opts
         |> Keyword.put(:static_data_dir, static_data_dir)
         |> Keyword.put(:world_client, Sigil.ApplicationTestWorldClient)
+        |> Keyword.put_new(:grpc_connector, Sigil.ApplicationTestGrpcConnector)
         |> Keyword.put_new(:monitor_registry, @default_monitor_registry)
       )
 
@@ -248,6 +322,22 @@ defmodule Sigil.ApplicationTest do
           _other ->
             false
         end),
+      grpc_stream_running:
+        Enum.any?(children, fn
+          {Sigil.Sui.GrpcStream, child_pid, _kind, _modules} ->
+            is_pid(child_pid) and Process.alive?(child_pid)
+
+          _other ->
+            false
+        end),
+      reputation_engine_running:
+        Enum.any?(children, fn
+          {Sigil.Reputation.Engine, child_pid, _kind, _modules} ->
+            is_pid(child_pid) and Process.alive?(child_pid)
+
+          _other ->
+            false
+        end),
       monitor_registry_running:
         Enum.any?(children, fn
           {^monitor_registry, child_pid, _kind, _modules} ->
@@ -277,6 +367,16 @@ defmodule Sigil.ApplicationTest do
       alert_engine_index:
         Enum.find_index(children, fn
           {Sigil.Alerts.Engine, child_pid, _kind, _modules} -> is_pid(child_pid)
+          _other -> false
+        end),
+      grpc_stream_index:
+        Enum.find_index(children, fn
+          {Sigil.Sui.GrpcStream, child_pid, _kind, _modules} -> is_pid(child_pid)
+          _other -> false
+        end),
+      reputation_engine_index:
+        Enum.find_index(children, fn
+          {Sigil.Reputation.Engine, child_pid, _kind, _modules} -> is_pid(child_pid)
           _other -> false
         end),
       endpoint_index:
@@ -316,11 +416,15 @@ defmodule Sigil.ApplicationTest do
       gate_indexer_running: decoded["gate_indexer_running"],
       gate_network_table_valid: decoded["gate_network_table_valid"],
       alert_engine_running: decoded["alert_engine_running"],
+      grpc_stream_running: decoded["grpc_stream_running"],
       monitor_registry_running: decoded["monitor_registry_running"],
       monitor_registry_index: decoded["monitor_registry_index"],
       monitor_supervisor_running: decoded["monitor_supervisor_running"],
       monitor_supervisor_index: decoded["monitor_supervisor_index"],
       alert_engine_index: decoded["alert_engine_index"],
+      grpc_stream_index: decoded["grpc_stream_index"],
+      reputation_engine_running: decoded["reputation_engine_running"],
+      reputation_engine_index: decoded["reputation_engine_index"],
       endpoint_index: decoded["endpoint_index"]
     }
   end
