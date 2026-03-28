@@ -125,6 +125,13 @@ defmodule Sigil.DiplomacyTestSuiClient do
      }}
   end
 
+  @doc "Returns empty dynamic fields because diplomacy probes do not read table entries directly."
+  @impl true
+  @spec get_dynamic_fields(String.t(), keyword()) ::
+          {:ok, Sigil.Sui.Client.dynamic_fields_page()}
+  def get_dynamic_fields(_parent_id, _opts),
+    do: {:ok, %{data: [], has_next_page: false, end_cursor: nil}}
+
   @doc "Returns `:not_found` because diplomacy probes do not verify zkLogin signatures."
   @impl true
   @spec verify_zklogin_signature(String.t(), String.t(), String.t(), String.t(), keyword()) ::

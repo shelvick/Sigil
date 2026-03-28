@@ -10,6 +10,10 @@ defmodule SigilWeb.DiplomacyLive.Components do
 
   alias Sigil.Diplomacy
 
+  @doc "Renders the tribe governance summary and voting controls."
+  @spec governance_section(map()) :: Phoenix.LiveView.Rendered.t()
+  defdelegate governance_section(assigns), to: SigilWeb.DiplomacyLive.GovernanceComponents
+
   @doc """
   Renders the no-custodian state with a create button.
   """

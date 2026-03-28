@@ -44,10 +44,10 @@ defmodule SigilWeb.DiplomacyLiveTest do
   end
 
   # ---------------------------------------------------------------------------
-  # R1: No custodian state shows create CTA [INTEGRATION]
+  # R1: No custodian flow hides governance section [INTEGRATION]
   # ---------------------------------------------------------------------------
 
-  test "no custodian state shows create custodian button", %{
+  test "no custodian flow hides governance section", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -71,6 +71,10 @@ defmodule SigilWeb.DiplomacyLiveTest do
     assert html =~ "Create Tribe Custodian"
     assert html =~ "Hostile"
     assert html =~ "Allied"
+    refute html =~ "Tribe Governance"
+    refute html =~ "Current Leader"
+    refute html =~ ~s(phx-click="toggle_governance")
+    refute html =~ "Claim Leadership"
     refute html =~ "Create Standings Table"
   end
 
@@ -801,6 +805,783 @@ defmodule SigilWeb.DiplomacyLiveTest do
     refute updated_html =~ "Standing update failed"
   end
 
+  test "governance topic refresh updates open diplomacy view", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    other_leader = unique_wallet_address()
+    seed_active_custodian(cache_tables, other_leader)
+
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok,
+       %{
+         data: [custodian_object_json(table_id(0x33), other_leader, @tribe_id, 41)],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    {:ok, view, html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert html =~ "Only the tribe leader can modify standings"
+    refute html =~ "Add Pilot Override"
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0x44),
+      object_id_bytes: :binary.copy(<<0x44>>, 32),
+      initial_shared_version: 52,
+      current_leader: wallet_address,
+      current_leader_votes: 2,
+      members: [wallet_address],
+      votes_table_id: table_id(0x45),
+      vote_tallies_table_id: table_id(0x46),
+      tribe_id: @tribe_id
+    })
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Diplomacy.topic(@tribe_id),
+      {:governance_updated, %{tribe_id: @tribe_id}}
+    )
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Add Pilot Override"
+    refute updated_html =~ "Only the tribe leader can modify standings"
+
+    repeated_html = render(view)
+    assert repeated_html =~ "Add Pilot Override"
+    refute repeated_html =~ "Only the tribe leader can modify standings"
+  end
+
+  test "non-governance success does not swallow later governance refresh", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    other_leader = unique_wallet_address()
+    votes_table_id = table_id(0x47)
+    vote_tallies_table_id = table_id(0x48)
+
+    seed_active_custodian(cache_tables, other_leader,
+      current_leader_votes: 1,
+      members: [other_leader, wallet_address],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id
+    )
+
+    seed_single_custodian_discovery(other_leader,
+      current_leader_votes: 1,
+      members: [other_leader, wallet_address],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id
+    )
+
+    stub_governance_reads(other_leader,
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id,
+      votes: [vote_entry(other_leader, other_leader), vote_entry(wallet_address, other_leader)],
+      tallies: [tally_entry(other_leader, 1), tally_entry(wallet_address, 0)]
+    )
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      {:ok,
+       %{
+         "bcs" => "default-effects",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "default-digest"}
+       }}
+    end)
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    render_click(view, "set_default_standing", %{"standing" => "4"})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => "signed-tx-bytes",
+      "signature" => "wallet-signature"
+    })
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: table_id(0x49),
+      object_id_bytes: :binary.copy(<<0x49>>, 32),
+      initial_shared_version: 53,
+      current_leader: wallet_address,
+      current_leader_votes: 2,
+      members: [wallet_address],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id,
+      tribe_id: @tribe_id
+    })
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Diplomacy.topic(@tribe_id),
+      {:governance_updated, %{tribe_id: @tribe_id}}
+    )
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Add Pilot Override"
+    refute updated_html =~ "Only the tribe leader can modify standings"
+  end
+
+  test "governance section starts collapsed above standings", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    challenger = "0x" <> String.duplicate("ab", 32)
+
+    seed_active_custodian(cache_tables, wallet_address,
+      current_leader_votes: 3,
+      members: [wallet_address, challenger]
+    )
+
+    seed_single_custodian_discovery(wallet_address,
+      current_leader_votes: 3,
+      members: [wallet_address, challenger]
+    )
+
+    stub_governance_reads(wallet_address,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(challenger, wallet_address)],
+      tallies: [tally_entry(wallet_address, 3)]
+    )
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "Tribe Governance"
+    governance_index = html |> :binary.match("Tribe Governance") |> elem(0)
+    standings_index = html |> :binary.match("Tribe Standings") |> elem(0)
+
+    assert governance_index < standings_index
+    assert html =~ "Current Leader"
+    assert html =~ "3 votes"
+    assert html =~ ~s(phx-click="toggle_governance")
+    refute html =~ "Voted for"
+  end
+
+  test "expanded governance section shows members with vote indicators", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    candidate = "0x" <> String.duplicate("ab", 32)
+
+    seed_active_custodian(cache_tables, wallet_address,
+      current_leader_votes: 2,
+      members: [wallet_address, candidate]
+    )
+
+    seed_single_custodian_discovery(wallet_address,
+      current_leader_votes: 2,
+      members: [wallet_address, candidate]
+    )
+
+    stub_governance_reads(wallet_address,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(candidate, wallet_address)],
+      tallies: [tally_entry(wallet_address, 2)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    html = render(view)
+
+    assert html =~ challenger_label(candidate)
+    assert html =~ "Vote"
+    assert html =~ "Voted for"
+    assert html =~ "2 votes"
+  end
+
+  test "governance section toggles between expanded and collapsed", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    candidate = "0x" <> String.duplicate("be", 32)
+
+    seed_active_custodian(cache_tables, wallet_address,
+      current_leader_votes: 2,
+      members: [wallet_address, candidate]
+    )
+
+    seed_single_custodian_discovery(wallet_address,
+      current_leader_votes: 2,
+      members: [wallet_address, candidate]
+    )
+
+    stub_governance_reads(wallet_address,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(candidate, wallet_address)],
+      tallies: [tally_entry(wallet_address, 2)]
+    )
+
+    {:ok, view, initial_html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    refute initial_html =~ challenger_label(candidate)
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    expanded_html = render(view)
+    assert expanded_html =~ challenger_label(candidate)
+    assert expanded_html =~ "Voted for"
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    collapsed_html = render(view)
+    refute collapsed_html =~ challenger_label(candidate)
+    refute collapsed_html =~ "Voted for"
+    assert collapsed_html =~ "Tribe Governance"
+    assert collapsed_html =~ "2 votes"
+  end
+
+  test "clicking vote builds vote_leader tx and enters signing flow", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    candidate = "0x" <> String.duplicate("bc", 32)
+
+    seed_active_custodian(cache_tables, wallet_address, members: [wallet_address, candidate])
+    seed_single_custodian_discovery(wallet_address, members: [wallet_address, candidate])
+
+    stub_governance_reads(wallet_address,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(candidate, wallet_address)],
+      tallies: [tally_entry(wallet_address, 2)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    view
+    |> element(~s(button[phx-click=vote_leader][phx-value-candidate="#{candidate}"]))
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+    assert is_binary(tx_bytes)
+
+    html = render(view)
+    assert html =~ "Approve in your wallet"
+    refute html =~ "Transaction failed"
+  end
+
+  test "claim leadership button shown only when viewer has more votes", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    incumbent = "0x" <> String.duplicate("de", 32)
+
+    seed_active_custodian(cache_tables, incumbent,
+      current_leader_votes: 1,
+      members: [wallet_address, incumbent]
+    )
+
+    seed_single_custodian_discovery(incumbent,
+      current_leader_votes: 1,
+      members: [wallet_address, incumbent]
+    )
+
+    stub_governance_reads(incumbent,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(incumbent, incumbent)],
+      tallies: [tally_entry(wallet_address, 2), tally_entry(incumbent, 1)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Claim Leadership"
+    refute html =~ "Leadership locked"
+  end
+
+  test "claim leadership button respects localnet signer address", %{
+    wallet_address: wallet_address
+  } do
+    signer_key = Base.decode16!(String.duplicate("11", 32), case: :mixed)
+    {public_key, _private_key} = Sigil.Sui.Signer.keypair_from_private_key(signer_key)
+
+    signer_address =
+      public_key
+      |> Sigil.Sui.Signer.address_from_public_key()
+      |> Sigil.Sui.Signer.to_sui_address()
+
+    incumbent = "0x" <> String.duplicate("ef", 32)
+
+    html =
+      Phoenix.LiveViewTest.render_component(
+        &SigilWeb.DiplomacyLive.Components.governance_section/1,
+        active_custodian: %{
+          current_leader: incumbent,
+          current_leader_votes: 1,
+          members: [signer_address, incumbent]
+        },
+        governance_data: %{
+          votes: %{signer_address => signer_address, incumbent => incumbent},
+          tallies: %{signer_address => 2, incumbent => 1}
+        },
+        governance_error: nil,
+        governance_expanded: true,
+        is_member: true,
+        viewer_address: signer_address,
+        tribe_members: [],
+        current_account: %{address: wallet_address}
+      )
+
+    assert html =~ "Claim Leadership"
+  end
+
+  test "clicking claim leadership builds tx and enters signing flow", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    incumbent = "0x" <> String.duplicate("ef", 32)
+
+    seed_active_custodian(cache_tables, incumbent,
+      current_leader_votes: 1,
+      members: [wallet_address, incumbent]
+    )
+
+    seed_single_custodian_discovery(incumbent,
+      current_leader_votes: 1,
+      members: [wallet_address, incumbent]
+    )
+
+    stub_governance_reads(incumbent,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(incumbent, incumbent)],
+      tallies: [tally_entry(wallet_address, 2), tally_entry(incumbent, 1)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    view
+    |> element("button[phx-click=claim_leadership]")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => tx_bytes})
+    assert is_binary(tx_bytes)
+  end
+
+  @tag :acceptance
+  test "claim leadership journey updates the governance section", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    incumbent = "0x" <> String.duplicate("cd", 32)
+    votes_table_id = table_id(0x63)
+    vote_tallies_table_id = table_id(0x64)
+
+    seed_active_custodian(cache_tables, incumbent,
+      current_leader_votes: 1,
+      members: [wallet_address, incumbent],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id
+    )
+
+    seed_single_custodian_discovery(incumbent,
+      current_leader_votes: 1,
+      members: [wallet_address, incumbent],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id,
+      calls: 2
+    )
+
+    stub_governance_reads_sequence(
+      votes_table_id,
+      vote_tallies_table_id,
+      [vote_entry(wallet_address, wallet_address), vote_entry(incumbent, incumbent)],
+      [tally_entry(wallet_address, 2), tally_entry(incumbent, 1)],
+      [vote_entry(wallet_address, wallet_address), vote_entry(incumbent, wallet_address)],
+      [tally_entry(wallet_address, 3)]
+    )
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      {:ok,
+       %{
+         "bcs" => "claim-effects",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "claim-digest"}
+       }}
+    end)
+
+    {:ok, view, html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert html =~ "Current Leader"
+    assert html =~ "1 votes"
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    before_claim_html = render(view)
+    assert before_claim_html =~ challenger_label(incumbent)
+    assert before_claim_html =~ "Claim Leadership"
+    assert before_claim_html =~ "1 votes"
+
+    view
+    |> element("button[phx-click=claim_leadership]")
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => _tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => "signed-tx-bytes",
+      "signature" => "wallet-signature"
+    })
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Current Leader"
+    assert updated_html =~ "3 votes"
+    refute updated_html =~ "Approve in your wallet"
+    refute updated_html =~ "Transaction failed"
+  end
+
+  test "governance load failure keeps standings usable", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    leader = wallet_address
+    votes_table_id = table_id(0x51)
+    vote_tallies_table_id = table_id(0x52)
+
+    seed_active_custodian(cache_tables, leader,
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id
+    )
+
+    seed_single_custodian_discovery(leader,
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id
+    )
+
+    Cache.put(cache_tables.standings, {:tribe_standing, @tribe_id, 42}, 4)
+
+    Cache.put(cache_tables.standings, {:world_tribe, 42}, %{
+      id: 42,
+      name: "Friendly Tribe",
+      short_name: "FT"
+    })
+
+    expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn ^votes_table_id, [] ->
+      {:error, :timeout}
+    end)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+               "/tribe/#{@tribe_id}/diplomacy"
+             )
+
+    assert html =~ "Friendly Tribe"
+    assert html =~ "Unable to load governance data"
+    refute html =~ "Create Tribe Custodian"
+  end
+
+  test "unknown member label falls back to address", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    unknown_member = "0x" <> String.duplicate("fa", 32)
+
+    seed_active_custodian(cache_tables, wallet_address, members: [wallet_address, unknown_member])
+    seed_single_custodian_discovery(wallet_address, members: [wallet_address, unknown_member])
+
+    stub_governance_reads(wallet_address,
+      votes: [
+        vote_entry(wallet_address, wallet_address),
+        vote_entry(unknown_member, wallet_address)
+      ],
+      tallies: [tally_entry(wallet_address, 2)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    html = render(view)
+
+    assert html =~ challenger_label(unknown_member)
+    refute html =~ "Unknown member"
+  end
+
+  test "non-custodian-member sees join-via-vote prompt", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    incumbent = "0x" <> String.duplicate("dd", 32)
+
+    seed_active_custodian(cache_tables, incumbent,
+      current_leader_votes: 2,
+      members: [incumbent]
+    )
+
+    seed_single_custodian_discovery(incumbent,
+      current_leader_votes: 2,
+      members: [incumbent]
+    )
+
+    stub_governance_reads(incumbent,
+      votes: [vote_entry(incumbent, incumbent)],
+      tallies: [tally_entry(incumbent, 2)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "Vote"
+    assert html =~ "voting will register"
+    refute html =~ "Claim Leadership"
+  end
+
+  test "governance wallet rejection preserves prior state", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    candidate = "0x" <> String.duplicate("ac", 32)
+
+    seed_active_custodian(cache_tables, wallet_address, members: [wallet_address, candidate])
+    seed_single_custodian_discovery(wallet_address, members: [wallet_address, candidate])
+
+    stub_governance_reads(wallet_address,
+      votes: [vote_entry(wallet_address, wallet_address), vote_entry(candidate, wallet_address)],
+      tallies: [tally_entry(wallet_address, 2)]
+    )
+
+    {:ok, view, _html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    view
+    |> element(~s(button[phx-click=vote_leader][phx-value-candidate="#{candidate}"]))
+    |> render_click()
+
+    render_hook(view, "transaction_error", %{"reason" => "User rejected the request"})
+
+    html = render(view)
+
+    assert html =~ "Transaction cancelled"
+    assert html =~ "Tribe Governance"
+    assert html =~ challenger_label(candidate)
+    refute html =~ "Approve in your wallet"
+  end
+
+  @tag :acceptance
+  test "full voting journey updates the governance section", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address, @tribe_id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    candidate = "0x" <> String.duplicate("aa", 32)
+    votes_table_id = table_id(0x61)
+    vote_tallies_table_id = table_id(0x62)
+
+    seed_active_custodian(cache_tables, wallet_address,
+      current_leader_votes: 1,
+      members: [wallet_address, candidate],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id
+    )
+
+    seed_single_custodian_discovery(wallet_address,
+      current_leader_votes: 1,
+      members: [wallet_address, candidate],
+      votes_table_id: votes_table_id,
+      vote_tallies_table_id: vote_tallies_table_id,
+      calls: 2
+    )
+
+    stub_governance_reads_sequence(
+      votes_table_id,
+      vote_tallies_table_id,
+      [vote_entry(wallet_address, wallet_address), vote_entry(candidate, candidate)],
+      [tally_entry(wallet_address, 1), tally_entry(candidate, 1)],
+      [vote_entry(wallet_address, candidate), vote_entry(candidate, candidate)],
+      [tally_entry(candidate, 2)]
+    )
+
+    expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
+      {:ok,
+       %{
+         "bcs" => "governance-effects",
+         "status" => "SUCCESS",
+         "transaction" => %{"digest" => "governance-vote-digest"}
+       }}
+    end)
+
+    {:ok, view, html} =
+      live(
+        authenticated_conn(conn, wallet_address, cache_tables, pubsub),
+        "/tribe/#{@tribe_id}/diplomacy"
+      )
+
+    assert html =~ "Tribe Governance"
+    refute html =~ "Transaction failed"
+
+    view
+    |> element("button[phx-click=toggle_governance]")
+    |> render_click()
+
+    before_vote_html = render(view)
+    assert before_vote_html =~ challenger_label(candidate)
+    assert before_vote_html =~ "1 votes"
+
+    view
+    |> element(~s(button[phx-click=vote_leader][phx-value-candidate="#{candidate}"]))
+    |> render_click()
+
+    assert_push_event(view, "request_sign_transaction", %{"tx_bytes" => _tx_bytes})
+
+    render_hook(view, "transaction_signed", %{
+      "bytes" => "signed-tx-bytes",
+      "signature" => "wallet-signature"
+    })
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Tribe Governance"
+    assert updated_html =~ challenger_label(candidate)
+    assert updated_html =~ "2 votes"
+    refute updated_html =~ "Approve in your wallet"
+    refute updated_html =~ "Transaction failed"
+  end
+
   # ---------------------------------------------------------------------------
   # R20: Hook discovery events are safe no-ops [INTEGRATION]
   # ---------------------------------------------------------------------------
@@ -1141,29 +1922,111 @@ defmodule SigilWeb.DiplomacyLiveTest do
     refute final_html =~ "Transaction failed"
   end
 
-  defp seed_active_custodian(cache_tables, wallet_address) do
+  defp seed_active_custodian(cache_tables, wallet_address, overrides \\ []) do
+    object_id = Keyword.get(overrides, :object_id, table_id(0x33))
+    object_id_bytes = object_id |> String.replace_prefix("0x", "") |> Base.decode16!(case: :mixed)
+
     custodian = %{
-      object_id: table_id(0x33),
-      object_id_bytes: :binary.copy(<<0x33>>, 32),
-      initial_shared_version: 41,
+      object_id: object_id,
+      object_id_bytes: object_id_bytes,
+      initial_shared_version: Keyword.get(overrides, :initial_shared_version, 41),
       owner: wallet_address,
       current_leader: wallet_address,
+      current_leader_votes: Keyword.get(overrides, :current_leader_votes, 1),
+      members: Keyword.get(overrides, :members, [wallet_address]),
+      votes_table_id: Keyword.get(overrides, :votes_table_id, table_id(0x34)),
+      vote_tallies_table_id: Keyword.get(overrides, :vote_tallies_table_id, table_id(0x35)),
       tribe_id: @tribe_id
     }
 
     Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, custodian)
   end
 
-  defp seed_single_custodian_discovery(wallet_address) do
-    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+  defp seed_single_custodian_discovery(wallet_address, overrides \\ []) do
+    calls = Keyword.get(overrides, :calls, 1)
+
+    expect(Sigil.Sui.ClientMock, :get_objects, calls, fn [type: @custodian_type], [] ->
       {:ok,
        %{
-         data: [custodian_object_json(table_id(0x33), wallet_address, @tribe_id, 41)],
+         data: [
+           custodian_object_json(
+             Keyword.get(overrides, :object_id, table_id(0x33)),
+             wallet_address,
+             @tribe_id,
+             Keyword.get(overrides, :initial_shared_version, 41),
+             overrides
+           )
+         ],
          has_next_page: false,
          end_cursor: nil
        }}
     end)
   end
+
+  defp stub_governance_reads(current_leader, opts) do
+    votes_table_id = Keyword.get(opts, :votes_table_id, table_id(0x34))
+    vote_tallies_table_id = Keyword.get(opts, :vote_tallies_table_id, table_id(0x35))
+
+    votes = Keyword.get(opts, :votes, [vote_entry(current_leader, current_leader)])
+    tallies = Keyword.get(opts, :tallies, [tally_entry(current_leader, 1)])
+
+    stub(Sigil.Sui.ClientMock, :get_dynamic_fields, fn
+      ^votes_table_id, [] -> {:ok, %{data: votes, has_next_page: false, end_cursor: nil}}
+      ^vote_tallies_table_id, [] -> {:ok, %{data: tallies, has_next_page: false, end_cursor: nil}}
+    end)
+  end
+
+  defp stub_governance_reads_sequence(
+         votes_table_id,
+         vote_tallies_table_id,
+         initial_votes,
+         initial_tallies,
+         updated_votes,
+         updated_tallies
+       ) do
+    votes_calls = :counters.new(1, [])
+    tallies_calls = :counters.new(1, [])
+
+    stub(Sigil.Sui.ClientMock, :get_dynamic_fields, fn
+      ^votes_table_id, [] ->
+        :ok = :counters.add(votes_calls, 1, 1)
+
+        data =
+          case :counters.get(votes_calls, 1) do
+            1 -> initial_votes
+            _ -> updated_votes
+          end
+
+        {:ok, %{data: data, has_next_page: false, end_cursor: nil}}
+
+      ^vote_tallies_table_id, [] ->
+        :ok = :counters.add(tallies_calls, 1, 1)
+
+        data =
+          case :counters.get(tallies_calls, 1) do
+            1 -> initial_tallies
+            _ -> updated_tallies
+          end
+
+        {:ok, %{data: data, has_next_page: false, end_cursor: nil}}
+    end)
+  end
+
+  defp vote_entry(voter, candidate) do
+    %{
+      name: %{type: "address", json: voter},
+      value: %{type: "address", json: candidate}
+    }
+  end
+
+  defp tally_entry(candidate, votes) do
+    %{
+      name: %{type: "address", json: candidate},
+      value: %{type: "u64", json: votes}
+    }
+  end
+
+  defp challenger_label(address), do: String.slice(address, 0, 6)
 
   defp unique_pubsub_name do
     :"diplomacy_live_pubsub_#{System.unique_integer([:positive])}"
@@ -1183,11 +2046,26 @@ defmodule SigilWeb.DiplomacyLiveTest do
     "0x" <> Base.encode16(:binary.copy(<<byte>>, 32), case: :lower)
   end
 
-  defp custodian_object_json(object_id, current_leader, tribe_id, initial_shared_version) do
+  defp custodian_object_json(
+         object_id,
+         current_leader,
+         tribe_id,
+         initial_shared_version,
+         overrides \\ []
+       ) do
+    votes_table_id = Keyword.get(overrides, :votes_table_id, table_id(0x36))
+    vote_tallies_table_id = Keyword.get(overrides, :vote_tallies_table_id, table_id(0x37))
+    current_leader_votes = Keyword.get(overrides, :current_leader_votes, 1)
+    members = Keyword.get(overrides, :members, [current_leader])
+
     %{
       "id" => object_id,
       "address" => object_id,
       "current_leader" => current_leader,
+      "current_leader_votes" => current_leader_votes,
+      "members" => members,
+      "votes" => %{"id" => votes_table_id},
+      "vote_tallies" => %{"id" => vote_tallies_table_id},
       "tribe_id" => tribe_id,
       "initialSharedVersion" => Integer.to_string(initial_shared_version),
       "shared" => %{"initialSharedVersion" => Integer.to_string(initial_shared_version)}

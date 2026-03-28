@@ -3,6 +3,7 @@
 ## Modules
 
 - `Sigil.Sui.Client.HTTP` — Req-backed HTTP implementation of the `Sui.Client` behaviour
+- `Sigil.Sui.Client.HTTP.DynamicFields` (`http/dynamic_fields.ex`) — extracted GraphQL query and response parsing for dynamic field operations (MoveValue/MoveObject normalization)
 
 ## Key Functions
 
@@ -11,6 +12,8 @@
 - `get_object_with_ref/2`: Same query, returns `%{json: map, ref: {id_bytes, version, digest_bytes}}` (non-behaviour)
 - `get_objects/2`: Sends `GetObjects` query with filter/cursor/limit, returns `objects_page()`
 - `execute_transaction/3`: Sends `ExecuteTransaction` mutation, returns effects map
+- `get_dynamic_fields/2`: Constructs variables and delegates to `DynamicFields.build_page/1`
+- `verify_zklogin_signature/5`: Sends `VerifyZkLoginSignature` query, returns raw result
 
 ### Private Helpers
 - `graphql_request/3`: Shared request pipeline (URL resolve → Req.post → response mapping)
@@ -24,7 +27,7 @@
 
 ## Patterns
 
-- `@behaviour Sigil.Sui.Client` — implements 3 callbacks
+- `@behaviour Sigil.Sui.Client` — implements 6 callbacks (get_object, get_object_with_ref, get_objects, get_dynamic_fields, execute_transaction, verify_zklogin_signature)
 - GraphQL queries as module attributes (`@get_object_query`, `@get_objects_query`, `@execute_transaction_mutation`)
 - Req.Test plug injection via `opts[:req_options]` for test isolation
 - Custom `retry?/2` instead of `:transient` — excludes 429 rate limits

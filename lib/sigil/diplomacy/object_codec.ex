@@ -55,13 +55,23 @@ defmodule Sigil.Diplomacy.ObjectCodec do
     with object_id when is_binary(object_id) <- object["id"],
          tribe_id when is_integer(tribe_id) <- parse_tribe_id(object),
          current_leader when is_binary(current_leader) <- object["current_leader"],
+         current_leader_votes when is_integer(current_leader_votes) <-
+           parse_non_neg_integer(object["current_leader_votes"]),
+         members when is_list(members) <- parse_members(object["members"]),
+         votes_table_id when is_binary(votes_table_id) <- parse_table_id(object["votes"]),
+         vote_tallies_table_id when is_binary(vote_tallies_table_id) <-
+           parse_table_id(object["vote_tallies"]),
          version when is_integer(version) <- parse_shared_version(object) do
       %{
         object_id: object_id,
         object_id_bytes: hex_to_bytes(object_id),
         initial_shared_version: version,
         tribe_id: tribe_id,
-        current_leader: current_leader
+        current_leader: current_leader,
+        current_leader_votes: current_leader_votes,
+        members: members,
+        votes_table_id: votes_table_id,
+        vote_tallies_table_id: vote_tallies_table_id
       }
     else
       _invalid -> nil
@@ -76,6 +86,29 @@ defmodule Sigil.Diplomacy.ObjectCodec do
       registry_ref -> {:ok, registry_ref}
     end
   end
+
+  @spec parse_non_neg_integer(non_neg_integer() | String.t() | nil) :: non_neg_integer() | nil
+  defp parse_non_neg_integer(value) when is_integer(value) and value >= 0, do: value
+
+  defp parse_non_neg_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _invalid -> nil
+    end
+  end
+
+  defp parse_non_neg_integer(_value), do: nil
+
+  @spec parse_members([String.t()] | nil) :: [String.t()] | nil
+  defp parse_members(members) when is_list(members) do
+    if Enum.all?(members, &is_binary/1), do: members, else: nil
+  end
+
+  defp parse_members(_members), do: nil
+
+  @spec parse_table_id(map() | nil) :: String.t() | nil
+  defp parse_table_id(%{"id" => table_id}) when is_binary(table_id), do: table_id
+  defp parse_table_id(_table), do: nil
 
   @spec object_to_registry_ref(map()) :: map() | nil
   defp object_to_registry_ref(object) do

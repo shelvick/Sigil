@@ -8,6 +8,9 @@
   - `.Transactions` (`live/intel_market_live/transactions.ex`) — Seal upload orchestration, wallet signing, signed submission, and decrypt handling.
   - `.Components` (`live/intel_market_live/components.ex`) — listing cards, seller inventory, purchased intel, filter bar, and status helpers.
   - `.SellForm` (`live/intel_market_live/sell_form.ex`) — extracted sell-form module.
+- `SigilWeb.DiplomacyLive` (`live/diplomacy_live.ex`) — diplomacy editor with governance voting section.
+  - `.Governance` (`live/diplomacy_live/governance.ex`) — extracted governance state management, tx building, and signing flow.
+  - `.GovernanceComponents` (`live/diplomacy_live/governance_components.ex`) — governance section HEEx components.
 - `SigilWeb.IntelLive`, `SigilWeb.TribeOverviewLive`, and `SigilWeb.AssemblyDetailLive` — tribe intel views that share data with the marketplace seller workflow.
 - `assets/js/hooks/seal_hook.js` and `assets/js/hooks/wallet_hook.js` are the paired browser contracts for marketplace encryption/decryption and transaction signing.
 

@@ -7,7 +7,7 @@
 - `router_wallet_session_test.exs` — 26 tests for APP_Router + AUTH_WalletSession.
 - `dashboard_live_test.exs` — 20 tests for UI_DashboardLive.
 - `tribe_overview_live_test.exs` — 19 tests for UI_TribeOverviewLive.
-- `diplomacy_live_test.exs` — 34 tests for UI_DiplomacyLive.
+- `diplomacy_live_test.exs` — 41 tests for UI_DiplomacyLive including governance voting UI (via Governance + GovernanceComponents submodules).
 - `assembly_detail_live_test.exs` — 43 tests for UI_AssemblyDetailLive.
 - `alerts_live_test.exs` — 22 tests for UI_AlertsLive.
 - `intel_live_test.exs` — 20 tests for UI_IntelLive.

@@ -131,6 +131,58 @@ defmodule Sigil.Sui.ClientTest do
     end
   end
 
+  test "Client module defines get_dynamic_fields callback" do
+    callbacks = Sigil.Sui.Client.behaviour_info(:callbacks)
+    {:ok, types} = Code.Typespec.fetch_types(Sigil.Sui.Client)
+    {:ok, callbacks_ast} = Code.Typespec.fetch_callbacks(Sigil.Sui.Client)
+
+    assert {:get_dynamic_fields, 2} in callbacks
+
+    type_names =
+      Enum.map(types, fn {:type, {name, _, _}} -> name end)
+
+    assert :dynamic_field_name in type_names
+    assert :dynamic_field_value in type_names
+    assert :dynamic_field_entry in type_names
+    assert :dynamic_fields_page in type_names
+
+    dynamic_fields_callback =
+      Enum.find(callbacks_ast, fn
+        {{:get_dynamic_fields, 2}, _callback_ast} -> true
+        _other -> false
+      end)
+
+    assert {{:get_dynamic_fields, 2},
+            [
+              {:type, _, :fun,
+               [
+                 {:type, _, :product,
+                  [
+                    {:remote_type, _, [{:atom, _, String}, {:atom, _, :t}, []]},
+                    {:user_type, _, :request_opts, []}
+                  ]},
+                 {:type, _, :union,
+                  [
+                    {:type, _, :tuple,
+                     [{:atom, _, :ok}, {:user_type, _, :dynamic_fields_page, []}]},
+                    {:type, _, :tuple, [{:atom, _, :error}, {:user_type, _, :error_reason, []}]}
+                  ]}
+               ]}
+            ]} = dynamic_fields_callback
+  end
+
+  test "Hammox enforces return types on get_dynamic_fields mock" do
+    opts = [url: "http://example.test/graphql", req_options: [plug: {Req.Test, :sui_stub}]]
+
+    expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn "0xparent", ^opts ->
+      {:ok, [%{name: %{type: "u64", json: 1}, value: %{type: "u64", json: 2}}]}
+    end)
+
+    assert_raise Hammox.TypeMatchError, fn ->
+      Sigil.Sui.ClientMock.get_dynamic_fields("0xparent", opts)
+    end
+  end
+
   test "test environment uses ClientMock" do
     assert Application.fetch_env!(:sigil, :sui_client) == Sigil.Sui.ClientMock
   end

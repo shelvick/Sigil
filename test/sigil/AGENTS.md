@@ -6,7 +6,7 @@
 - `assemblies_test.exs` — 39 tests for Sigil.Assemblies (R1-R36 + edge cases), async: true
 - `cache_test.exs` — Tests for Sigil.Cache GenServer
 - `tribes_test.exs` — 18 tests for Sigil.Tribes (R1-R16 + 2 edge cases), async: true
-- `diplomacy_test.exs` — 28 tests for Sigil.Diplomacy (R1-R22 + acceptance), async: true
+- `diplomacy_test.exs` — 52 tests for Sigil.Diplomacy (R1-R43 including governance via Diplomacy.Governance submodule), async: true
 - `gate_indexer_test.exs` — 25 tests for Sigil.GateIndexer (R1-R24 + restart edge case), async: true
 - `intel_test.exs` — 21 tests for Sigil.Intel (R1-R20 + edge): report_location (create + upsert + ETS cache + PubSub), report_scouting, list_intel (tribe-scoped), get_location (cache + DB fallback), delete_intel (author + leader + cross-tribe), load_cache, unauthorized scope rejection, async: true
 - `intel/intel_report_test.exs` — 11 tests for Sigil.Intel.IntelReport (R1-R8 + migration/edge), async: true
@@ -41,7 +41,7 @@
 | Accounts | 14 | R1-R14 | R14 (register→get flow) |
 | Assemblies | 39 | R1-R36 + edge | R21 (discover→list→get flow), R36 (build→submit→verify) |
 | Tribes | 18 | R1-R16 + 2 edge | R16 (register→discover→list→assemblies) |
-| Diplomacy | 28 | R1-R22 + acceptance | R22 (discover→build→submit→verify) |
+| Diplomacy | 52 | R1-R43 + acceptance + governance | R22 (discover→build→submit→verify), R41 (vote→governance refresh) |
 | TxDiplomacy | 11 | R1-R11 | R11 (build→TransactionBuilder integration) |
 | TxGateExtension | 10 | R1-R10 | R8 (PTB→BCS integration) |
 | Cache | 11 | R1-R11 | — |
