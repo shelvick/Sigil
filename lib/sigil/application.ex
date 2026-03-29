@@ -4,7 +4,8 @@ defmodule Sigil.Application do
 
   Starts the supervision tree with Telemetry, Repo, PubSub, Cache, optional
   StaticData, optional GateIndexer, optional MonitorRegistry + MonitorSupervisor,
-  optional AlertEngine, optional GrpcStream, and Endpoint.
+  optional AlertEngine, optional GrpcStream, optional AssemblyEventRouter,
+  and Endpoint.
   """
 
   use Application
@@ -40,6 +41,7 @@ defmodule Sigil.Application do
         maybe_monitor_supervisor() ++
         maybe_alert_engine() ++
         maybe_grpc_stream() ++
+        maybe_assembly_event_router() ++
         maybe_reputation_engine() ++ [SigilWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Sigil.Supervisor]
@@ -125,6 +127,25 @@ defmodule Sigil.Application do
       [
         Supervisor.child_spec({GRPC.Client.Supervisor, []}, id: GRPC.Client.Supervisor),
         Supervisor.child_spec({Sigil.Sui.GrpcStream, []}, id: Sigil.Sui.GrpcStream)
+      ]
+    else
+      []
+    end
+  end
+
+  @spec maybe_assembly_event_router() :: [Supervisor.child_spec()]
+  defp maybe_assembly_event_router do
+    start_router = Application.get_env(:sigil, :start_assembly_event_router, false)
+    start_monitor_supervisor = Application.get_env(:sigil, :start_monitor_supervisor, true)
+
+    if start_router and start_monitor_supervisor do
+      registry = Application.fetch_env!(:sigil, :monitor_registry)
+
+      [
+        Supervisor.child_spec(
+          {Sigil.GameState.AssemblyEventRouter, registry: registry},
+          id: Sigil.GameState.AssemblyEventRouter
+        )
       ]
     else
       []

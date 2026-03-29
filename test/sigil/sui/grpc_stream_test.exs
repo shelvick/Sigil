@@ -9,6 +9,7 @@ defmodule Sigil.Sui.GrpcStreamTest do
 
   alias Sigil.Repo
   alias Sigil.Sui.GrpcStream
+  alias Sigil.Sui.GrpcStream.Codec
 
   setup %{sandbox_owner: sandbox_owner} do
     pubsub = unique_pubsub_name()
@@ -193,7 +194,7 @@ defmodule Sigil.Sui.GrpcStreamTest do
     assert_receive {:scheduled, ^pid, {:reconnect, _}, 5}, 1_000
   end
 
-  test "ignores checkpoint and close messages from stale stream refs", context do
+  test "ignores checkpoint, stream errors, and close messages from stale stream refs", context do
     test_pid = self()
 
     pid =
@@ -228,9 +229,10 @@ defmodule Sigil.Sui.GrpcStreamTest do
     refute_received {:chain_event, _, _, 900}
 
     send(pid, {:stream_closed, stale_stream_ref, :closed})
+    send(pid, {:stream_error, stale_stream_ref, :closed})
 
-    refute_received {:scheduled, ^pid, {:reconnect, _}, _}
-
+    # Synchronize by forcing the monitor to process a known active-stream checkpoint
+    # before asserting stale stream messages did not schedule reconnect.
     send(
       pid,
       {:checkpoint, active_stream_ref,
@@ -240,9 +242,45 @@ defmodule Sigil.Sui.GrpcStreamTest do
     )
 
     assert_receive {:chain_event, :killmail_created, %{"id" => 901}, 901}, 1_000
+    refute_received {:scheduled, ^pid, {:reconnect, _}, _}
 
     send(pid, {:stream_closed, active_stream_ref, :closed})
 
+    assert_receive {:scheduled, ^pid, {:reconnect, _}, 1_000}, 1_000
+  end
+
+  test "stream_error triggers reconnect and flushes dirty cursor", context do
+    test_pid = self()
+
+    pid =
+      start_grpc_stream!(
+        stream_opts(context,
+          connect_fun: fn _endpoint, _cursor -> {:ok, make_ref()} end,
+          schedule_fun: fn scheduled_pid, message, delay_ms ->
+            send(test_pid, {:scheduled, scheduled_pid, message, delay_ms})
+            make_ref()
+          end,
+          save_cursor_fun: fn cursor ->
+            send(test_pid, {:cursor_saved, cursor})
+            :ok
+          end,
+          event_filter_fun: fn _event -> true end
+        )
+      )
+
+    assert_receive {:scheduled, ^pid, {:flush_cursor, _}, 30_000}, 1_000
+
+    send(
+      pid,
+      {:checkpoint,
+       checkpoint_fixture(777, [
+         event_fixture("0x2::killmail::KillmailCreatedEvent", %{"id" => 777})
+       ])}
+    )
+
+    send(pid, {:stream_error, :transport_closed})
+
+    assert_receive {:cursor_saved, 777}, 1_000
     assert_receive {:scheduled, ^pid, {:reconnect, _}, 1_000}, 1_000
   end
 
@@ -499,6 +537,140 @@ defmodule Sigil.Sui.GrpcStreamTest do
     assert raw_event_data["turret_id"] == "0xturret-77"
     assert raw_event_data["aggressor_character_id"] == "0xagg-77"
     assert is_list(raw_event_data["priority_list"])
+  end
+
+  test "default event filter passes assembly lifecycle events" do
+    assert Codec.default_event_filter(
+             event_fixture("0x2::assembly::StatusChangedEvent", %{"assembly_id" => "0xasm-1"})
+           )
+
+    assert Codec.default_event_filter(
+             event_fixture("0x2::assembly::FuelEvent", %{"assembly_id" => "0xasm-1"})
+           )
+
+    assert Codec.default_event_filter(
+             event_fixture("0x2::assembly::ExtensionAuthorizedEvent", %{
+               "assembly_id" => "0xasm-1"
+             })
+           )
+  end
+
+  test "assembly event normalization extracts assembly_id" do
+    status_payload =
+      Codec.normalize_event_payload("0x2::assembly::StatusChangedEvent", %{
+        "assembly" => "0xasm-1"
+      })
+
+    fuel_payload =
+      Codec.normalize_event_payload("0x2::assembly::FuelEvent", %{"assembly" => "0xasm-2"})
+
+    extension_payload =
+      Codec.normalize_event_payload("0x2::assembly::ExtensionAuthorizedEvent", %{
+        "assembly" => "0xasm-3"
+      })
+
+    assert status_payload["assembly_id"] == "0xasm-1"
+    assert fuel_payload["assembly_id"] == "0xasm-2"
+    assert extension_payload["assembly_id"] == "0xasm-3"
+  end
+
+  test "normalizes StatusChangedEvent with status and action fields" do
+    payload =
+      Codec.normalize_event_payload("0x2::assembly::StatusChangedEvent", %{
+        "assembly" => "0xasm-status",
+        "status" => "ONLINE",
+        "action" => "online"
+      })
+
+    assert payload["assembly_id"] == "0xasm-status"
+    assert payload["status"] == "ONLINE"
+    assert payload["action"] == "online"
+  end
+
+  test "normalizes FuelEvent with quantity and burning fields" do
+    payload =
+      Codec.normalize_event_payload("0x2::assembly::FuelEvent", %{
+        "assembly" => "0xasm-fuel",
+        "old_quantity" => "10",
+        "new_quantity" => "8",
+        "is_burning" => true,
+        "action" => "burning"
+      })
+
+    assert payload["assembly_id"] == "0xasm-fuel"
+    assert payload["old_quantity"] == "10"
+    assert payload["new_quantity"] == "8"
+    assert payload["is_burning"] == true
+    assert payload["action"] == "burning"
+  end
+
+  test "normalizes ExtensionAuthorizedEvent with extension fields" do
+    payload =
+      Codec.normalize_event_payload("0x2::assembly::ExtensionAuthorizedEvent", %{
+        "assembly" => "0xasm-ext",
+        "extension_type" => "gate",
+        "previous_extension" => "turret",
+        "owner_cap_id" => "0xowner-cap-9"
+      })
+
+    assert payload["assembly_id"] == "0xasm-ext"
+    assert payload["extension_type"] == "gate"
+    assert payload["previous_extension"] == "turret"
+    assert payload["owner_cap_id"] == "0xowner-cap-9"
+  end
+
+  test "broadcasts assembly lifecycle events with normalized payloads", context do
+    pid =
+      context
+      |> stream_opts(
+        connect_fun: fn _endpoint, _cursor -> {:ok, make_ref()} end,
+        schedule_fun: fn _pid, _message, _delay_ms -> make_ref() end
+      )
+      |> Keyword.drop([:event_filter_fun])
+      |> start_grpc_stream!()
+
+    send(
+      pid,
+      {:checkpoint,
+       checkpoint_fixture(451, [
+         event_fixture("0x2::assembly::StatusChangedEvent", %{
+           "assembly" => "0xasm-451",
+           "status" => "ONLINE",
+           "action" => "online"
+         }),
+         event_fixture("0x2::assembly::FuelEvent", %{
+           "assembly" => "0xasm-451",
+           "old_quantity" => "12",
+           "new_quantity" => "11",
+           "is_burning" => true,
+           "action" => "burning"
+         }),
+         event_fixture("0x2::assembly::ExtensionAuthorizedEvent", %{
+           "assembly" => "0xasm-451",
+           "extension_type" => "gate",
+           "previous_extension" => "turret",
+           "owner_cap_id" => "0xowner-cap-451"
+         })
+       ])}
+    )
+
+    assert_receive {:chain_event, :assembly_status_changed, status_data, 451}, 1_000
+    assert status_data["assembly_id"] == "0xasm-451"
+    assert status_data["status"] == "ONLINE"
+    assert status_data["action"] == "online"
+
+    assert_receive {:chain_event, :assembly_fuel_changed, fuel_data, 451}, 1_000
+    assert fuel_data["assembly_id"] == "0xasm-451"
+    assert fuel_data["old_quantity"] == "12"
+    assert fuel_data["new_quantity"] == "11"
+    assert fuel_data["is_burning"] == true
+    assert fuel_data["action"] == "burning"
+
+    assert_receive {:chain_event, :assembly_extension_authorized, extension_data, 451}, 1_000
+    assert extension_data["assembly_id"] == "0xasm-451"
+    assert extension_data["extension_type"] == "gate"
+    assert extension_data["previous_extension"] == "turret"
+    assert extension_data["owner_cap_id"] == "0xowner-cap-451"
   end
 
   test "skips malformed checkpoint data without advancing the cursor", context do

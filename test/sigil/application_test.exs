@@ -127,6 +127,58 @@ defmodule Sigil.ApplicationTest do
     assert inspect(Sigil.Sui.GrpcStream) in snapshot.child_ids
   end
 
+  test "assembly_event_router starts after monitor registry when enabled" do
+    snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: true,
+        start_assembly_event_router: true
+      )
+
+    assert snapshot.assembly_event_router_running
+    assert inspect(Sigil.GameState.AssemblyEventRouter) in snapshot.child_ids
+
+    # which_children returns reverse start order: higher index = started earlier
+    assert snapshot.monitor_registry_index > snapshot.assembly_event_router_index
+    assert snapshot.assembly_event_router_index > snapshot.endpoint_index
+  end
+
+  test "assembly_event_router starts after grpc_stream when both enabled" do
+    snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: true,
+        start_grpc_stream: true,
+        start_assembly_event_router: true
+      )
+
+    assert snapshot.grpc_stream_running
+    assert snapshot.assembly_event_router_running
+
+    # which_children returns reverse start order: higher index = started earlier
+    assert snapshot.grpc_stream_index > snapshot.assembly_event_router_index
+  end
+
+  test "assembly_event_router excluded when monitor supervisor is disabled" do
+    snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: false,
+        start_assembly_event_router: true
+      )
+
+    refute snapshot.assembly_event_router_running
+    refute inspect(Sigil.GameState.AssemblyEventRouter) in snapshot.child_ids
+  end
+
+  test "assembly_event_router excluded when feature flag is false" do
+    snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: true,
+        start_assembly_event_router: false
+      )
+
+    refute snapshot.assembly_event_router_running
+    refute inspect(Sigil.GameState.AssemblyEventRouter) in snapshot.child_ids
+  end
+
   test "application cache includes reputation table" do
     tables = application_cache_tables!()
     reputation_table = Map.fetch!(tables, :reputation)
@@ -243,6 +295,31 @@ defmodule Sigil.ApplicationTest do
 
     assert :intel_market in Map.keys(tables)
     assert :ets.info(intel_market_table) != :undefined
+  end
+
+  @tag :acceptance
+  test "application starts with assembly event router wiring enabled" do
+    snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: true,
+        start_grpc_stream: true,
+        start_assembly_event_router: true
+      )
+
+    assert snapshot.monitor_registry_running
+    assert snapshot.monitor_supervisor_running
+    assert snapshot.grpc_stream_running
+    assert snapshot.assembly_event_router_running
+
+    disabled_snapshot =
+      configured_application_snapshot!(
+        start_monitor_supervisor: true,
+        start_grpc_stream: true,
+        start_assembly_event_router: false
+      )
+
+    refute disabled_snapshot.assembly_event_router_running
+    refute inspect(Sigil.GameState.AssemblyEventRouter) in disabled_snapshot.child_ids
   end
 
   defp configured_application_snapshot!(opts) do
@@ -364,6 +441,19 @@ defmodule Sigil.ApplicationTest do
           {Sigil.GameState.MonitorSupervisor, child_pid, _kind, _modules} -> is_pid(child_pid)
           _other -> false
         end),
+      assembly_event_router_running:
+        Enum.any?(children, fn
+          {Sigil.GameState.AssemblyEventRouter, child_pid, _kind, _modules} ->
+            is_pid(child_pid) and Process.alive?(child_pid)
+
+          _other ->
+            false
+        end),
+      assembly_event_router_index:
+        Enum.find_index(children, fn
+          {Sigil.GameState.AssemblyEventRouter, child_pid, _kind, _modules} -> is_pid(child_pid)
+          _other -> false
+        end),
       alert_engine_index:
         Enum.find_index(children, fn
           {Sigil.Alerts.Engine, child_pid, _kind, _modules} -> is_pid(child_pid)
@@ -421,6 +511,8 @@ defmodule Sigil.ApplicationTest do
       monitor_registry_index: decoded["monitor_registry_index"],
       monitor_supervisor_running: decoded["monitor_supervisor_running"],
       monitor_supervisor_index: decoded["monitor_supervisor_index"],
+      assembly_event_router_running: decoded["assembly_event_router_running"],
+      assembly_event_router_index: decoded["assembly_event_router_index"],
       alert_engine_index: decoded["alert_engine_index"],
       grpc_stream_index: decoded["grpc_stream_index"],
       reputation_engine_running: decoded["reputation_engine_running"],

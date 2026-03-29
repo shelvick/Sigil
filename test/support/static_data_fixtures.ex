@@ -36,6 +36,7 @@ defmodule Sigil.StaticDataTestFixtures do
     start_static_data = Keyword.get(opts, :start_static_data, false)
     start_gate_indexer = Keyword.get(opts, :start_gate_indexer, false)
     start_monitor_supervisor = Keyword.get(opts, :start_monitor_supervisor, false)
+    start_assembly_event_router = Keyword.get(opts, :start_assembly_event_router, false)
     start_alert_engine = Keyword.get(opts, :start_alert_engine, false)
     start_repo = Keyword.get(opts, :start_repo, false)
     start_grpc_stream = Keyword.get(opts, :start_grpc_stream, false)
@@ -55,6 +56,7 @@ defmodule Sigil.StaticDataTestFixtures do
       config :sigil, :start_static_data, #{inspect(start_static_data)}
       config :sigil, :start_gate_indexer, #{inspect(start_gate_indexer)}
       config :sigil, :start_monitor_supervisor, #{inspect(start_monitor_supervisor)}
+      config :sigil, :start_assembly_event_router, #{inspect(start_assembly_event_router)}
       config :sigil, :start_alert_engine, #{inspect(start_alert_engine)}
       config :sigil, :start_repo, #{inspect(start_repo)}
       config :sigil, :start_grpc_stream, #{inspect(start_grpc_stream)}
