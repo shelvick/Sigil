@@ -5,9 +5,12 @@ defmodule Sigil.Sui.GasRelay do
 
   alias Sigil.Sui.{Client, Signer, TransactionBuilder}
 
+  require Logger
+
   @default_gas_budget 10_000_000
   @default_gas_price 1_000
   @default_key_path ".sigil/relay_key"
+  @faucet_url "https://faucet.testnet.sui.io/v1/gas"
 
   @typedoc "Gas relay option."
   @type option ::
@@ -140,11 +143,76 @@ defmodule Sigil.Sui.GasRelay do
         keypair = Signer.generate_keypair()
 
         with :ok <- persist_keypair(key_path, keypair) do
+          maybe_fund_relay(keypair, opts)
           {:ok, keypair}
         end
 
       {:error, _reason} ->
         {:error, :relay_key_not_found}
+    end
+  end
+
+  @max_faucet_attempts 10
+  @initial_faucet_delay_ms 2_000
+
+  @spec maybe_fund_relay(Signer.keypair(), options()) :: :ok
+  defp maybe_fund_relay(keypair, opts) do
+    client = client(opts)
+    address = relay_address_from_keypair(keypair)
+    req_opts = request_opts(opts)
+
+    if client == Sigil.Sui.Client.HTTP do
+      case client.get_coins(address, req_opts) do
+        {:ok, [_ | _]} ->
+          Logger.info("Gas relay #{address} already funded")
+          :ok
+
+        _ ->
+          Logger.info("Gas relay #{address} has no coins, spawning faucet funding task...")
+          Task.start(fn -> faucet_retry_loop(address, 1) end)
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  @spec faucet_retry_loop(String.t(), pos_integer()) :: :ok
+  defp faucet_retry_loop(address, attempt) when attempt > @max_faucet_attempts do
+    Logger.error(
+      "Faucet funding failed after #{@max_faucet_attempts} attempts for relay #{address}"
+    )
+
+    :ok
+  end
+
+  defp faucet_retry_loop(address, attempt) do
+    delay = @initial_faucet_delay_ms * Integer.pow(2, attempt - 1)
+
+    Logger.info(
+      "Faucet attempt #{attempt}/#{@max_faucet_attempts} for relay #{address} (delay: #{delay}ms)"
+    )
+
+    :timer.sleep(delay)
+
+    body = Jason.encode!(%{"FixedAmountRequest" => %{"recipient" => address}})
+
+    case Req.post(url: @faucet_url, body: body, headers: [{"content-type", "application/json"}]) do
+      {:ok, %Req.Response{status: status}} when status in 200..299 ->
+        Logger.info("Faucet funded relay #{address} on attempt #{attempt}")
+        :ok
+
+      {:ok, %Req.Response{status: 429}} ->
+        Logger.warning("Faucet rate-limited on attempt #{attempt}, retrying...")
+        faucet_retry_loop(address, attempt + 1)
+
+      {:ok, %Req.Response{status: status, body: resp_body}} ->
+        Logger.warning("Faucet attempt #{attempt} failed: #{status} #{inspect(resp_body)}")
+        faucet_retry_loop(address, attempt + 1)
+
+      {:error, reason} ->
+        Logger.warning("Faucet attempt #{attempt} error: #{inspect(reason)}")
+        faucet_retry_loop(address, attempt + 1)
     end
   end
 
