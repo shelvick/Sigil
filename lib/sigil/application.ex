@@ -44,6 +44,8 @@ defmodule Sigil.Application do
         maybe_assembly_event_router() ++
         maybe_reputation_engine() ++ [SigilWeb.Endpoint]
 
+    maybe_migrate()
+
     opts = [strategy: :one_for_one, name: Sigil.Supervisor]
     Supervisor.start_link(children, opts)
   end
@@ -56,6 +58,15 @@ defmodule Sigil.Application do
   def config_change(changed, _new, removed) do
     SigilWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  @spec maybe_migrate() :: :ok
+  defp maybe_migrate do
+    if Application.get_env(:sigil, :auto_migrate, false) do
+      Sigil.Release.migrate()
+    else
+      :ok
+    end
   end
 
   @spec maybe_repo() :: [module()]

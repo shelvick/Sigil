@@ -1,4 +1,5 @@
 import Config
 
-# Production configuration is handled entirely by config/runtime.exs
-# which reads environment variables at boot time.
+# Run Ecto migrations automatically on application start.
+# Safe for single-instance deployments (Gigalixir free tier).
+config :sigil, :auto_migrate, true
