@@ -201,25 +201,32 @@ defmodule Sigil.StaticData do
     world_client =
       Keyword.get(opts, :world_client, Application.fetch_env!(:sigil, :world_client))
 
+    world_api_url = resolve_world_api_url()
+
     Enum.each(@table_names, fn table_name ->
       tables
       |> Map.fetch!(table_name)
-      |> load_table(DetsFile.dets_path(dets_dir, table_name), table_name, world_client)
+      |> load_table(
+        DetsFile.dets_path(dets_dir, table_name),
+        table_name,
+        world_client,
+        world_api_url
+      )
     end)
   end
 
-  @spec load_table(table_id(), String.t(), table_name(), module()) :: :ok
-  defp load_table(tid, path, table_name, world_client) do
+  @spec load_table(table_id(), String.t(), table_name(), module(), String.t() | nil) :: :ok
+  defp load_table(tid, path, table_name, world_client, world_api_url) do
     case load_dets_into_ets(tid, path) do
       :ok ->
         :ok
 
       {:error, :missing} ->
-        maybe_fetch_into_ets(tid, path, table_name, world_client)
+        maybe_fetch_into_ets(tid, path, table_name, world_client, world_api_url)
 
       {:error, reason} ->
         Logger.warning("Static data DETS unavailable for #{table_name}: #{inspect(reason)}")
-        maybe_fetch_into_ets(tid, path, table_name, world_client)
+        maybe_fetch_into_ets(tid, path, table_name, world_client, world_api_url)
     end
   end
 
@@ -228,9 +235,10 @@ defmodule Sigil.StaticData do
     Enum.each(callers, &GenServer.reply(&1, tables))
   end
 
-  @spec maybe_fetch_into_ets(table_id(), String.t(), table_name(), module()) :: :ok
-  defp maybe_fetch_into_ets(tid, path, table_name, world_client) do
-    case fetch_and_write(path, table_name, world_client) do
+  @spec maybe_fetch_into_ets(table_id(), String.t(), table_name(), module(), String.t() | nil) ::
+          :ok
+  defp maybe_fetch_into_ets(tid, path, table_name, world_client, world_api_url) do
+    case fetch_and_write(path, table_name, world_client, world_api_url) do
       :ok ->
         case load_dets_into_ets(tid, path) do
           :ok ->
@@ -345,9 +353,10 @@ defmodule Sigil.StaticData do
     error -> {:error, error}
   end
 
-  @spec fetch_and_write(String.t(), table_name(), module()) :: :ok | {:error, term()}
-  defp fetch_and_write(path, table_name, world_client) do
-    case fetch_rows(table_name, world_client) do
+  @spec fetch_and_write(String.t(), table_name(), module(), String.t() | nil) ::
+          :ok | {:error, term()}
+  defp fetch_and_write(path, table_name, world_client, world_api_url) do
+    case fetch_rows(table_name, world_client, world_api_url) do
       {:ok, rows} ->
         File.mkdir_p!(Path.dirname(path))
         DetsFile.write_rows!(path, rows)
@@ -358,11 +367,13 @@ defmodule Sigil.StaticData do
     end
   end
 
-  @spec fetch_rows(table_name(), module()) :: {:ok, [{integer(), struct()}]} | {:error, term()}
-  defp fetch_rows(table_name, world_client) do
+  @spec fetch_rows(table_name(), module(), String.t() | nil) ::
+          {:ok, [{integer(), struct()}]} | {:error, term()}
+  defp fetch_rows(table_name, world_client, world_api_url) do
     meta = Map.fetch!(@table_metadata, table_name)
+    opts = if world_api_url, do: [base_url: world_api_url], else: []
 
-    case apply(world_client, meta.fetch, [[]]) do
+    case apply(world_client, meta.fetch, [opts]) do
       {:ok, records} when is_list(records) ->
         {:ok,
          Enum.map(records, fn record ->
@@ -372,6 +383,17 @@ defmodule Sigil.StaticData do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  @spec resolve_world_api_url() :: String.t() | nil
+  defp resolve_world_api_url do
+    world = Application.get_env(:sigil, :eve_world)
+    worlds = Application.get_env(:sigil, :eve_worlds, %{})
+
+    case worlds do
+      %{^world => %{world_api_url: url}} when is_binary(url) -> url
+      _ -> nil
     end
   end
 
