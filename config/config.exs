@@ -33,7 +33,7 @@ config :sigil, :eve_worlds, %{
     world_api_url: "https://world-api-stillness.live.tech.evefrontier.com"
   },
   "utopia" => %{
-    package_id: "0x07e6b810c2dff6df56ea7fbad9ff32f4d84cbee53e496267515887b712924bd1",
+    package_id: "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
     sigil_package_id: utopia_sigil_package_id,
     graphql_url: "https://graphql.testnet.sui.io/graphql",
     world_api_url: "https://world-api-utopia.uat.pub.evefrontier.com"
