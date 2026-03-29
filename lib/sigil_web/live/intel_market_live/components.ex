@@ -113,6 +113,14 @@ defmodule SigilWeb.IntelMarketLive.Components do
             <%= system_name(@static_data, @listing.solar_system_id) %>
           </p>
 
+          <.link
+            :if={is_integer(@listing.solar_system_id) and @listing.solar_system_id > 0}
+            navigate={~p"/map?system_id=#{@listing.solar_system_id}"}
+            class="inline-flex rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+          >
+            View on Map
+          </.link>
+
           <p class="text-sm leading-6 text-space-500">
             Preview metadata is seller-declared; the sealed blob and on-chain sale record gate delivery.
           </p>

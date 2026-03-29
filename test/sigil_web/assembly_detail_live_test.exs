@@ -1745,6 +1745,152 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       refute html =~ "Update Location"
       assert html =~ "Jump Gate Alpha"
     end
+
+    test "assembly detail shows View on Map link when location reported", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+      gate = Gate.from_json(gate_json(%{"id" => uid("0xintel-map-link-gate")}))
+
+      report =
+        insert_location_report!(%{
+          tribe_id: account.tribe_id,
+          assembly_id: gate.id,
+          solar_system_id: 30_000_001,
+          reported_by: wallet_address,
+          reported_by_character_id: hd(account.characters).id,
+          reported_by_name: "Captain Frontier"
+        })
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+      Cache.put(cache_tables.assemblies, gate.id, {wallet_address, gate})
+      Cache.put(cache_tables.intel, {:location, account.tribe_id, gate.id}, report)
+
+      assert {:ok, _view, html} =
+               isolated_detail_live(
+                 conn,
+                 gate.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      assert html =~ "View on Map"
+      assert html =~ ~s(href="/map?system_id=#{report.solar_system_id}")
+    end
+
+    test "assembly detail hides View on Map link without location report", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address,
+      static_data: static_data
+    } do
+      account = account_fixture(wallet_address)
+
+      gate_with_location =
+        Gate.from_json(gate_json(%{"id" => uid("0xintel-map-link-control-gate")}))
+
+      gate_with_undisclosed_location =
+        Gate.from_json(gate_json(%{"id" => uid("0xintel-map-link-undisclosed-gate")}))
+
+      gate_without_location =
+        Gate.from_json(gate_json(%{"id" => uid("0xintel-map-link-none-gate")}))
+
+      report =
+        insert_location_report!(%{
+          tribe_id: account.tribe_id,
+          assembly_id: gate_with_location.id,
+          solar_system_id: 30_000_001,
+          reported_by: wallet_address,
+          reported_by_character_id: hd(account.characters).id,
+          reported_by_name: "Captain Frontier"
+        })
+
+      undisclosed_report =
+        insert_location_report!(%{
+          tribe_id: account.tribe_id,
+          assembly_id: gate_with_undisclosed_location.id,
+          solar_system_id: 0,
+          reported_by: wallet_address,
+          reported_by_character_id: hd(account.characters).id,
+          reported_by_name: "Captain Frontier"
+        })
+
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      Cache.put(
+        cache_tables.assemblies,
+        gate_with_location.id,
+        {wallet_address, gate_with_location}
+      )
+
+      Cache.put(
+        cache_tables.assemblies,
+        gate_with_undisclosed_location.id,
+        {wallet_address, gate_with_undisclosed_location}
+      )
+
+      Cache.put(
+        cache_tables.assemblies,
+        gate_without_location.id,
+        {wallet_address, gate_without_location}
+      )
+
+      Cache.put(cache_tables.intel, {:location, account.tribe_id, gate_with_location.id}, report)
+
+      Cache.put(
+        cache_tables.intel,
+        {:location, account.tribe_id, gate_with_undisclosed_location.id},
+        undisclosed_report
+      )
+
+      assert {:ok, _view, html_with_location} =
+               isolated_detail_live(
+                 conn,
+                 gate_with_location.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      assert html_with_location =~ "View on Map"
+      assert html_with_location =~ ~s(href="/map?system_id=#{report.solar_system_id}")
+
+      assert {:ok, _view, html_with_undisclosed_location} =
+               isolated_detail_live(
+                 conn,
+                 gate_with_undisclosed_location.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      assert html_with_undisclosed_location =~ "Location unknown"
+      refute html_with_undisclosed_location =~ "View on Map"
+      refute html_with_undisclosed_location =~ ~s(/map?system_id=0)
+
+      assert {:ok, _view, html_without_location} =
+               isolated_detail_live(
+                 conn,
+                 gate_without_location.id,
+                 wallet_address,
+                 cache_tables,
+                 pubsub,
+                 static_data: static_data
+               )
+
+      assert html_without_location =~ "Location unknown"
+      refute html_without_location =~ "View on Map"
+      refute html_without_location =~ ~s(/map?system_id=)
+    end
   end
 
   defp expect_empty_dashboard_discovery(_wallet_address) do

@@ -37,6 +37,7 @@ defmodule SigilWeb.Router do
       live "/tribe/:tribe_id/diplomacy", DiplomacyLive
       live "/alerts", AlertsLive
       live "/marketplace", IntelMarketLive
+      live "/map", GalaxyMapLive
     end
   end
 
