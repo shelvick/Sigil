@@ -13,6 +13,7 @@ defmodule Sigil.GameState.AssemblyMonitor do
   alias Sigil.Sui.Types.{Gate, NetworkNode, StorageUnit, Turret}
 
   @default_interval_ms 30_000
+  @default_min_sync_interval_ms 5_000
   @default_max_snapshots 60
   @default_pubsub Sigil.PubSub
   @not_found_limit 5
@@ -38,14 +39,20 @@ defmodule Sigil.GameState.AssemblyMonitor do
           pubsub: atom() | module(),
           registry: atom(),
           interval_ms: pos_integer(),
+          min_sync_interval_ms: pos_integer(),
           req_options: Client.request_opts(),
           sync_fun: function(),
+          last_sync_at: integer() | nil,
           max_snapshots: non_neg_integer(),
           previous_assembly: Assemblies.assembly() | nil,
           fuel_snapshots: [FuelAnalytics.fuel_snapshot()],
           depletion: FuelAnalytics.depletion_result() | nil,
           consecutive_not_found: non_neg_integer()
         }
+
+  @typedoc "Router dispatch message sent for assembly lifecycle events."
+  @type assembly_event_message() ::
+          {:assembly_event, atom(), String.t(), non_neg_integer()}
 
   @typedoc "Options accepted by the assembly monitor."
   @type option() ::
@@ -54,6 +61,7 @@ defmodule Sigil.GameState.AssemblyMonitor do
           | {:pubsub, atom() | module()}
           | {:registry, atom()}
           | {:interval_ms, pos_integer()}
+          | {:min_sync_interval_ms, pos_integer()}
           | {:req_options, Client.request_opts()}
           | {:sync_fun, function()}
           | {:max_snapshots, non_neg_integer()}
@@ -110,8 +118,11 @@ defmodule Sigil.GameState.AssemblyMonitor do
       pubsub: Keyword.get(opts, :pubsub, @default_pubsub),
       registry: registry,
       interval_ms: Keyword.get(opts, :interval_ms, @default_interval_ms),
+      min_sync_interval_ms:
+        Keyword.get(opts, :min_sync_interval_ms, @default_min_sync_interval_ms),
       req_options: Keyword.get(opts, :req_options, []),
       sync_fun: Keyword.get(opts, :sync_fun, &Assemblies.sync_assembly/2),
+      last_sync_at: nil,
       max_snapshots: Keyword.get(opts, :max_snapshots, @default_max_snapshots),
       previous_assembly: nil,
       fuel_snapshots: [],
@@ -130,8 +141,43 @@ defmodule Sigil.GameState.AssemblyMonitor do
   end
 
   @impl true
-  @spec handle_info(:poll, state()) :: {:noreply, state()} | {:stop, :normal, state()}
+  @spec handle_info(:poll | assembly_event_message() | term(), state()) ::
+          {:noreply, state()} | {:stop, :normal, state()}
   def handle_info(:poll, state) do
+    perform_poll(state, true)
+  end
+
+  def handle_info(
+        {:assembly_event, _event_type, assembly_id, _checkpoint_seq},
+        %{
+          assembly_id: assembly_id
+        } = state
+      ) do
+    now_ms = System.monotonic_time(:millisecond)
+
+    if debounce_event_sync?(state, now_ms) do
+      {:noreply, state}
+    else
+      perform_poll(state, false, now_ms)
+    end
+  end
+
+  def handle_info({:assembly_event, _event_type, _assembly_id, _checkpoint_seq}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
+  @spec perform_poll(state(), boolean()) :: {:noreply, state()} | {:stop, :normal, state()}
+  defp perform_poll(state, schedule_next?) do
+    perform_poll(state, schedule_next?, System.monotonic_time(:millisecond))
+  end
+
+  @spec perform_poll(state(), boolean(), integer()) ::
+          {:noreply, state()} | {:stop, :normal, state()}
+  defp perform_poll(state, schedule_next?, sync_started_at_ms) do
+    state = %{state | last_sync_at: sync_started_at_ms}
+
     case sync_assembly(state) do
       {:ok, assembly} ->
         changes = detect_changes(state.previous_assembly, assembly)
@@ -156,7 +202,7 @@ defmodule Sigil.GameState.AssemblyMonitor do
             consecutive_not_found: 0
         }
 
-        schedule_poll(next_state.interval_ms)
+        maybe_schedule_poll(next_state, schedule_next?)
         {:noreply, next_state}
 
       {:error, :not_found} ->
@@ -165,7 +211,7 @@ defmodule Sigil.GameState.AssemblyMonitor do
         if next_state.consecutive_not_found >= @not_found_limit do
           {:stop, :normal, next_state}
         else
-          schedule_poll(next_state.interval_ms)
+          maybe_schedule_poll(next_state, schedule_next?)
           {:noreply, next_state}
         end
 
@@ -174,7 +220,7 @@ defmodule Sigil.GameState.AssemblyMonitor do
           "assembly monitor sync failed for #{state.assembly_id}: #{inspect(reason)}"
         )
 
-        schedule_poll(state.interval_ms)
+        maybe_schedule_poll(state, schedule_next?)
         {:noreply, state}
     end
   rescue
@@ -183,8 +229,23 @@ defmodule Sigil.GameState.AssemblyMonitor do
         "assembly monitor sync crashed for #{state.assembly_id}: #{Exception.message(error)}"
       )
 
-      schedule_poll(state.interval_ms)
+      maybe_schedule_poll(state, schedule_next?)
       {:noreply, state}
+  end
+
+  @spec maybe_schedule_poll(state(), boolean()) :: :ok
+  defp maybe_schedule_poll(state, true) do
+    _timer_ref = schedule_poll(state.interval_ms)
+    :ok
+  end
+
+  defp maybe_schedule_poll(_state, false), do: :ok
+
+  @spec debounce_event_sync?(state(), integer()) :: boolean()
+  defp debounce_event_sync?(%{last_sync_at: nil}, _now_ms), do: false
+
+  defp debounce_event_sync?(state, now_ms) do
+    now_ms - state.last_sync_at < state.min_sync_interval_ms
   end
 
   @spec sync_assembly(state()) :: {:ok, Assemblies.assembly()} | {:error, term()}

@@ -46,7 +46,8 @@ defmodule Sigil.WalrusClient.HTTP do
     Keyword.merge(Keyword.get(opts, :req_options, []),
       base_url: Keyword.get(opts, :publisher_url, @default_publisher_url),
       url: path,
-      receive_timeout: @default_receive_timeout
+      receive_timeout: @default_receive_timeout,
+      retry: false
     )
     |> Keyword.merge(request_opts)
   end
@@ -56,7 +57,8 @@ defmodule Sigil.WalrusClient.HTTP do
     Keyword.merge(Keyword.get(opts, :req_options, []),
       base_url: Keyword.get(opts, :aggregator_url, @default_aggregator_url),
       url: path,
-      receive_timeout: @default_receive_timeout
+      receive_timeout: @default_receive_timeout,
+      retry: false
     )
   end
 

@@ -222,17 +222,21 @@ defmodule Sigil.Sui.GrpcStream do
   def handle_info({:reconnect, _timer_token}, state), do: {:noreply, state}
 
   @doc false
+  def handle_info({:stream_error, reason}, state) do
+    {:noreply, handle_stream_disconnect(state, "gRPC stream error", reason)}
+  end
+
+  @doc false
+  def handle_info({:stream_error, stream_ref, reason}, %{stream_ref: stream_ref} = state) do
+    {:noreply, handle_stream_disconnect(state, "gRPC stream error", reason)}
+  end
+
+  @doc false
+  def handle_info({:stream_error, _stream_ref, _reason}, state), do: {:noreply, state}
+
+  @doc false
   def handle_info({:stream_closed, stream_ref, reason}, %{stream_ref: stream_ref} = state) do
-    Logger.warning("gRPC stream closed: #{inspect(reason)}")
-
-    next_state =
-      state
-      |> clear_flush_timer()
-      |> shutdown_reader()
-      |> flush_cursor_if_dirty()
-      |> schedule_reconnect()
-
-    {:noreply, next_state}
+    {:noreply, handle_stream_disconnect(state, "gRPC stream closed", reason)}
   end
 
   @doc false
@@ -249,11 +253,7 @@ defmodule Sigil.Sui.GrpcStream do
           clear_reader_monitor(state)
 
         _other ->
-          state
-          |> clear_flush_timer()
-          |> shutdown_reader()
-          |> flush_cursor_if_dirty()
-          |> schedule_reconnect()
+          handle_stream_disconnect(state, "gRPC stream reader crashed", reason)
       end
 
     {:noreply, next_state}
@@ -410,6 +410,17 @@ defmodule Sigil.Sui.GrpcStream do
   defp reconnect_delay_ms(state) do
     multiplier = :math.pow(2, state.reconnect_attempt) |> trunc()
     min(state.reconnect_base_ms * max(multiplier, 1), state.reconnect_max_ms)
+  end
+
+  @spec handle_stream_disconnect(state(), String.t(), term()) :: state()
+  defp handle_stream_disconnect(state, log_prefix, reason) do
+    Logger.warning("#{log_prefix}: #{inspect(reason)}")
+
+    state
+    |> clear_flush_timer()
+    |> shutdown_reader()
+    |> flush_cursor_if_dirty()
+    |> schedule_reconnect()
   end
 
   @spec clear_reader_monitor(state()) :: state()

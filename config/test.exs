@@ -30,6 +30,7 @@ config :sigil, :eve_worlds, %{
 config :sigil, :start_static_data, false
 config :sigil, :start_gate_indexer, false
 config :sigil, :start_monitor_supervisor, false
+config :sigil, :start_assembly_event_router, false
 config :sigil, :start_alert_engine, false
 config :sigil, :monitor_registry, nil
 config :sigil, :webhook_notifier, Sigil.Alerts.WebhookNotifierMock

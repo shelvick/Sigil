@@ -671,6 +671,116 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
   end
 
   @tag :acceptance
+  test "assembly detail UI updates through full event-driven monitor path", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    assembly_id = hex_id(144)
+
+    node =
+      NetworkNode.from_json(
+        network_node_json(%{
+          "id" => uid(assembly_id),
+          "metadata" => %{
+            "assembly_id" => "0xnode-event-driven",
+            "name" => "Node One",
+            "description" => "Network node",
+            "url" => "https://example.test/nodes/1"
+          }
+        })
+      )
+
+    event_node =
+      NetworkNode.from_json(
+        network_node_json(%{
+          "id" => uid(assembly_id),
+          "metadata" => %{
+            "assembly_id" => "0xnode-event-driven",
+            "name" => "Node Event Prime",
+            "description" => "Updated by event-driven monitor",
+            "url" => "https://example.test/nodes/event-prime"
+          }
+        })
+      )
+
+    registry = unique_registry_name()
+    topic = "chain_events:assembly-detail:#{System.unique_integer([:positive])}"
+    parent = self()
+
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    Cache.put(cache_tables.assemblies, node.id, {wallet_address, node})
+    start_supervised!({Registry, keys: :unique, name: registry})
+
+    monitor_supervisor = start_supervised!({MonitorSupervisor, registry: registry})
+
+    sync_fun = fn ^assembly_id, _opts ->
+      send(parent, {:event_driven_sync_called, assembly_id})
+      {:ok, event_node}
+    end
+
+    assert {:ok, _monitor} =
+             MonitorSupervisor.start_monitor(
+               monitor_supervisor,
+               assembly_id: assembly_id,
+               tables: cache_tables,
+               pubsub: pubsub,
+               registry: registry,
+               interval_ms: 60_000,
+               sync_fun: sync_fun
+             )
+
+    router =
+      start_supervised!({
+        Sigil.GameState.AssemblyEventRouter,
+        pubsub: pubsub, topic: topic, registry: registry
+      })
+
+    _router_state = :sys.get_state(router)
+    :ok = Phoenix.PubSub.subscribe(pubsub, "assembly:#{assembly_id}")
+
+    {:ok, view, html} =
+      isolated_detail_live(
+        conn,
+        node.id,
+        wallet_address,
+        cache_tables,
+        pubsub,
+        monitor_supervisor: monitor_supervisor,
+        monitor_registry: registry
+      )
+
+    assert html =~ "Node One"
+
+    Phoenix.PubSub.broadcast(pubsub, topic, {
+      :chain_event,
+      :assembly_status_changed,
+      %{"assembly_id" => assembly_id, "status" => "ONLINE"},
+      7701
+    })
+
+    assert_receive {:event_driven_sync_called, ^assembly_id}, 1_000
+    assert_receive {:assembly_monitor, ^assembly_id, _payload}, 1_000
+
+    updated_html = render(view)
+
+    assert updated_html =~ "Node Event Prime"
+    refute updated_html =~ "Assembly not found"
+    refute updated_html =~ "Connect Your Wallet"
+
+    Phoenix.PubSub.broadcast(pubsub, topic, {
+      :chain_event,
+      :assembly_status_changed,
+      %{"assembly_id" => assembly_id, "status" => "ONLINE"},
+      7702
+    })
+
+    refute_receive {:event_driven_sync_called, ^assembly_id}, 200
+  end
+
+  @tag :acceptance
   test "wallet verification → navigate to gate detail", %{
     conn: conn,
     cache_tables: cache_tables,

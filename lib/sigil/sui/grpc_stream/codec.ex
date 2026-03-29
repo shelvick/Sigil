@@ -39,12 +39,15 @@ defmodule Sigil.Sui.GrpcStream.Codec do
     :ok
   end
 
-  @doc "Returns true only for reputation-relevant event types."
+  @doc "Returns true only for chain events consumed by downstream processors."
   @spec default_event_filter(map()) :: boolean()
   def default_event_filter(%{"type" => %{"repr" => type}}) when is_binary(type) do
     String.ends_with?(type, "KillmailCreatedEvent") or
       String.ends_with?(type, "JumpEvent") or
-      String.ends_with?(type, "PriorityListUpdatedEvent")
+      String.ends_with?(type, "PriorityListUpdatedEvent") or
+      String.ends_with?(type, "StatusChangedEvent") or
+      String.ends_with?(type, "FuelEvent") or
+      String.ends_with?(type, "ExtensionAuthorizedEvent")
   end
 
   def default_event_filter(_event), do: false
@@ -138,6 +141,9 @@ defmodule Sigil.Sui.GrpcStream.Codec do
       String.ends_with?(type, "KillmailCreatedEvent") -> :killmail_created
       String.ends_with?(type, "JumpEvent") -> :jump
       String.ends_with?(type, "PriorityListUpdatedEvent") -> :priority_list_updated
+      String.ends_with?(type, "StatusChangedEvent") -> :assembly_status_changed
+      String.ends_with?(type, "FuelEvent") -> :assembly_fuel_changed
+      String.ends_with?(type, "ExtensionAuthorizedEvent") -> :assembly_extension_authorized
       true -> :unknown
     end
   end
@@ -146,10 +152,26 @@ defmodule Sigil.Sui.GrpcStream.Codec do
   @spec normalize_event_payload(String.t(), map()) :: map()
   def normalize_event_payload(type, json) do
     cond do
-      String.ends_with?(type, "KillmailCreatedEvent") -> normalize_killmail_payload(json)
-      String.ends_with?(type, "JumpEvent") -> normalize_jump_payload(json)
-      String.ends_with?(type, "PriorityListUpdatedEvent") -> normalize_priority_list_payload(json)
-      true -> json
+      String.ends_with?(type, "KillmailCreatedEvent") ->
+        normalize_killmail_payload(json)
+
+      String.ends_with?(type, "JumpEvent") ->
+        normalize_jump_payload(json)
+
+      String.ends_with?(type, "PriorityListUpdatedEvent") ->
+        normalize_priority_list_payload(json)
+
+      String.ends_with?(type, "StatusChangedEvent") ->
+        normalize_assembly_status_payload(json)
+
+      String.ends_with?(type, "FuelEvent") ->
+        normalize_assembly_fuel_payload(json)
+
+      String.ends_with?(type, "ExtensionAuthorizedEvent") ->
+        normalize_assembly_extension_payload(json)
+
+      true ->
+        json
     end
   end
 
@@ -214,6 +236,24 @@ defmodule Sigil.Sui.GrpcStream.Codec do
     |> put_if_present("aggressor_character_id", aggressor_character_id)
     |> put_if_present("turret", turret_id)
     |> put_if_present("aggressor", aggressor_character_id)
+  end
+
+  @spec normalize_assembly_status_payload(map()) :: map()
+  defp normalize_assembly_status_payload(json) do
+    assembly_id = first_present(json, ["assembly_id", "assembly"])
+    put_if_present(json, "assembly_id", assembly_id)
+  end
+
+  @spec normalize_assembly_fuel_payload(map()) :: map()
+  defp normalize_assembly_fuel_payload(json) do
+    assembly_id = first_present(json, ["assembly_id", "assembly"])
+    put_if_present(json, "assembly_id", assembly_id)
+  end
+
+  @spec normalize_assembly_extension_payload(map()) :: map()
+  defp normalize_assembly_extension_payload(json) do
+    assembly_id = first_present(json, ["assembly_id", "assembly"])
+    put_if_present(json, "assembly_id", assembly_id)
   end
 
   @spec aggressor_from_priority_list(term()) :: String.t() | nil

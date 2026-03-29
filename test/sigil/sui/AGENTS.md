@@ -15,6 +15,7 @@
 | `tx_custodian_test.exs` | `Sigil.Sui.TxCustodianTest` | 19 | All 11 builders, package ID, mutable/immutable refs, standing/address/batch validation, TransactionBuilder integration |
 | `gas_relay_test.exs` | `Sigil.Sui.GasRelayTest` | 13 | prepare_sponsored (coin selection, gas budget, relay signing), submit_sponsored (dual-sig, error handling), relay_address, keypair file lifecycle (load/generate/persist), insufficient gas, no coins |
 | `tx_intel_reputation_test.exs` | `Sigil.Sui.TxIntelReputationTest` | 5 | build_confirm_quality/build_report_bad_quality PTB structure, shared-ref mutability (registry mutable, listing immutable), TransactionBuilder integration |
+| `grpc_stream_test.exs` | `Sigil.Sui.GrpcStreamTest` | 18 | Stream connect/checkpoint, event filtering/broadcast, cursor flush/persistence, reconnect backoff, stale-ref guards, reader crash recovery, assembly event codec (filter/normalize/pipeline), stream_error disconnect+flush |
 
 ## Patterns
 

@@ -666,6 +666,173 @@ defmodule Sigil.GameState.AssemblyMonitorTest do
     assert payload.changes == []
   end
 
+  test "triggers sync on accepted assembly_event message", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    assembly_id = "0xassembly-event-trigger"
+    :ok = Phoenix.PubSub.subscribe(pubsub, "assembly:#{assembly_id}")
+
+    sync_fun = fn ^assembly_id, _opts ->
+      {:ok, assembly(id: assembly_id)}
+    end
+
+    monitor =
+      start_monitor!(
+        assembly_id: assembly_id,
+        tables: tables,
+        pubsub: pubsub,
+        registry: registry,
+        interval_ms: 60_000,
+        min_sync_interval_ms: 5_000,
+        sync_fun: sync_fun
+      )
+
+    send(monitor, {:assembly_event, :assembly_status_changed, assembly_id, 701})
+
+    assert_receive {:assembly_monitor, ^assembly_id, payload}, 1_000
+    assert %Assembly{id: ^assembly_id} = payload.assembly
+    assert match?(%{last_sync_at: _}, AssemblyMonitor.get_state(monitor))
+  end
+
+  test "debounces rapid assembly_event messages", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    assembly_id = "0xassembly-event-debounce"
+    :ok = Phoenix.PubSub.subscribe(pubsub, "assembly:#{assembly_id}")
+
+    sync_fun =
+      sequence_sync_fun(self(), [
+        {:ok, assembly(id: assembly_id, status: assembly_status(:online))},
+        {:ok, assembly(id: assembly_id, status: assembly_status(:offline))}
+      ])
+
+    monitor =
+      start_monitor!(
+        assembly_id: assembly_id,
+        tables: tables,
+        pubsub: pubsub,
+        registry: registry,
+        interval_ms: 60_000,
+        min_sync_interval_ms: 60_000,
+        sync_fun: sync_fun
+      )
+
+    send(monitor, {:assembly_event, :assembly_status_changed, assembly_id, 702})
+    assert_receive {:sync_called, ^assembly_id, ^tables, ^pubsub}, 1_000
+    assert_receive {:assembly_monitor, ^assembly_id, _payload}, 1_000
+
+    send(monitor, {:assembly_event, :assembly_status_changed, assembly_id, 703})
+
+    refute_receive {:sync_called, ^assembly_id, ^tables, ^pubsub}, 200
+    refute_receive {:assembly_monitor, ^assembly_id, _payload}, 200
+  end
+
+  test "assembly_event does not interfere with heartbeat poll timer", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    assembly_id = "0xassembly-event-heartbeat"
+    parent = self()
+
+    sync_fun = fn ^assembly_id, _opts ->
+      send(parent, {:heartbeat_sync_called, assembly_id})
+      {:ok, assembly(id: assembly_id)}
+    end
+
+    monitor =
+      start_monitor!(
+        assembly_id: assembly_id,
+        tables: tables,
+        pubsub: pubsub,
+        registry: registry,
+        interval_ms: 100,
+        min_sync_interval_ms: 1,
+        sync_fun: sync_fun
+      )
+
+    send(monitor, {:assembly_event, :assembly_status_changed, assembly_id, 704})
+    assert_receive {:heartbeat_sync_called, ^assembly_id}, 1_000
+    assert_receive {:heartbeat_sync_called, ^assembly_id}, 1_000
+  end
+
+  test "event-driven sync produces same broadcast shape as poll", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    poll_assembly_id = "0xassembly-poll-shape"
+    event_assembly_id = "0xassembly-event-shape"
+
+    :ok = Phoenix.PubSub.subscribe(pubsub, "assembly:#{poll_assembly_id}")
+    :ok = Phoenix.PubSub.subscribe(pubsub, "assembly:#{event_assembly_id}")
+
+    poll_monitor =
+      start_monitor!(
+        assembly_id: poll_assembly_id,
+        tables: tables,
+        pubsub: pubsub,
+        registry: registry,
+        interval_ms: 60_000,
+        sync_fun: fn ^poll_assembly_id, _opts -> {:ok, gate(id: poll_assembly_id)} end
+      )
+
+    event_monitor =
+      start_monitor!(
+        assembly_id: event_assembly_id,
+        tables: tables,
+        pubsub: pubsub,
+        registry: registry,
+        interval_ms: 60_000,
+        min_sync_interval_ms: 1,
+        sync_fun: fn ^event_assembly_id, _opts -> {:ok, gate(id: event_assembly_id)} end
+      )
+
+    send(poll_monitor, :poll)
+    send(event_monitor, {:assembly_event, :assembly_status_changed, event_assembly_id, 705})
+
+    assert_receive {:assembly_monitor, ^poll_assembly_id, poll_payload}, 1_000
+    assert_receive {:assembly_monitor, ^event_assembly_id, event_payload}, 1_000
+
+    assert Enum.sort(Map.keys(poll_payload)) == [:assembly, :changes, :depletion]
+    assert Enum.sort(Map.keys(event_payload)) == [:assembly, :changes, :depletion]
+  end
+
+  test "ignores assembly_event message for different assembly_id", %{
+    tables: tables,
+    pubsub: pubsub,
+    registry: registry
+  } do
+    assembly_id = "0xassembly-event-target"
+    other_id = "0xassembly-event-other"
+
+    parent = self()
+
+    sync_fun = fn ^assembly_id, _opts ->
+      send(parent, {:other_assembly_sync_called, assembly_id})
+      {:ok, assembly(id: assembly_id)}
+    end
+
+    monitor =
+      start_monitor!(
+        assembly_id: assembly_id,
+        tables: tables,
+        pubsub: pubsub,
+        registry: registry,
+        interval_ms: 60_000,
+        min_sync_interval_ms: 1,
+        sync_fun: sync_fun
+      )
+
+    send(monitor, {:assembly_event, :assembly_status_changed, other_id, 706})
+
+    refute_receive {:other_assembly_sync_called, ^assembly_id}, 200
+  end
+
   defp start_monitor!(opts) do
     {:ok, monitor} = AssemblyMonitor.start_link(opts)
     _state = AssemblyMonitor.get_state(monitor)
