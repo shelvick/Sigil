@@ -4,7 +4,8 @@
   "dependencies": {
     "@mysten/seal": "^1.1.1",
     "@mysten/sui": "^2.11.0",
-    "snarkjs": "^0.7.0"
+    "snarkjs": "^0.7.0",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "jsdom": "^25.0",

@@ -236,6 +236,7 @@ defmodule SigilWeb.AssemblyDetailLive do
         <SigilWeb.AssemblyDetailLive.Components.location_panel
           :if={@location_visible}
           location_name={@location_name}
+          location_solar_system_id={@location_solar_system_id}
           can_edit_location={@can_edit_location}
           form={@location_form}
           solar_systems={@solar_systems}
@@ -347,9 +348,17 @@ defmodule SigilWeb.AssemblyDetailLive do
     assign(socket,
       location_report: report,
       location_name: IntelHelpers.resolve_location_name(socket.assigns[:static_data_pid], report),
+      location_solar_system_id: report_solar_system_id(report),
       location_form: to_form(%{}, as: :location)
     )
   end
+
+  @spec report_solar_system_id(IntelReport.t() | nil) :: integer() | nil
+  defp report_solar_system_id(%IntelReport{solar_system_id: solar_system_id})
+       when is_integer(solar_system_id) and solar_system_id > 0,
+       do: solar_system_id
+
+  defp report_solar_system_id(_report), do: nil
 
   @spec persist_location(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
   defp persist_location(socket, %{"solar_system_name" => solar_system_name} = params) do

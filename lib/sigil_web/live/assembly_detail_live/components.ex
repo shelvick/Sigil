@@ -17,9 +17,19 @@ defmodule SigilWeb.AssemblyDetailLive.Components do
     ~H"""
     <div class="mt-8 rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
       <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Location</p>
-          <p class="mt-3 text-sm text-cream"><%= @location_name || "Location unknown" %></p>
+        <div class="space-y-3">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Location</p>
+            <p class="mt-3 text-sm text-cream"><%= @location_name || "Location unknown" %></p>
+          </div>
+
+          <.link
+            :if={is_integer(@location_solar_system_id)}
+            navigate={~p"/map?system_id=#{@location_solar_system_id}"}
+            class="inline-flex rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+          >
+            View on Map
+          </.link>
         </div>
 
         <%= if @can_edit_location do %>

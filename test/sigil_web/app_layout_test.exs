@@ -255,6 +255,23 @@ defmodule SigilWeb.AppLayoutTest do
     assert tribe_pos < alerts_pos
   end
 
+  test "app layout header shows Map link when authenticated" do
+    html = render_layout(current_account: account_fixture())
+
+    assert html =~ ~r/>\s*Map\s*</
+    assert html =~ ~s(href="/map")
+  end
+
+  test "app layout header hides Map link when unauthenticated" do
+    authenticated_html = render_layout(current_account: account_fixture())
+    unauthenticated_html = render_layout(current_account: nil)
+
+    assert authenticated_html =~ ~r/>\s*Map\s*</
+    assert authenticated_html =~ ~s(href="/map")
+    refute unauthenticated_html =~ ~r/>\s*Map\s*</
+    refute unauthenticated_html =~ ~s(href="/map")
+  end
+
   @tag :acceptance
   test "authenticated page renders shared shell with alerts and character controls", %{
     conn: conn,

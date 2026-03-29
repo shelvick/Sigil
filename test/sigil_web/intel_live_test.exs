@@ -362,7 +362,7 @@ defmodule SigilWeb.IntelLiveTest do
     assert html =~ "Just now"
     assert html =~ "0xreport-"
     assert html =~ "..."
-    refute html =~ "30000001"
+    refute html =~ ">30000001<"
   end
 
   test "toggling report type changes form fields", %{
@@ -556,6 +556,98 @@ defmodule SigilWeb.IntelLiveTest do
     html = render(view)
     refute html =~ report.label
     refute html =~ report.notes
+  end
+
+  @tag :acceptance
+  test "intel report card shows View on Map link", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    static_data: static_data,
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+    report = seed_location_report!(wallet_address, hd(account.characters).id)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    assert {:ok, _view, html} =
+             live(
+               authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data),
+               "/tribe/#{@tribe_id}/intel"
+             )
+
+    assert html =~ report.label
+    assert html =~ "View on Map"
+    assert html =~ ~s(href="/map?system_id=#{report.solar_system_id}")
+    refute html =~ "No intel reports yet. Be the first to share!"
+  end
+
+  test "intel report card without solar_system_id has no map link", %{
+    wallet_address: wallet_address
+  } do
+    account = account_fixture(wallet_address)
+
+    map_report = %IntelReport{
+      id: Ecto.UUID.generate(),
+      tribe_id: @tribe_id,
+      assembly_id: nil,
+      solar_system_id: 30_000_001,
+      label: "Map scouting report",
+      report_type: :scouting,
+      notes: "Has a solar system id",
+      reported_by: wallet_address,
+      reported_by_name: "Scout Prime",
+      reported_by_character_id: hd(account.characters).id,
+      inserted_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now()
+    }
+
+    undisclosed_report = %IntelReport{
+      id: Ecto.UUID.generate(),
+      tribe_id: @tribe_id,
+      assembly_id: nil,
+      solar_system_id: 0,
+      label: "Undisclosed scouting report",
+      report_type: :scouting,
+      notes: "Undisclosed location",
+      reported_by: wallet_address,
+      reported_by_name: "Scout Prime",
+      reported_by_character_id: hd(account.characters).id,
+      inserted_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now()
+    }
+
+    no_map_report = %IntelReport{
+      id: Ecto.UUID.generate(),
+      tribe_id: @tribe_id,
+      assembly_id: nil,
+      solar_system_id: nil,
+      label: "No map scouting report",
+      report_type: :scouting,
+      notes: "No solar system id",
+      reported_by: wallet_address,
+      reported_by_name: "Scout Prime",
+      reported_by_character_id: hd(account.characters).id,
+      inserted_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now()
+    }
+
+    html =
+      Phoenix.LiveViewTest.render_component(&SigilWeb.IntelLive.Components.report_feed_panel/1,
+        reports: [map_report, undisclosed_report, no_map_report],
+        system_names: %{30_000_001 => "A 2560"},
+        current_account: account,
+        is_leader_or_operator: false
+      )
+
+    assert html =~ "Map scouting report"
+    assert html =~ "Undisclosed scouting report"
+    assert html =~ "No map scouting report"
+    assert html =~ "Location undisclosed"
+    assert html =~ ~s(href="/map?system_id=30000001")
+    assert length(Regex.scan(~r/View on Map/, html)) == 1
+    refute html =~ ~s(href="/map?system_id=0")
+    refute html =~ ~s(href="/map?system_id=nil")
   end
 
   defp authenticated_conn(conn, wallet_address, cache_tables, pubsub, static_data \\ nil) do

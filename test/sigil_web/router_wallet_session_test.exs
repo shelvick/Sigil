@@ -262,6 +262,44 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert view.module == SigilWeb.IntelMarketLive
     end
 
+    test "/map route renders GalaxyMapLive", %{conn: conn} do
+      assert {:ok, view, _html} = live(conn, "/map")
+      assert view.module == SigilWeb.GalaxyMapLive
+    end
+
+    @tag :acceptance
+    test "authenticated user can reach map route through browser pipeline", %{
+      conn: conn,
+      cache_tables: cache_tables,
+      pubsub: pubsub,
+      wallet_address: wallet_address
+    } do
+      char = %Character{
+        id: "0xchar-map-acceptance",
+        key: %Sigil.Sui.Types.TenantItemId{item_id: 1, tenant: "test"},
+        tribe_id: 314,
+        character_address: wallet_address,
+        metadata: nil,
+        owner_cap_id: "0xowner-map-acceptance"
+      }
+
+      account = %Account{address: wallet_address, characters: [char], tribe_id: 314}
+      Cache.put(cache_tables.accounts, wallet_address, account)
+
+      conn =
+        init_test_session(conn, %{
+          "wallet_address" => wallet_address,
+          "cache_tables" => cache_tables,
+          "pubsub" => pubsub
+        })
+
+      assert {:ok, view, html} = live(conn, "/map")
+      assert view.module == SigilWeb.GalaxyMapLive
+      assert html =~ "Galaxy"
+      refute html =~ "Not Found"
+      refute html =~ "Connect Your Wallet"
+    end
+
     @tag :acceptance
     test "stale / session uses injected WalletSession deps", %{
       conn: conn,

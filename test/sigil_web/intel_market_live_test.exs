@@ -2241,6 +2241,113 @@ defmodule SigilWeb.IntelMarketLiveTest do
     refute html =~ "1000000000"
   end
 
+  test "listing card shows View on Map link", %{static_data: static_data} do
+    html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: unique_wallet_address(),
+          seal_id: seal_id_hex(0xB3),
+          encrypted_blob_id: "walrus-component-map-link",
+          client_nonce: 8,
+          price_mist: 500_000_000,
+          report_type: 1,
+          solar_system_id: 30_000_001,
+          description: "Map link listing",
+          status: :active,
+          buyer_address: nil,
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        tribe_id: @tribe_id,
+        static_data: static_data
+      )
+
+    assert html =~ "View on Map"
+    assert html =~ ~s(href="/map?system_id=30000001")
+  end
+
+  test "listing card without solar_system_id has no map link", %{static_data: static_data} do
+    map_listing_html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: unique_wallet_address(),
+          seal_id: seal_id_hex(0xB4),
+          encrypted_blob_id: "walrus-component-with-map-link",
+          client_nonce: 9,
+          price_mist: 500_000_000,
+          report_type: 2,
+          solar_system_id: 30_000_001,
+          description: "Has map link listing",
+          status: :active,
+          buyer_address: nil,
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        tribe_id: @tribe_id,
+        static_data: static_data
+      )
+
+    undisclosed_listing_html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: unique_wallet_address(),
+          seal_id: seal_id_hex(0xB5),
+          encrypted_blob_id: "walrus-component-undisclosed-map-link",
+          client_nonce: 10,
+          price_mist: 500_000_000,
+          report_type: 2,
+          solar_system_id: 0,
+          description: "Undisclosed listing",
+          status: :active,
+          buyer_address: nil,
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        tribe_id: @tribe_id,
+        static_data: static_data
+      )
+
+    no_map_listing_html =
+      LiveViewTest.render_component(&Components.listing_card/1,
+        listing: %IntelListing{
+          id: unique_object_id(),
+          seller_address: unique_wallet_address(),
+          seal_id: seal_id_hex(0xB6),
+          encrypted_blob_id: "walrus-component-no-map-link",
+          client_nonce: 11,
+          price_mist: 500_000_000,
+          report_type: 2,
+          solar_system_id: nil,
+          description: "No map link listing",
+          status: :active,
+          buyer_address: nil,
+          restricted_to_tribe_id: nil,
+          intel_report_id: nil,
+          on_chain_digest: nil
+        },
+        sender: unique_wallet_address(),
+        tribe_id: @tribe_id,
+        static_data: static_data
+      )
+
+    assert map_listing_html =~ "View on Map"
+    assert map_listing_html =~ ~s(href="/map?system_id=30000001")
+    assert undisclosed_listing_html =~ "Location undisclosed"
+    refute undisclosed_listing_html =~ "View on Map"
+    refute undisclosed_listing_html =~ ~s(href="/map?system_id=0")
+    refute no_map_listing_html =~ "View on Map"
+    refute no_map_listing_html =~ ~s(/map?system_id=)
+  end
+
   test "active pseudonym deletion warns before confirm and rebinds seller UI", %{
     conn: conn,
     cache_tables: cache_tables,

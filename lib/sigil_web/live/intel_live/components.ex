@@ -144,8 +144,16 @@ defmodule SigilWeb.IntelLive.Components do
                     <%= report_type_label(report.report_type) %>
                   </span>
                   <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-                    <%= Map.get(@system_names, report.solar_system_id, Integer.to_string(report.solar_system_id)) %>
+                    <%= report_system_name(@system_names, report.solar_system_id) %>
                   </p>
+
+                  <.link
+                    :if={is_integer(report.solar_system_id) and report.solar_system_id > 0}
+                    navigate={~p"/map?system_id=#{report.solar_system_id}"}
+                    class="inline-flex rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+                  >
+                    View on Map
+                  </.link>
                 </div>
 
                 <%= if report.label do %>
@@ -220,6 +228,15 @@ defmodule SigilWeb.IntelLive.Components do
   defp toggle_button_classes(false) do
     "rounded-full border border-space-600/80 bg-space-800/70 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-space-500 transition hover:border-quantum-400 hover:text-cream"
   end
+
+  @spec report_system_name(%{optional(integer()) => String.t()}, integer() | nil) :: String.t()
+  defp report_system_name(_system_names, 0), do: "Location undisclosed"
+
+  defp report_system_name(system_names, solar_system_id) when is_integer(solar_system_id) do
+    Map.get(system_names, solar_system_id, Integer.to_string(solar_system_id))
+  end
+
+  defp report_system_name(_system_names, _solar_system_id), do: "Location undisclosed"
 
   @spec timestamp_label(IntelReport.t()) :: String.t()
   defp timestamp_label(%IntelReport{updated_at: %DateTime{} = updated_at}) do
