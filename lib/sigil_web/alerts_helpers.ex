@@ -11,16 +11,16 @@ defmodule SigilWeb.AlertsHelpers do
   """
   @spec card_classes(Alert.t() | map()) :: String.t()
   def card_classes(%{status: "new"}),
-    do: "rounded-2xl border border-quantum-400/60 bg-space-800/90 p-5"
+    do: "overflow-hidden rounded-2xl border border-quantum-400/60 bg-space-800/90 p-5"
 
   def card_classes(%{status: "acknowledged"}),
-    do: "rounded-2xl border border-space-600/80 bg-space-800/70 p-5"
+    do: "overflow-hidden rounded-2xl border border-space-600/80 bg-space-800/70 p-5"
 
   def card_classes(%{status: "dismissed"}),
-    do: "rounded-2xl border border-space-700/50 bg-space-900/50 p-5"
+    do: "overflow-hidden rounded-2xl border border-space-700/50 bg-space-900/50 p-5"
 
   def card_classes(_alert),
-    do: "rounded-2xl border border-space-600/80 bg-space-800/70 p-5"
+    do: "overflow-hidden rounded-2xl border border-space-600/80 bg-space-800/70 p-5"
 
   @doc """
   Returns the severity badge classes for an alert severity.
@@ -66,4 +66,12 @@ defmodule SigilWeb.AlertsHelpers do
   end
 
   def timestamp_label(_alert), do: "Just now"
+
+  @doc "Returns the owning character name from alert metadata, if present."
+  @spec alert_character_name(Alert.t() | map()) :: String.t() | nil
+  def alert_character_name(%{metadata: metadata}) when is_map(metadata) do
+    Map.get(metadata, :character_name) || Map.get(metadata, "character_name")
+  end
+
+  def alert_character_name(_alert), do: nil
 end

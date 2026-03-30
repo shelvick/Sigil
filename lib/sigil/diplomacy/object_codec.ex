@@ -80,8 +80,7 @@ defmodule Sigil.Diplomacy.ObjectCodec do
   end
 
   @spec parse_oracle_address(map()) :: String.t() | nil
-  defp parse_oracle_address(%{"oracle_address" => oracle}) when is_binary(oracle), do: oracle
-  defp parse_oracle_address(%{"oracleAddress" => oracle}) when is_binary(oracle), do: oracle
+  defp parse_oracle_address(%{"oracle" => oracle}) when is_binary(oracle), do: oracle
   defp parse_oracle_address(_object), do: nil
 
   @doc "Builds the shared registry reference from a page of chain objects."
@@ -105,7 +104,11 @@ defmodule Sigil.Diplomacy.ObjectCodec do
 
   defp parse_non_neg_integer(_value), do: nil
 
-  @spec parse_members([String.t()] | nil) :: [String.t()] | nil
+  @spec parse_members(map() | [String.t()] | nil) :: [String.t()] | nil
+  defp parse_members(%{"contents" => members}) when is_list(members) do
+    if Enum.all?(members, &is_binary/1), do: members, else: nil
+  end
+
   defp parse_members(members) when is_list(members) do
     if Enum.all?(members, &is_binary/1), do: members, else: nil
   end

@@ -63,7 +63,6 @@ defmodule SigilWeb.DiplomacyLive.Components.Sections do
         <input
           type="text"
           phx-keyup="filter_tribes"
-          phx-value-query=""
           name="query"
           value={@tribe_filter}
           placeholder="Search tribes..."
@@ -249,25 +248,22 @@ defmodule SigilWeb.DiplomacyLive.Components.Sections do
   def oracle_controls_section(assigns) do
     ~H"""
     <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Auto-standings</p>
-      <h2 class="mt-3 text-2xl font-semibold text-cream">Oracle Controls</h2>
+      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Reputation engine</p>
+      <h2 class="mt-3 text-2xl font-semibold text-cream">Auto-Standings</h2>
 
-      <p class="mt-4 text-sm text-cream">
-        Auto-standings: <%= if @oracle_enabled, do: "Enabled", else: "Disabled" %>
+      <p class="mt-4 text-sm text-space-500">
+        Monitors chain events (kills, jumps) and automatically updates tribe standings based on reputation scores.
       </p>
 
       <%= if @oracle_enabled and @oracle_address do %>
-        <p class="mt-2 font-mono text-xs text-space-500"><%= truncate_id(@oracle_address) %></p>
+        <div class="mt-4 rounded-2xl border border-success/30 bg-success/10 p-4">
+          <p class="text-sm font-semibold text-success">Active</p>
+          <p class="mt-1 font-mono text-xs text-space-500">Oracle: <%= truncate_id(@oracle_address) %></p>
+        </div>
       <% else %>
-        <form phx-change="change_oracle_address" class="mt-4 flex gap-3">
-          <input
-            type="text"
-            name="oracle_address"
-            value={@oracle_address_input}
-            placeholder="0x..."
-            class="w-full rounded-lg border border-space-600/80 bg-space-900/70 px-3 py-2 font-mono text-sm text-cream placeholder:text-space-500 focus:border-quantum-400/60 focus:outline-none"
-          />
-        </form>
+        <div class="mt-4 rounded-2xl border border-space-600/60 bg-space-800/60 p-4">
+          <p class="text-sm text-space-500">Not active — enable to let the server manage standings automatically.</p>
+        </div>
       <% end %>
 
       <div class="mt-4 flex flex-wrap items-center gap-3">
@@ -275,13 +271,14 @@ defmodule SigilWeb.DiplomacyLive.Components.Sections do
           :if={!@oracle_enabled}
           type="button"
           phx-click="set_oracle"
-          phx-value-oracle_address={@oracle_address_input}
+          phx-value-oracle_address={Sigil.Sui.GasRelay.relay_address()}
           class="rounded-full border border-quantum-400/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
         >
-          Enable
+          Enable Auto-Standings
         </button>
 
         <button
+          :if={@oracle_enabled}
           type="button"
           phx-click="remove_oracle"
           class="rounded-full border border-warning/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-warning transition hover:border-warning hover:text-cream"
@@ -293,7 +290,7 @@ defmodule SigilWeb.DiplomacyLive.Components.Sections do
           patch={~p"/tribe/#{@tribe_id}/diplomacy?view=reputation"}
           class="rounded-full border border-space-600/80 px-4 py-2 font-mono text-xs uppercase tracking-[0.24em] text-space-500 transition hover:border-quantum-300 hover:text-cream"
         >
-          Configure Scoring
+          View Scoring Rules
         </.link>
       </div>
     </div>
@@ -308,8 +305,9 @@ defmodule SigilWeb.DiplomacyLive.Components.Sections do
 
     ~H"""
     <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Scoring Configuration</p>
+      <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Reference</p>
       <h2 class="mt-3 text-2xl font-semibold text-cream">Scoring Rules</h2>
+      <p class="mt-2 text-sm text-space-500">Standing thresholds and scoring parameters used by the reputation engine.</p>
 
       <div class="mt-4 grid gap-3 md:grid-cols-2">
         <div class="rounded-xl border border-space-600/60 bg-space-800/60 p-3 text-sm text-cream">

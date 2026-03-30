@@ -101,7 +101,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert html =~ "Gate"
     assert html =~ gate.linked_gate_id
     assert html =~ gate.extension
-    assert html =~ gate.owner_cap_id
+    assert html =~ "Type"
     assert html =~ "Location Hash"
     assert html =~ "Dashboard"
   end
@@ -127,7 +127,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert html =~ "Turret"
     assert html =~ "Defense Turret"
     assert html =~ turret.extension
-    assert html =~ turret.owner_cap_id
+    assert html =~ "Type"
   end
 
   test "renders network node detail with fuel panel", %{
@@ -229,7 +229,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
                "/assembly/#{storage.id}"
              )
 
-    assert html =~ "Inventory Keys"
+    assert html =~ "Inventory Slots"
     assert html =~ "Item Count"
     assert html =~ "0xinv-1"
     assert html =~ "0xinv-2"
@@ -360,6 +360,9 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     account = account_fixture(wallet_address)
 
     Cache.put(cache_tables.accounts, wallet_address, account)
+
+    Sigil.Sui.ClientMock
+    |> Hammox.expect(:get_object, fn "0xmissing", _opts -> {:error, :not_found} end)
 
     assert {:error, {:redirect, %{to: "/", flash: %{"error" => "Assembly not found"}}}} =
              live(
@@ -843,7 +846,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
     assert html =~ "Jump Gate Alpha"
     assert html =~ gate.linked_gate_id
     assert html =~ gate.extension
-    assert html =~ gate.owner_cap_id
+    assert html =~ "Type"
     refute html =~ "Assembly not found"
     refute html =~ "Connect Your Wallet"
   end
@@ -1443,7 +1446,7 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
 
       assert html =~ "Set Location"
       assert html =~ "Solar system name"
-      assert html =~ "solar-systems"
+      assert html =~ "Type to search"
       refute html =~ "Solar system data not available"
     end
 

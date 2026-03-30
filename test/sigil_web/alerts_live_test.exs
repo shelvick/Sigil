@@ -7,14 +7,20 @@ defmodule SigilWeb.AlertsLiveTest do
 
   @moduletag capture_log: true
 
+  import Hammox
+
   alias Sigil.Accounts.Account
   alias Sigil.Alerts
   alias Sigil.Alerts.Alert
   alias Sigil.Cache
   alias Sigil.Repo
 
+  setup :verify_on_exit!
+
+  @tribe_id 42
+
   setup do
-    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters]})
+    cache_pid = start_supervised!({Cache, tables: [:accounts, :characters, :standings]})
     pubsub = unique_pubsub_name()
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
@@ -713,6 +719,164 @@ defmodule SigilWeb.AlertsLiveTest do
     refreshed_html = render(view)
     assert refreshed_html =~ "Fresh realtime alert"
     refute refreshed_html =~ "No alerts yet"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Webhook configuration panel (leader-only)
+  # ---------------------------------------------------------------------------
+
+  test "leader sees webhook configuration panel on alerts page", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = leader_account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    seed_leader_custodian(cache_tables, wallet_address)
+
+    assert {:ok, _view, html} =
+             mount_alerts_live(conn, wallet_address, cache_tables, pubsub)
+
+    assert html =~ "Discord Webhook"
+    assert html =~ "No webhook configured yet"
+    assert html =~ "Save Webhook"
+  end
+
+  test "non-leader does not see webhook panel", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = leader_account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: "0x" <> String.duplicate("c2", 32),
+      object_id_bytes: :binary.copy(<<0xC2>>, 32),
+      initial_shared_version: 1,
+      current_leader: unique_wallet_address(),
+      tribe_id: @tribe_id
+    })
+
+    assert {:ok, _view, html} =
+             mount_alerts_live(conn, wallet_address, cache_tables, pubsub)
+
+    refute html =~ "Discord Webhook"
+  end
+
+  test "leader saves webhook URL from alerts page", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = leader_account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    seed_leader_custodian(cache_tables, wallet_address)
+
+    {:ok, view, _html} =
+      mount_alerts_live(conn, wallet_address, cache_tables, pubsub)
+
+    webhook_url = "https://discord.com/api/webhooks/123456/token"
+
+    html = render_submit(view, "save_webhook", %{"webhook" => %{"webhook_url" => webhook_url}})
+
+    assert html =~ "Webhook configuration saved"
+
+    assert %Alerts.WebhookConfig{webhook_url: ^webhook_url, enabled: true} =
+             Alerts.get_webhook_config(@tribe_id, [])
+  end
+
+  test "leader toggles webhook delivery from alerts page", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = leader_account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    seed_leader_custodian(cache_tables, wallet_address)
+
+    {:ok, _config} =
+      Alerts.upsert_webhook_config(
+        @tribe_id,
+        %{"webhook_url" => "https://discord.com/api/webhooks/123456/token", "enabled" => true},
+        []
+      )
+
+    {:ok, view, _html} =
+      mount_alerts_live(conn, wallet_address, cache_tables, pubsub)
+
+    html = render_click(view, "toggle_webhook", %{})
+
+    assert html =~ "Webhook delivery disabled"
+
+    assert %Alerts.WebhookConfig{enabled: false} = Alerts.get_webhook_config(@tribe_id, [])
+  end
+
+  test "empty webhook URL shows validation error", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = leader_account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    seed_leader_custodian(cache_tables, wallet_address)
+
+    {:ok, view, _html} =
+      mount_alerts_live(conn, wallet_address, cache_tables, pubsub)
+
+    html = render_submit(view, "save_webhook", %{"webhook" => %{"webhook_url" => ""}})
+
+    assert html =~ "Webhook URL is required"
+  end
+
+  test "leader sends test webhook", %{
+    conn: conn,
+    cache_tables: cache_tables,
+    pubsub: pubsub,
+    wallet_address: wallet_address
+  } do
+    account = leader_account_fixture(wallet_address)
+    Cache.put(cache_tables.accounts, wallet_address, account)
+    seed_leader_custodian(cache_tables, wallet_address)
+
+    {:ok, _config} =
+      Alerts.upsert_webhook_config(
+        @tribe_id,
+        %{"webhook_url" => "https://discord.com/api/webhooks/123456/token", "enabled" => true},
+        []
+      )
+
+    expect(Sigil.Alerts.WebhookNotifierMock, :deliver, fn alert, config, _opts ->
+      assert alert.message =~ "test alert"
+      assert config.webhook_url =~ "123456"
+      :ok
+    end)
+
+    {:ok, view, _html} =
+      mount_alerts_live(conn, wallet_address, cache_tables, pubsub)
+
+    html = render_click(view, "test_webhook", %{})
+
+    assert html =~ "Test alert sent to Discord"
+  end
+
+  defp leader_account_fixture(wallet_address) do
+    %Account{address: wallet_address, characters: [], tribe_id: @tribe_id}
+  end
+
+  defp seed_leader_custodian(cache_tables, wallet_address) do
+    Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, %{
+      object_id: "0x" <> String.duplicate("c1", 32),
+      object_id_bytes: :binary.copy(<<0xC1>>, 32),
+      initial_shared_version: 1,
+      current_leader: wallet_address,
+      tribe_id: @tribe_id
+    })
   end
 
   defp authenticated_conn(conn, wallet_address, cache_tables, pubsub) do

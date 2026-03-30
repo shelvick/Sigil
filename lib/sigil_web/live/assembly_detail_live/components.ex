@@ -33,22 +33,36 @@ defmodule SigilWeb.AssemblyDetailLive.Components do
         </div>
 
         <%= if @can_edit_location do %>
-          <.form id="set-location-form" for={@form} phx-submit="set_location" class="w-full max-w-md space-y-3">
+          <.form id="set-location-form" for={@form} phx-submit="set_location" phx-change="filter_solar_systems" class="w-full max-w-md space-y-3">
             <p class="font-mono text-xs uppercase tracking-[0.24em] text-space-500"><%= if @location_name, do: "Update Location", else: "Set Location" %></p>
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500"><%= if @location_name, do: "New system name", else: "Solar system name" %></span>
-              <input
-                type="text"
-                name="location[solar_system_name]"
-                list="solar-systems"
-                value={@form.params["solar_system_name"] || ""}
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              />
-            </label>
-
-            <datalist id="solar-systems">
-              <option :for={system <- @solar_systems} value={system.name}></option>
-            </datalist>
+            <div class="relative">
+              <label class="block space-y-2">
+                <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500"><%= if @location_name, do: "New system name", else: "Solar system name" %></span>
+                <input
+                  type="text"
+                  name="location[solar_system_name]"
+                  value={@solar_system_query}
+                  placeholder="Type to search…"
+                  autocomplete="off"
+                  phx-debounce="150"
+                  class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
+                />
+              </label>
+              <div
+                :if={@filtered_solar_systems != []}
+                class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-2xl border border-space-600/80 bg-space-900/95 shadow-2xl backdrop-blur"
+              >
+                <button
+                  :for={system <- @filtered_solar_systems}
+                  type="button"
+                  phx-click="select_solar_system"
+                  phx-value-name={system.name}
+                  class="block w-full px-4 py-2.5 text-left text-sm text-cream transition first:rounded-t-2xl last:rounded-b-2xl hover:bg-space-800/80 hover:text-quantum-300"
+                >
+                  <%= system.name %>
+                </button>
+              </div>
+            </div>
 
             <button
               type="submit"
@@ -78,10 +92,10 @@ defmodule SigilWeb.AssemblyDetailLive.Components do
               <%= if @assembly.linked_gate_id && byte_size(@assembly.linked_gate_id) > 0 do %>
                 <.link
                   navigate={~p"/assembly/#{@assembly.linked_gate_id}"}
-                  class="mt-3 block font-mono text-sm text-quantum-300 transition hover:text-cream"
+                  class="mt-3 block text-sm text-quantum-300 transition hover:text-cream"
                   title={@assembly.linked_gate_id}
                 >
-                  <%= truncate_id(@assembly.linked_gate_id) %>
+                  <%= resolve_intel_label(@assembly.linked_gate_id, @intel_opts) || truncate_id(@assembly.linked_gate_id) %>
                 </.link>
               <% else %>
                 <p class="mt-3 font-mono text-sm text-foreground">Not linked</p>
@@ -112,7 +126,7 @@ defmodule SigilWeb.AssemblyDetailLive.Components do
       <% :storage_unit -> %>
         <div class="mt-8 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
           <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-5">
-            <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Inventory Keys</p>
+            <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Inventory Slots</p>
             <%= if @assembly.inventory_keys == [] do %>
               <p class="mt-4 text-sm text-space-500">Empty</p>
             <% else %>
@@ -168,7 +182,7 @@ defmodule SigilWeb.AssemblyDetailLive.Components do
             <div class="grid gap-4 md:grid-cols-2">
               <.detail_card title="Burn Rate" value={format_burn_rate(@assembly.fuel.burn_rate_in_ms)} mono />
               <.detail_card title="Is Burning" value={yes_no(@assembly.fuel.is_burning)} mono />
-              <.detail_card title="Fuel Type ID" value={optional_integer(@assembly.fuel.type_id)} mono />
+              <.detail_card title="Fuel Type" value={@fuel_type_name || optional_integer(@assembly.fuel.type_id)} mono />
               <.detail_card title="Unit Volume" value={optional_integer(@assembly.fuel.unit_volume)} mono />
               <.detail_card title="Burn Start Time" value={format_timestamp(@assembly.fuel.burn_start_time, @assembly.fuel.is_burning)} mono />
               <.detail_card title="Last Updated" value={format_timestamp(@assembly.fuel.last_updated, true)} mono />
@@ -199,9 +213,9 @@ defmodule SigilWeb.AssemblyDetailLive.Components do
                   <.link
                     :for={assembly_id <- @assembly.connected_assembly_ids}
                     navigate={~p"/assembly/#{assembly_id}"}
-                    class="block break-all font-mono text-sm text-quantum-300 transition hover:text-cream"
+                    class="block text-sm text-quantum-300 transition hover:text-cream"
                   >
-                    <%= truncate_id(assembly_id) %>
+                    <%= resolve_intel_label(assembly_id, @intel_opts) || truncate_id(assembly_id) %>
                   </.link>
                 </div>
               <% end %>

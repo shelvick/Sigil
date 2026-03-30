@@ -26,6 +26,12 @@
           Alerts
         </.link>
         <.link
+          navigate={~p"/marketplace"}
+          class="rounded-full border border-quantum-400/40 px-3 py-1 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
+        >
+          Market
+        </.link>
+        <.link
           navigate={~p"/map"}
           class="rounded-full border border-quantum-400/40 px-3 py-1 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-300 hover:text-cream"
         >
@@ -37,7 +43,7 @@
     <%= if @current_account do %>
       <div class="flex items-center gap-2 sm:gap-3">
         <%= if @active_character do %>
-          <div class="hidden items-center gap-2 md:flex">
+          <div class="hidden items-center gap-2 lg:flex">
             <p class="text-sm text-cream"><%= character_display_name(@active_character) %></p>
             <span class="font-mono text-xs text-space-500"><%= character_tribe_label(@active_character) %></span>
           </div>
@@ -70,13 +76,10 @@
           <% end %>
         <% end %>
 
-        <p class="rounded-full border border-space-600/80 bg-space-950/70 px-3 py-1 font-mono text-xs text-cream sm:text-sm">
-          <%= truncate_wallet(@current_account.address) %>
-        </p>
         <.link
           href={~p"/session"}
           method="delete"
-          class="rounded-full border border-quantum-600/60 bg-quantum-700/50 px-2 py-1 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-quantum-300 transition hover:border-quantum-400 hover:text-cream sm:px-3 sm:text-xs sm:tracking-[0.24em]"
+          class="hidden rounded-full border border-quantum-600/60 bg-quantum-700/50 px-3 py-1 font-mono text-xs uppercase tracking-[0.24em] text-quantum-300 transition hover:border-quantum-400 hover:text-cream lg:inline-flex"
         >
           Disconnect
         </.link>

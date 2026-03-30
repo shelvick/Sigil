@@ -361,7 +361,6 @@ defmodule SigilWeb.IntelLiveTest do
     assert html =~ "A 2560"
     assert html =~ "Just now"
     assert html =~ "0xreport-"
-    assert html =~ "..."
     refute html =~ ">30000001<"
   end
 

@@ -1,6 +1,6 @@
 import * as THREE from "three"
 
-const DEFAULT_CAMERA_MULTIPLIER = 1.6
+const DEFAULT_CAMERA_MULTIPLIER = 0.8
 
 export function normalizeCoordinates(systems, targetRange = 500) {
   if (!Array.isArray(systems) || systems.length === 0) {

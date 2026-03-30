@@ -42,7 +42,8 @@ vi.mock("three", () => {
           const dz = this.position.z - target.z
           return Math.sqrt(dx * dx + dy * dy + dz * dz)
         },
-        clone: () => ({ x: this.position.x, y: this.position.y, z: this.position.z })
+        clone: () => ({ x: this.position.x, y: this.position.y, z: this.position.z }),
+        length: () => Math.sqrt(this.position.x ** 2 + this.position.y ** 2 + this.position.z ** 2)
       }
       this.lookAtTarget = { x: 0, y: 0, z: 0 }
     }
@@ -98,6 +99,10 @@ vi.mock("three", () => {
       this.attributes[name] = value
     }
 
+    getAttribute(name) {
+      return this.attributes[name]
+    }
+
     dispose() {
       this.disposed = true
       return undefined
@@ -151,6 +156,17 @@ vi.mock("three", () => {
     }
   }
 
+  class CanvasTexture {
+    constructor(canvas) {
+      this.canvas = canvas
+      this.needsUpdate = false
+    }
+
+    dispose() {
+      return undefined
+    }
+  }
+
   class Color {
     constructor(value) {
       this.value = value
@@ -167,6 +183,7 @@ vi.mock("three", () => {
     Points,
     Raycaster,
     Vector2,
+    CanvasTexture,
     Color
   }
 })
@@ -336,9 +353,17 @@ describe("GalaxyMap hook", () => {
 
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1))
     vi.stubGlobal("cancelAnimationFrame", vi.fn())
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({
+      clearRect: () => undefined,
+      beginPath: () => undefined,
+      arc: () => undefined,
+      fill: () => undefined,
+      fillStyle: "#ffffff"
+    }))
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -398,8 +423,6 @@ describe("GalaxyMap hook", () => {
       systems: [{ id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 }]
     })
 
-    const initialCamera = hook.camera.position.clone()
-
     await pushServerEvent("select_system", { system_id: 30_000_142 })
 
     const selectedEvents = events.filter((entry) => entry.event === "system_selected")
@@ -407,8 +430,9 @@ describe("GalaxyMap hook", () => {
     expect(selectedEvents).toEqual([{ event: "system_selected", payload: { system_id: 30_000_142 } }])
     expect(hook.controls.target.clone()).toEqual({ x: 0, y: 0, z: 0 })
     expect(hook.camera.lookAtTarget).toEqual({ x: 0, y: 0, z: 0 })
-    expect(hook.camera.position.y).toBeLessThan(initialCamera.y)
+    expect(hook.camera.position.y).toBeCloseTo(40, 6)
     expect(hook.selectedHighlight).toBeTruthy()
+    expect(hook.selectedHighlight.material.options.size).toBe(5)
 
     destroy()
   })
@@ -443,6 +467,35 @@ describe("GalaxyMap hook", () => {
     })
 
     expect(hook.overlayLayers.marketplace.visible).toBe(false)
+
+    destroy()
+  })
+
+  it("GalaxyMap hook updates point colors from categories", async () => {
+    const { hook, destroy, pushServerEvent } = mountHook(await loadHook(), {
+      id: "galaxy-map"
+    })
+
+    await pushServerEvent("init_systems", {
+      systems: [
+        { id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 },
+        { id: 30_000_900, name: "Jita", constellation_id: 200_001, x: 40, y: 50, z: 60 }
+      ]
+    })
+
+    await pushServerEvent("update_system_colors", {
+      categories: {
+        30000142: "both",
+        30000900: "fuel_critical"
+      }
+    })
+
+    const colorArray = Array.from(hook.systemPoints.geometry.getAttribute("color").array)
+
+    expect(colorArray.slice(0, 3)).toEqual([1, 1, 1])
+    expect(colorArray[3]).toBeCloseTo(1, 4)
+    expect(colorArray[4]).toBeCloseTo(0.2667, 4)
+    expect(colorArray[5]).toBeCloseTo(0.2667, 4)
 
     destroy()
   })

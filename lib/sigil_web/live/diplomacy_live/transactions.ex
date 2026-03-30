@@ -74,6 +74,19 @@ defmodule SigilWeb.DiplomacyLive.Transactions do
         |> assign(page_state: socket.assigns.page_state, pending_tx_bytes: nil)
         |> State.maybe_refresh_after_submission()
 
+      {:error, {:tx_failed, msg}} when is_binary(msg) ->
+        if String.contains?(msg, "AlreadyRegistered") do
+          socket
+          |> put_flash(:info, "Custodian already exists — loading")
+          |> assign(pending_tx_bytes: nil)
+          |> State.discover_custodian_state()
+          |> State.load_standings()
+        else
+          socket
+          |> put_flash(:error, "Transaction failed: #{msg}")
+          |> assign(pending_tx_bytes: nil)
+        end
+
       {:error, reason} ->
         socket
         |> put_flash(:error, "Transaction failed: #{inspect(reason)}")

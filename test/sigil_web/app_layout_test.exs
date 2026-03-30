@@ -38,11 +38,11 @@ defmodule SigilWeb.AppLayoutTest do
     assert html =~ ~r/>\s*Dashboard\s*</
   end
 
-  # R3: Wallet display
-  test "app layout shows truncated wallet address when authenticated" do
+  # R3: Disconnect button visible when authenticated
+  test "app layout shows disconnect when authenticated" do
     html = render_layout(current_account: account_fixture())
 
-    assert html =~ "0x1234...abcd"
+    assert html =~ "Disconnect"
     refute html =~ @wallet_address
   end
 
@@ -208,7 +208,6 @@ defmodule SigilWeb.AppLayoutTest do
         active_character: nil
       )
 
-    assert html =~ "0x1234...abcd"
     assert html =~ "Disconnect"
     refute html =~ "Commander"
     refute html =~ "Unaligned"

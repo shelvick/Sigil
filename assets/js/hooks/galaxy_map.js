@@ -6,14 +6,13 @@ import {
   buildSystemIndex,
   createDefaultCamera,
   normalizeCoordinates,
-  normalizeWithTransform,
-  resolveSystemId,
-  shouldShowConstellations
+  resolveSystemId
 } from "./galaxy_map_utils"
 
 const TARGET_RANGE = 500
-const CLUSTER_THRESHOLD = 500
-const SELECTED_POINT_SIZE = 9
+const FIXED_FOCUS_DISTANCE = 40
+const SELECTED_POINT_SIZE = 5
+const DEFAULT_SYSTEM_CATEGORY = "default"
 
 const OVERLAY_CONFIG = {
   tribe_locations: { color: new THREE.Color("#00e5ff"), size: 6 },
@@ -21,12 +20,55 @@ const OVERLAY_CONFIG = {
   marketplace: { color: new THREE.Color("#4caf50"), size: 5 }
 }
 
-function pointMaterial(color, size) {
-  return new THREE.PointsMaterial({
-    color,
+const SYSTEM_CATEGORY_COLORS = {
+  fuel_critical: [1, 0.2667, 0.2667],
+  fuel_low: [1, 0.549, 0],
+  assembly: [0.2667, 0.8, 0.4],
+  intel: [0.2667, 0.5333, 1],
+  both: [1, 1, 1],
+  default: [0.2667, 0.3333, 0.4]
+}
+
+function createPointTexture() {
+  const size = 32
+  const canvas = document.createElement("canvas")
+  canvas.width = size
+  canvas.height = size
+
+  const context = canvas.getContext("2d")
+  if (!context) {
+    return null
+  }
+
+  context.clearRect(0, 0, size, size)
+  context.fillStyle = "#ffffff"
+  context.beginPath()
+  context.arc(size / 2, size / 2, size / 2 - 1, 0, Math.PI * 2)
+  context.fill()
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.needsUpdate = true
+  return texture
+}
+
+function pointMaterial({ color = null, size, texture = null, vertexColors = false }) {
+  const options = {
     size,
-    sizeAttenuation: true
-  })
+    sizeAttenuation: true,
+    vertexColors
+  }
+
+  if (color) {
+    options.color = color
+  }
+
+  if (texture) {
+    options.map = texture
+    options.transparent = true
+    options.alphaTest = 0.5
+  }
+
+  return new THREE.PointsMaterial(options)
 }
 
 const GalaxyMap = {
@@ -41,11 +83,9 @@ const GalaxyMap = {
     this.systemPositions = new Float32Array()
     this.systemIds = []
     this.systemIndex = new Map()
-    this.systemNormalization = null
-    this.constellationsRaw = []
+    this.systemCategories = {}
     this.selectedSystemId = null
     this.systemPoints = null
-    this.constellationPoints = null
     this.selectedHighlight = null
     this.overlayLayers = {
       tribe_locations: null,
@@ -57,6 +97,7 @@ const GalaxyMap = {
       tribe_scouting: true,
       marketplace: true
     }
+    this.pointTexture = createPointTexture()
 
     this._registerEvents()
 
@@ -84,9 +125,6 @@ const GalaxyMap = {
     this._disposePoints(this.systemPoints)
     this.systemPoints = null
 
-    this._disposePoints(this.constellationPoints)
-    this.constellationPoints = null
-
     this._disposePoints(this.selectedHighlight)
     this.selectedHighlight = null
 
@@ -105,6 +143,11 @@ const GalaxyMap = {
       this.renderer = null
     }
 
+    if (this.pointTexture) {
+      this.pointTexture.dispose?.()
+      this.pointTexture = null
+    }
+
     this.scene = null
     this.camera = null
     this.raycaster = null
@@ -115,8 +158,9 @@ const GalaxyMap = {
       this._initSystems(systems || [])
     })
 
-    this.handleEvent("init_constellations", ({ constellations } = {}) => {
-      this._initConstellations(constellations || [])
+    // Kept for protocol compatibility with the LiveView event bridge.
+    this.handleEvent("init_constellations", () => {
+      return undefined
     })
 
     this.handleEvent("update_overlays", (payload = {}) => {
@@ -127,7 +171,18 @@ const GalaxyMap = {
       this._setOverlayVisibility(layer, visible)
     })
 
+    this.handleEvent("update_system_colors", ({ categories } = {}) => {
+      this.systemCategories = categories || {}
+      this._applySystemColors()
+    })
+
     this.handleEvent("select_system", ({ system_id: systemId } = {}) => {
+      if (systemId == null) {
+        this.selectedSystemId = null
+        this._clearHighlight()
+        return
+      }
+
       const index = this.systemIndex.get(systemId)
       if (index === undefined) {
         return
@@ -176,7 +231,23 @@ const GalaxyMap = {
       return
     }
 
-    this._onCanvasClick = (event) => this._handleClick(event)
+    this._pointerDownPos = null
+    this._onPointerDown = (event) => {
+      this._pointerDownPos = { x: event.clientX, y: event.clientY }
+    }
+
+    this._onCanvasClick = (event) => {
+      if (this._pointerDownPos) {
+        const dx = event.clientX - this._pointerDownPos.x
+        const dy = event.clientY - this._pointerDownPos.y
+        if (dx * dx + dy * dy > 16) {
+          return
+        }
+      }
+      this._handleClick(event)
+    }
+
+    this.renderer.domElement.addEventListener("pointerdown", this._onPointerDown)
     this.renderer.domElement.addEventListener("click", this._onCanvasClick)
 
     this._onResize = () => this._resizeRenderer()
@@ -184,9 +255,15 @@ const GalaxyMap = {
   },
 
   _unbindDomEvents() {
-    if (this.renderer?.domElement && this._onCanvasClick) {
-      this.renderer.domElement.removeEventListener("click", this._onCanvasClick)
-      this._onCanvasClick = null
+    if (this.renderer?.domElement) {
+      if (this._onPointerDown) {
+        this.renderer.domElement.removeEventListener("pointerdown", this._onPointerDown)
+        this._onPointerDown = null
+      }
+      if (this._onCanvasClick) {
+        this.renderer.domElement.removeEventListener("click", this._onCanvasClick)
+        this._onCanvasClick = null
+      }
     }
 
     if (this._onResize) {
@@ -199,23 +276,10 @@ const GalaxyMap = {
     const animate = () => {
       this.animationId = requestAnimationFrame(animate)
       this.controls?.update()
-      this._updateZoomDependentVisibility()
       this.renderer?.render(this.scene, this.camera)
     }
 
     this.animationId = requestAnimationFrame(animate)
-  },
-
-  _updateZoomDependentVisibility() {
-    if (!this.camera || !this.controls || !this.constellationPoints || !this.systemPoints) {
-      return
-    }
-
-    const distance = this.camera.position.distanceTo(this.controls.target)
-    const showConstellations = shouldShowConstellations(distance, CLUSTER_THRESHOLD)
-
-    this.constellationPoints.visible = showConstellations
-    this.systemPoints.visible = !showConstellations
   },
 
   _resizeRenderer() {
@@ -242,10 +306,6 @@ const GalaxyMap = {
     const positions = normalization.positions
 
     this.systemPositions = positions
-    this.systemNormalization = {
-      offset: normalization.offset,
-      scale: normalization.scale
-    }
     this.systemIds = systems.map((system) => system.id)
     this.systemIndex = buildSystemIndex(systems)
 
@@ -253,13 +313,14 @@ const GalaxyMap = {
 
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
+    geometry.setAttribute(
+      "color",
+      new THREE.Float32BufferAttribute(this._buildSystemColorArray(this.systemIds), 3)
+    )
 
-    const material = pointMaterial(new THREE.Color("#8899bb"), 3)
+    const material = pointMaterial({ size: 3, texture: this.pointTexture, vertexColors: true })
     this.systemPoints = new THREE.Points(geometry, material)
     this.scene?.add(this.systemPoints)
-
-    // Constellations share the same transform as systems to avoid frame mismatches.
-    this._rebuildConstellationPoints()
 
     if (this.selectedSystemId !== null) {
       const selectedIndex = this.systemIndex.get(this.selectedSystemId)
@@ -269,31 +330,6 @@ const GalaxyMap = {
         this._clearHighlight()
       }
     }
-  },
-
-  _initConstellations(constellations) {
-    this.constellationsRaw = Array.isArray(constellations) ? constellations : []
-    this._rebuildConstellationPoints()
-  },
-
-  _rebuildConstellationPoints() {
-    this._disposePoints(this.constellationPoints)
-    this.constellationPoints = null
-
-    if (!this.constellationsRaw.length || !this.systemNormalization) {
-      return
-    }
-
-    const positions = normalizeWithTransform(this.constellationsRaw, this.systemNormalization)
-
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
-
-    const material = pointMaterial(new THREE.Color("#9fb7ff"), 7)
-    this.constellationPoints = new THREE.Points(geometry, material)
-    this.constellationPoints.visible = false
-
-    this.scene?.add(this.constellationPoints)
   },
 
   _updateOverlays({
@@ -338,7 +374,12 @@ const GalaxyMap = {
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
 
-    const material = pointMaterial(config.color, config.size)
+    const material = pointMaterial({
+      color: config.color,
+      size: config.size,
+      texture: this.pointTexture
+    })
+
     const points = new THREE.Points(geometry, material)
     points.visible = this.overlayVisibility[layer] !== false
 
@@ -359,6 +400,48 @@ const GalaxyMap = {
     }
   },
 
+  _categoryForSystemId(systemId) {
+    const direct = this.systemCategories?.[systemId]
+    if (typeof direct === "string") {
+      return direct
+    }
+
+    const stringKey = this.systemCategories?.[String(systemId)]
+    if (typeof stringKey === "string") {
+      return stringKey
+    }
+
+    return DEFAULT_SYSTEM_CATEGORY
+  },
+
+  _colorForCategory(category) {
+    return SYSTEM_CATEGORY_COLORS[category] || SYSTEM_CATEGORY_COLORS[DEFAULT_SYSTEM_CATEGORY]
+  },
+
+  _buildSystemColorArray(systemIds) {
+    const colors = new Float32Array(systemIds.length * 3)
+
+    systemIds.forEach((systemId, index) => {
+      const color = this._colorForCategory(this._categoryForSystemId(systemId))
+      const base = index * 3
+      colors[base] = color[0]
+      colors[base + 1] = color[1]
+      colors[base + 2] = color[2]
+    })
+
+    return colors
+  },
+
+  _applySystemColors() {
+    const colorAttribute = this.systemPoints?.geometry?.getAttribute?.("color")
+    if (!colorAttribute) {
+      return
+    }
+
+    colorAttribute.array.set(this._buildSystemColorArray(this.systemIds))
+    colorAttribute.needsUpdate = true
+  },
+
   _handleClick(event) {
     if (!this.raycaster || !this.camera || !this.systemPoints || !this.renderer) {
       this._clearHighlight()
@@ -373,6 +456,8 @@ const GalaxyMap = {
     this.pointer.x = ((event.clientX - rect.left) / width) * 2 - 1
     this.pointer.y = -((event.clientY - rect.top) / height) * 2 + 1
 
+    const cameraDist = this.camera.position.length()
+    this.raycaster.params.Points.threshold = Math.max(3, cameraDist * 0.02)
     this.raycaster.setFromCamera(this.pointer, this.camera)
     const [intersection] = this.raycaster.intersectObject(this.systemPoints)
 
@@ -418,15 +503,14 @@ const GalaxyMap = {
     const deltaZ = this.camera.position.z - currentTarget.z
 
     const currentDistance = Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ)
-    const safeDistance = currentDistance > 0 ? currentDistance : TARGET_RANGE * 1.6
-    const zoomDistance = Math.max(40, safeDistance * 0.6)
-    const norm = safeDistance > 0 ? safeDistance : 1
+    const safeDistance = currentDistance > 0 ? currentDistance : 1
+    const norm = safeDistance
 
     this.controls.target.set(point.x, point.y, point.z)
     this.camera.position.set(
-      point.x + (deltaX / norm) * zoomDistance,
-      point.y + (deltaY / norm) * zoomDistance,
-      point.z + (deltaZ / norm) * zoomDistance
+      point.x + (deltaX / norm) * FIXED_FOCUS_DISTANCE,
+      point.y + (deltaY / norm) * FIXED_FOCUS_DISTANCE,
+      point.z + (deltaZ / norm) * FIXED_FOCUS_DISTANCE
     )
     this.camera.lookAt(point.x, point.y, point.z)
     this.controls.update()
@@ -447,7 +531,12 @@ const GalaxyMap = {
       new THREE.Float32BufferAttribute(new Float32Array([point.x, point.y, point.z]), 3)
     )
 
-    const material = pointMaterial(new THREE.Color("#ffffff"), SELECTED_POINT_SIZE)
+    const material = pointMaterial({
+      color: new THREE.Color("#ffffff"),
+      size: SELECTED_POINT_SIZE,
+      texture: this.pointTexture
+    })
+
     this.selectedHighlight = new THREE.Points(geometry, material)
     this.scene?.add(this.selectedHighlight)
   },

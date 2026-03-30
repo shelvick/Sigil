@@ -17,7 +17,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
   @spec filter_bar(map()) :: Phoenix.LiveView.Rendered.t()
   def filter_bar(assigns) do
     ~H"""
-    <.form id="marketplace-filters" for={to_form(@filters, as: :filters)} phx-change="filter_listings" class="grid gap-4 rounded-[2rem] border border-space-600/80 bg-space-900/70 p-6 shadow-2xl shadow-black/30 backdrop-blur md:grid-cols-4">
+    <.form id="marketplace-filters" for={to_form(@filters, as: :filters)} phx-change="filter_listings" class="relative z-10 grid gap-4 overflow-visible rounded-[2rem] border border-space-600/80 bg-space-900/70 p-6 shadow-2xl shadow-black/30 md:grid-cols-4">
       <label class="space-y-2">
         <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Report Type</span>
         <select
@@ -30,16 +30,32 @@ defmodule SigilWeb.IntelMarketLive.Components do
         </select>
       </label>
 
-      <label class="space-y-2">
+      <div class="relative space-y-2">
         <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Solar System</span>
         <input
           type="text"
           name="filters[solar_system_name]"
           value={@filters["solar_system_name"] || ""}
-          list="marketplace-solar-systems"
+          placeholder="Type to search…"
+          autocomplete="off"
+          phx-debounce="150"
           class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
         />
-      </label>
+        <div
+          :if={@browse_solar_suggestions != []}
+          class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-2xl border border-space-600/80 bg-space-900/95 shadow-2xl backdrop-blur"
+        >
+          <button
+            :for={system <- @browse_solar_suggestions}
+            type="button"
+            phx-click="select_browse_system"
+            phx-value-name={system.name}
+            class="block w-full px-4 py-2.5 text-left text-sm text-cream transition first:rounded-t-2xl last:rounded-b-2xl hover:bg-space-800/80 hover:text-quantum-300"
+          >
+            <%= system.name %>
+          </button>
+        </div>
+      </div>
 
       <label class="space-y-2">
         <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Min Price (SUI)</span>
@@ -61,9 +77,6 @@ defmodule SigilWeb.IntelMarketLive.Components do
         />
       </label>
 
-      <datalist id="marketplace-solar-systems">
-        <option :for={system <- @solar_systems} value={system.name}></option>
-      </datalist>
     </.form>
     """
   end
@@ -390,75 +403,50 @@ defmodule SigilWeb.IntelMarketLive.Components do
           reason: String.t() | nil
         }
   defp purchase_action(%IntelListing{status: status}, _sender, _tribe_id)
-       when status in [:sold, :cancelled] do
-    %{visible?: false, enabled?: false, reason: nil}
-  end
+       when status in [:sold, :cancelled],
+       do: %{visible?: false, enabled?: false, reason: nil}
 
   defp purchase_action(%IntelListing{seller_address: seller_address}, sender, _tribe_id)
-       when seller_address == sender do
-    %{visible?: false, enabled?: false, reason: nil}
-  end
+       when seller_address == sender,
+       do: %{visible?: false, enabled?: false, reason: nil}
 
-  defp purchase_action(%IntelListing{restricted_to_tribe_id: nil}, _sender, _tribe_id) do
-    %{visible?: true, enabled?: true, reason: nil}
-  end
+  defp purchase_action(%IntelListing{restricted_to_tribe_id: nil}, _sender, _tribe_id),
+    do: %{visible?: true, enabled?: true, reason: nil}
 
-  defp purchase_action(
-         %IntelListing{restricted_to_tribe_id: restricted_tribe_id},
-         _sender,
-         tribe_id
-       )
-       when restricted_tribe_id == tribe_id do
-    %{visible?: true, enabled?: true, reason: nil}
-  end
+  defp purchase_action(%IntelListing{restricted_to_tribe_id: rid}, _sender, tribe_id)
+       when rid == tribe_id,
+       do: %{visible?: true, enabled?: true, reason: nil}
 
-  defp purchase_action(%IntelListing{}, _sender, _tribe_id) do
-    %{visible?: true, enabled?: false, reason: "Restricted to another tribe"}
-  end
+  defp purchase_action(%IntelListing{}, _sender, _tribe_id),
+    do: %{visible?: true, enabled?: false, reason: "Restricted to another tribe"}
 
   @spec decrypt_action(IntelListing.t(), String.t() | nil, String.t() | nil) :: %{
           visible?: boolean()
         }
-  defp decrypt_action(
-         %IntelListing{status: :sold, seller_address: seller_address},
-         sender,
-         active_pseudonym
-       )
-       when seller_address == sender or seller_address == active_pseudonym do
-    %{visible?: true}
-  end
+  defp decrypt_action(%IntelListing{status: :sold, seller_address: sa}, sender, active_pseudonym)
+       when sa == sender or sa == active_pseudonym,
+       do: %{visible?: true}
 
-  defp decrypt_action(
-         %IntelListing{status: :sold, buyer_address: buyer_address},
-         sender,
-         _active_pseudonym
-       )
-       when buyer_address == sender and not is_nil(sender) do
-    %{visible?: true}
-  end
+  defp decrypt_action(%IntelListing{status: :sold, buyer_address: ba}, sender, _active_pseudonym)
+       when ba == sender and not is_nil(sender),
+       do: %{visible?: true}
 
   defp decrypt_action(%IntelListing{}, _sender, _active_pseudonym), do: %{visible?: false}
 
   @spec purchase_button_classes(boolean()) :: String.t()
-  defp purchase_button_classes(true) do
-    "inline-flex rounded-full bg-quantum-400 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-space-950 transition hover:bg-quantum-300"
-  end
+  defp purchase_button_classes(true),
+    do:
+      "inline-flex rounded-full bg-quantum-400 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-space-950 transition hover:bg-quantum-300"
 
-  defp purchase_button_classes(false) do
-    "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-space-500 opacity-70"
-  end
+  defp purchase_button_classes(false),
+    do:
+      "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-4 py-2 font-mono text-xs uppercase tracking-[0.2em] text-space-500 opacity-70"
 
   @spec reputation_summary(%{positive: non_neg_integer(), negative: non_neg_integer()}) ::
           String.t()
   defp reputation_summary(%{positive: positive, negative: negative}) do
     total = positive + negative
-
-    ratio =
-      case total do
-        0 -> 0
-        _non_zero_total -> round(positive * 100 / total)
-      end
-
+    ratio = if total == 0, do: 0, else: round(positive * 100 / total)
     "+#{positive} / -#{negative} (#{ratio}%)"
   end
 
@@ -480,20 +468,19 @@ defmodule SigilWeb.IntelMarketLive.Components do
   defp present_decrypted?(_payload), do: false
 
   @spec feedback_recorded?(map(), String.t()) :: boolean()
-  defp feedback_recorded?(feedback_recorded, listing_id) when is_map(feedback_recorded) do
-    Map.get(feedback_recorded, listing_id, false)
-  end
+  defp feedback_recorded?(feedback_recorded, listing_id) when is_map(feedback_recorded),
+    do: Map.get(feedback_recorded, listing_id, false)
 
   @spec feedback_button_classes(:confirm | :report, boolean()) :: String.t()
-  defp feedback_button_classes(_action, true) do
-    "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-space-500 opacity-70"
-  end
+  defp feedback_button_classes(_action, true),
+    do:
+      "inline-flex cursor-not-allowed rounded-full border border-space-600/80 bg-space-900/40 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-space-500 opacity-70"
 
-  defp feedback_button_classes(:confirm, false) do
-    "inline-flex rounded-full border border-success/40 bg-success/10 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-success transition hover:border-success hover:text-cream"
-  end
+  defp feedback_button_classes(:confirm, false),
+    do:
+      "inline-flex rounded-full border border-success/40 bg-success/10 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-success transition hover:border-success hover:text-cream"
 
-  defp feedback_button_classes(:report, false) do
-    "inline-flex rounded-full border border-warning/40 bg-warning/10 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-warning transition hover:border-warning hover:text-cream"
-  end
+  defp feedback_button_classes(:report, false),
+    do:
+      "inline-flex rounded-full border border-warning/40 bg-warning/10 px-3 py-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-warning transition hover:border-warning hover:text-cream"
 end

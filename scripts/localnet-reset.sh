@@ -142,6 +142,60 @@ ENVEOF"
   NWN_ID=$(echo "$SEED_OUTPUT" | grep "NWN Object Id:" | sed 's/.*: //' | tr -d '[:space:]' || echo "unknown")
   SSU_ID=$(echo "$SEED_OUTPUT" | grep "Storage Unit Object Id:" | sed 's/.*: //' | tr -d '[:space:]' || echo "unknown")
   ok "Seeded"
+
+  # --- Seed additional UAT world objects ---
+  step "Extracting world object IDs for UAT seeding"
+  REGISTRY_ID=$(sudo docker exec "$CONTAINER" jq -r '.world.objectRegistry' \
+    /workspace/world-contracts/deployments/localnet/extracted-object-ids.json 2>/dev/null || echo "")
+  ACL_ID=$(sudo docker exec "$CONTAINER" jq -r '.world.adminAcl' \
+    /workspace/world-contracts/deployments/localnet/extracted-object-ids.json 2>/dev/null || echo "")
+
+  if [ -n "$REGISTRY_ID" ] && [ "$REGISTRY_ID" != "null" ]; then
+    ok "Registry: $REGISTRY_ID"
+    ok "AdminACL: $ACL_ID"
+
+    step "Seeding additional UAT world objects (extra characters + assemblies)"
+    sudo docker cp "$SIGIL_DIR/scripts/seed-uat-world-objects.ts" \
+      "$CONTAINER:/workspace/world-contracts/ts-scripts/seed-uat-world-objects.ts"
+
+    UAT_OUTPUT=$(sudo docker exec "$CONTAINER" bash -c "
+      cd /workspace/world-contracts
+      export WORLD_OBJECT_REGISTRY=$REGISTRY_ID
+      export ADMIN_ACL=$ACL_ID
+      export PLAYER_A_ADDRESS=$PLAYER_A_ADDR
+      export PLAYER_B_ADDRESS=$PLAYER_B_ADDR
+      export ADMIN_ADDRESS=$ADMIN_ADDR
+      export CHAR_A_ID=$CHAR_A
+      export CHAR_B_ID=$CHAR_B
+      export NWN_ID=$NWN_ID
+      npx tsx ts-scripts/seed-uat-world-objects.ts 2>/dev/null
+    " 2>&1 || true)
+
+    # Parse all IDs from UAT script output (more reliable than grepping basic seed stdout)
+    CHAR_A=$(echo "$UAT_OUTPUT" | grep "^CHAR_A1=" | cut -d= -f2 || true)
+    CHAR_B=$(echo "$UAT_OUTPUT" | grep "^CHAR_B1=" | cut -d= -f2 || true)
+    CHAR_A2=$(echo "$UAT_OUTPUT" | grep "^CHAR_A2=" | cut -d= -f2 || true)
+    CHAR_C1=$(echo "$UAT_OUTPUT" | grep "^CHAR_C1=" | cut -d= -f2 || true)
+    NWN_ID=$(echo "$UAT_OUTPUT" | grep "^NWN_A=" | cut -d= -f2 || true)
+    NWN_B=$(echo "$UAT_OUTPUT" | grep "^NWN_B=" | cut -d= -f2 || true)
+    TURRET_A=$(echo "$UAT_OUTPUT" | grep "^TURRET_A=" | cut -d= -f2 || true)
+    GATE_B=$(echo "$UAT_OUTPUT" | grep "^GATE_B=" | cut -d= -f2 || true)
+
+    if [ -n "$CHAR_A2" ]; then
+      ok "char_a1 (tribe 100): $CHAR_A"
+      ok "char_b1 (tribe 100): $CHAR_B"
+      ok "char_a2 (tribe 999): $CHAR_A2"
+      ok "char_c1 (tribe 200): $CHAR_C1"
+      ok "NWN_B (PLAYER_B):   $NWN_B"
+      ok "TURRET_A:           $TURRET_A"
+      ok "GATE_B (PLAYER_B):  $GATE_B"
+    else
+      warn "UAT world object seeding failed — continuing without extras"
+      warn "Output: $UAT_OUTPUT"
+    fi
+  else
+    warn "Could not extract registry/ACL IDs — skipping UAT world objects"
+  fi
 fi
 
 # --- Get world package ID (both modes) ---
@@ -204,7 +258,22 @@ const decoded = decodeSuiPrivateKey('$PLAYER_A_PRIVKEY');
 console.log(Buffer.from(decoded.secretKey).toString('hex'));
 \"" 2>/dev/null)
 [ -n "$SIGNER_KEY" ] || fail "Could not extract signer key"
-ok "Signer key extracted"
+ok "Signer key extracted (PLAYER_A)"
+
+# Extract ADMIN and PLAYER_B hex keys for Sigil seed task
+ADMIN_KEY_HEX=$(sudo docker exec "$CONTAINER" bash -c "cd /workspace/world-contracts && node -e \"
+const { decodeSuiPrivateKey } = require('@mysten/sui/cryptography');
+const decoded = decodeSuiPrivateKey('$ADMIN_PRIVKEY');
+console.log(Buffer.from(decoded.secretKey).toString('hex'));
+\"" 2>/dev/null)
+
+PLAYER_B_KEY_HEX=$(sudo docker exec "$CONTAINER" bash -c "cd /workspace/world-contracts && node -e \"
+const { decodeSuiPrivateKey } = require('@mysten/sui/cryptography');
+const decoded = decodeSuiPrivateKey('$PLAYER_B_PRIVKEY');
+console.log(Buffer.from(decoded.secretKey).toString('hex'));
+\"" 2>/dev/null)
+
+ok "ADMIN + PLAYER_B hex keys extracted"
 
 # --- Verify GraphQL ---
 step "Verifying GraphQL indexer"
@@ -217,6 +286,50 @@ for i in 1 2 3 4 5; do
   [ "$i" -eq 5 ] && warn "GraphQL not responding yet — indexer may still be catching up"
   sleep 3
 done
+
+# ═══════════════════════════════════════════════════════════════
+# Sigil Database + On-Chain Seeding
+# ═══════════════════════════════════════════════════════════════
+if [ "$MODE" = "full" ]; then
+  step "Resetting and seeding Sigil database"
+  cd "$SIGIL_DIR"
+
+  # Set env for Mix task
+  export SUI_LOCALNET_PACKAGE_ID="$WORLD_PKG"
+  export SUI_LOCALNET_SIGIL_PACKAGE_ID="$SIGIL_PKG"
+  export SUI_LOCALNET_SIGNER_KEY="$SIGNER_KEY"
+  export EVE_WORLD=localnet
+
+  mix ecto.reset 2>&1 | grep -v "^$" || true
+  ok "Database reset"
+
+  if [ -n "${CHAR_A2:-}" ] && [ -n "${CHAR_C1:-}" ]; then
+    step "Seeding Sigil on-chain objects and database records"
+    export SEED_CHAR_A1="${CHAR_A:-}"
+    export SEED_CHAR_B1="${CHAR_B:-}"
+    export SEED_CHAR_C1="${CHAR_C1:-}"
+    export SEED_GATE_1="${GATE_1:-}"
+    export SEED_GATE_2="${GATE_2:-}"
+    export SEED_NWN="${NWN_ID:-}"
+    export SEED_SSU="${SSU_ID:-}"
+    export SEED_TURRET="${TURRET_A:-}"
+    export SEED_GATE_B="${GATE_B:-}"
+    export SEED_NWN_B="${NWN_B:-}"
+    export SEED_PLAYER_A_ADDR="$PLAYER_A_ADDR"
+    export SEED_PLAYER_B_ADDR="$PLAYER_B_ADDR"
+    export SEED_ADMIN_ADDR="$ADMIN_ADDR"
+    export SEED_ADMIN_KEY_HEX="$ADMIN_KEY_HEX"
+    export SEED_PLAYER_B_KEY_HEX="$PLAYER_B_KEY_HEX"
+
+    if mix sigil.seed_localnet 2>&1; then
+      ok "Sigil seeding complete"
+    else
+      warn "Sigil seeding failed — database records may be incomplete"
+    fi
+  else
+    warn "Skipping Sigil seeding — UAT world objects were not created"
+  fi
+fi
 
 # ═══════════════════════════════════════════════════════════════
 # Output
@@ -247,7 +360,9 @@ if [ "$MODE" = "full" ]; then
   echo -e "${BOLD}Characters:${NC}"
   echo ""
   printf "  %-10s %-66s ID: %-10s Tribe: %s\n" "PLAYER_A" "${CHAR_A:-unknown}" "811880" "100"
+  printf "  %-10s %-66s ID: %-10s Tribe: %s\n" "PLAYER_A" "${CHAR_A2:-unknown}" "811881" "999 (no custodian)"
   printf "  %-10s %-66s ID: %-10s Tribe: %s\n" "PLAYER_B" "${CHAR_B:-unknown}" "900000001" "100"
+  printf "  %-10s %-66s ID: %-10s Tribe: %s\n" "ADMIN" "${CHAR_C1:-unknown}" "900000002" "200"
   echo ""
   echo -e "${BOLD}Assets (PLAYER_A):${NC}"
   echo ""
@@ -255,6 +370,12 @@ if [ "$MODE" = "full" ]; then
   printf "  %-12s %s\n" "Gate 2" "${GATE_2:-unknown}"
   printf "  %-12s %s\n" "NetworkNode" "${NWN_ID:-unknown}"
   printf "  %-12s %s\n" "StorageUnit" "${SSU_ID:-unknown}"
+  printf "  %-12s %s\n" "Turret" "${TURRET_A:-unknown}"
+  echo ""
+  echo -e "${BOLD}Assets (PLAYER_B):${NC}"
+  echo ""
+  printf "  %-12s %s\n" "NetworkNode" "${NWN_B:-unknown}"
+  printf "  %-12s %s\n" "Gate" "${GATE_B:-unknown}"
 fi
 
 echo ""
@@ -280,14 +401,39 @@ if [ "$MODE" = "full" ]; then
   cat >> "$ENV_FILE" << EOF
 
 # Characters
-# PLAYER_A: ${CHAR_A:-unknown} (ID: 811880, Tribe: 100)
-# PLAYER_B: ${CHAR_B:-unknown} (ID: 900000001, Tribe: 100)
+# PLAYER_A char_a1: ${CHAR_A:-unknown} (ID: 811880, Tribe: 100)
+# PLAYER_A char_a2: ${CHAR_A2:-unknown} (ID: 811881, Tribe: 999 — no custodian)
+# PLAYER_B char_b1: ${CHAR_B:-unknown} (ID: 900000001, Tribe: 100)
+# ADMIN    char_c1: ${CHAR_C1:-unknown} (ID: 900000002, Tribe: 200)
 
 # Assets (PLAYER_A)
 # Gate 1:      ${GATE_1:-unknown}
 # Gate 2:      ${GATE_2:-unknown}
 # NetworkNode: ${NWN_ID:-unknown}
 # StorageUnit: ${SSU_ID:-unknown}
+# Turret:      ${TURRET_A:-unknown}
+
+# Assets (PLAYER_B)
+# NetworkNode: ${NWN_B:-unknown}
+# Gate:        ${GATE_B:-unknown}
+
+# UAT seed env vars (for mix sigil.seed_localnet)
+export SEED_CHAR_A1="${CHAR_A:-}"
+export SEED_CHAR_A2="${CHAR_A2:-}"
+export SEED_CHAR_B1="${CHAR_B:-}"
+export SEED_CHAR_C1="${CHAR_C1:-}"
+export SEED_GATE_1="${GATE_1:-}"
+export SEED_GATE_2="${GATE_2:-}"
+export SEED_NWN="${NWN_ID:-}"
+export SEED_SSU="${SSU_ID:-}"
+export SEED_TURRET="${TURRET_A:-}"
+export SEED_GATE_B="${GATE_B:-}"
+export SEED_NWN_B="${NWN_B:-}"
+export SEED_PLAYER_A_ADDR="$PLAYER_A_ADDR"
+export SEED_PLAYER_B_ADDR="$PLAYER_B_ADDR"
+export SEED_ADMIN_ADDR="$ADMIN_ADDR"
+export SEED_ADMIN_KEY_HEX="$ADMIN_KEY_HEX"
+export SEED_PLAYER_B_KEY_HEX="$PLAYER_B_KEY_HEX"
 EOF
 fi
 

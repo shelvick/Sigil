@@ -105,7 +105,6 @@ defmodule Sigil.IntelTest do
                )
 
       assert errors_on(changeset) == %{
-               assembly_id: ["can't be blank"],
                reported_by: ["can't be blank"],
                reported_by_character_id: ["can't be blank"]
              }

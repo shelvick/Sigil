@@ -17,7 +17,6 @@ defmodule Sigil.Intel.IntelReportTest do
       refute changeset.valid?
 
       assert errors_on(changeset) == %{
-               assembly_id: ["can't be blank"],
                reported_by: ["can't be blank"],
                reported_by_character_id: ["can't be blank"],
                tribe_id: ["can't be blank"]
@@ -33,15 +32,14 @@ defmodule Sigil.Intel.IntelReportTest do
       assert get_change(changeset, :solar_system_id) == 30_001_042
     end
 
-    test "location_changeset rejects blank assembly_id" do
+    test "location_changeset accepts nil assembly_id" do
       changeset =
         IntelReport.location_changeset(
           struct(IntelReport),
-          valid_location_params(%{assembly_id: "   "})
+          valid_location_params(%{assembly_id: nil})
         )
 
-      refute changeset.valid?
-      assert errors_on(changeset).assembly_id == ["can't be blank"]
+      assert changeset.valid?
     end
   end
 

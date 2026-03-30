@@ -1915,7 +1915,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     html = render(view)
 
-    assert html =~ "Auto-standings"
+    assert html =~ "Auto-Standings"
     assert has_element?(view, "button[phx-click=set_oracle]")
 
     render_click(view, "set_oracle", %{"oracle_address" => "0x" <> String.duplicate("aa", 32)})
@@ -1975,8 +1975,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     account = account_fixture(wallet_address, @tribe_id)
     Cache.put(cache_tables.accounts, wallet_address, account)
 
-    seed_active_custodian(cache_tables, wallet_address)
-    seed_single_custodian_discovery(wallet_address)
+    oracle_addr = "0x" <> String.duplicate("bb", 32)
+    seed_active_custodian(cache_tables, wallet_address, oracle_address: oracle_addr)
+    seed_single_custodian_discovery(wallet_address, oracle_address: oracle_addr)
 
     {:ok, view, _html} =
       live(
@@ -2117,7 +2118,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     assert html =~ "AUTO"
     refute html =~ "pin-toggle"
-    refute html =~ "Auto-standings"
+    refute html =~ "Auto-Standings"
   end
 
   test "reputation pubsub refreshes diplomacy scores", %{
@@ -2180,8 +2181,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     assert html =~ "Score"
     assert html =~ "AUTO"
-    assert html =~ "Configure Scoring"
-    assert html =~ "Auto-standings"
+    assert html =~ "View Scoring Rules"
+    assert html =~ "Auto-Standings"
     refute html =~ "Only the tribe leader can modify standings"
     refute html =~ "Transaction failed"
   end
@@ -2205,14 +2206,14 @@ defmodule SigilWeb.DiplomacyLiveTest do
         "/tribe/#{@tribe_id}/diplomacy"
       )
 
-    assert html =~ "Configure Scoring"
+    assert html =~ "View Scoring Rules"
 
     updated_html =
       view
-      |> element("a", "Configure Scoring")
+      |> element("a", "View Scoring Rules")
       |> render_click()
 
-    assert updated_html =~ "Scoring Configuration"
+    assert updated_html =~ "Reference"
     assert updated_html =~ "Decay half-life"
     assert updated_html =~ "Transitive weight"
     assert updated_html =~ "Kill multipliers"
@@ -2419,7 +2420,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
       members: Keyword.get(overrides, :members, [wallet_address]),
       votes_table_id: Keyword.get(overrides, :votes_table_id, table_id(0x34)),
       vote_tallies_table_id: Keyword.get(overrides, :vote_tallies_table_id, table_id(0x35)),
-      tribe_id: @tribe_id
+      tribe_id: @tribe_id,
+      oracle_address: Keyword.get(overrides, :oracle_address)
     }
 
     Cache.put(cache_tables.standings, {:active_custodian, @tribe_id}, custodian)
@@ -2552,7 +2554,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     current_leader_votes = Keyword.get(overrides, :current_leader_votes, 1)
     members = Keyword.get(overrides, :members, [current_leader])
 
-    %{
+    oracle_address = Keyword.get(overrides, :oracle_address)
+
+    json = %{
       "id" => object_id,
       "address" => object_id,
       "current_leader" => current_leader,
@@ -2564,6 +2568,8 @@ defmodule SigilWeb.DiplomacyLiveTest do
       "initialSharedVersion" => Integer.to_string(initial_shared_version),
       "shared" => %{"initialSharedVersion" => Integer.to_string(initial_shared_version)}
     }
+
+    if oracle_address, do: Map.put(json, "oracle", oracle_address), else: json
   end
 
   defp character_json(overrides) do

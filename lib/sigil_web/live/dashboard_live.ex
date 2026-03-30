@@ -241,6 +241,7 @@ defmodule SigilWeb.DashboardLive do
             alert_summary={@alert_summary}
             unread_count={@unread_count}
             static_data={@static_data}
+            cache_tables={@cache_tables}
           />
         <% else %>
           <.wallet_connect_view
@@ -485,7 +486,6 @@ defmodule SigilWeb.DashboardLive do
 
   @spec owner_topic(String.t()) :: String.t()
   defp owner_topic(address), do: @owner_topic_prefix <> address
-
   @spec assembly_topic(String.t()) :: String.t()
   defp assembly_topic(assembly_id), do: @assembly_topic_prefix <> assembly_id
 

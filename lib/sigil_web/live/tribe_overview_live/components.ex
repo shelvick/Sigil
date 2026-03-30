@@ -31,7 +31,7 @@ defmodule SigilWeb.TribeOverviewLive.Components do
         </div>
         <div class="flex items-center gap-3">
           <span class="rounded-full border border-space-600/80 bg-space-900/70 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-space-500">
-            <%= length(@members) %> members
+            <%= length(@members) %> <%= if length(@members) == 1, do: "member", else: "members" %>
           </span>
           <.link
             navigate={~p"/tribe/#{@tribe_id}/diplomacy"}
@@ -75,14 +75,17 @@ defmodule SigilWeb.TribeOverviewLive.Components do
             <tbody>
               <%= for member <- @sorted_members do %>
                 <tr class="rounded-2xl bg-space-900/70 text-sm text-foreground">
-                  <td class="rounded-l-2xl px-4 py-4 font-semibold text-cream">
-                    <%= member.character_name || "Unknown" %>
-                    <span
-                      :if={@active_character && member.character_id == @active_character.id}
-                      class="ml-2 font-mono text-xs text-quantum-300"
-                    >
-                      (you)
-                    </span>
+                  <td class="rounded-l-2xl px-4 py-4">
+                    <p class="font-semibold text-cream">
+                      <%= member.character_name || "Unknown" %>
+                      <span
+                        :if={@active_character && member.character_id == @active_character.id}
+                        class="ml-2 font-mono text-xs text-quantum-300"
+                      >
+                        (you)
+                      </span>
+                    </p>
+                    <p class="mt-0.5 font-mono text-xs text-space-500"><%= truncate_id(member.character_address) %></p>
                   </td>
                   <td class="rounded-r-2xl px-4 py-4">
                     <%= if member.connected do %>
@@ -162,7 +165,7 @@ defmodule SigilWeb.TribeOverviewLive.Components do
                         </td>
                         <td class="px-3 py-3">
                           <.link navigate={~p"/assembly/#{assembly.id}"} class="font-semibold text-cream hover:text-quantum-300">
-                            <%= assembly_name(assembly) %>
+                            <%= assembly_name(assembly, assigns[:intel_opts] || []) %>
                           </.link>
                         </td>
                         <td class="rounded-r-2xl px-3 py-3">

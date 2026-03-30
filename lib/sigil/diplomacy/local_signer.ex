@@ -191,8 +191,33 @@ defmodule Sigil.Diplomacy.LocalSigner do
     url = rpc_url() || "http://localhost:9000"
 
     case Req.post(url, json: body, receive_timeout: 10_000) do
-      {:ok, %{status: 200, body: %{"result" => %{"digest" => digest}}}} ->
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "result" => %{
+             "digest" => digest,
+             "effects" => %{"status" => %{"status" => "success"}}
+           }
+         }
+       }} ->
         {:ok, digest}
+
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "result" => %{
+             "digest" => _digest,
+             "effects" => %{"status" => %{"status" => status} = status_detail}
+           }
+         }
+       }} ->
+        error_msg = Map.get(status_detail, "error", status)
+
+        Logger.warning("[local_signer] transaction execution failed: #{inspect(error_msg)}")
+
+        {:error, {:tx_failed, error_msg}}
 
       {:ok, %{status: 200, body: %{"error" => error}}} ->
         {:error, {:rpc_error, error["message"] || inspect(error)}}

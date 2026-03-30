@@ -40,13 +40,41 @@ defmodule SigilWeb.AssemblyHelpers do
   def assembly_type_label(%Assembly{}, _static_data), do: "Assembly"
 
   @doc """
-  Returns the assembly's metadata name, falling back to a truncated id.
+  Returns the assembly's display name.
+
+  Checks metadata name first, then intel report labels, then falls back to
+  type label + truncated id.
   """
   @spec assembly_name(Assemblies.assembly()) :: String.t()
-  def assembly_name(%{metadata: %{name: name}}) when is_binary(name) and byte_size(name) > 0,
-    do: name
+  @spec assembly_name(Assemblies.assembly(), keyword()) :: String.t()
+  def assembly_name(assembly, intel_opts \\ [])
 
-  def assembly_name(%{id: assembly_id}), do: truncate_id(assembly_id)
+  def assembly_name(%{metadata: %{name: name}}, _intel_opts)
+      when is_binary(name) and byte_size(name) > 0,
+      do: name
+
+  def assembly_name(assembly, intel_opts) do
+    case resolve_intel_label(assembly.id, intel_opts) do
+      label when is_binary(label) and byte_size(label) > 0 -> label
+      _ -> "#{assembly_type_label(assembly)} #{truncate_id(assembly.id)}"
+    end
+  end
+
+  @doc "Resolves an intel report label for an assembly from the ETS cache."
+  @spec resolve_intel_label(String.t(), keyword()) :: String.t() | nil
+  def resolve_intel_label(assembly_id, intel_opts)
+      when is_binary(assembly_id) and is_list(intel_opts) do
+    with tables when is_map(tables) <- Keyword.get(intel_opts, :cache_tables),
+         intel_table when intel_table != nil <- Map.get(tables, :intel),
+         tribe_id when is_integer(tribe_id) <- Keyword.get(intel_opts, :tribe_id) do
+      case Sigil.Cache.get(intel_table, {:location, tribe_id, assembly_id}) do
+        %{label: label} when is_binary(label) and byte_size(label) > 0 -> label
+        _ -> nil
+      end
+    else
+      _ -> nil
+    end
+  end
 
   @doc """
   Returns the assembly's online/offline status as a string.
@@ -376,4 +404,40 @@ defmodule SigilWeb.AssemblyHelpers do
     </div>
     """
   end
+
+  @doc """
+  Returns the assembly's structural type as an atom.
+  """
+  @spec assembly_type(Assemblies.assembly()) ::
+          :gate | :turret | :network_node | :storage_unit | :assembly
+  def assembly_type(%Gate{}), do: :gate
+  def assembly_type(%Turret{}), do: :turret
+  def assembly_type(%NetworkNode{}), do: :network_node
+  def assembly_type(%StorageUnit{}), do: :storage_unit
+  def assembly_type(%Assembly{}), do: :assembly
+
+  @doc """
+  Resolves the fuel type display name for network nodes via StaticData.
+  """
+  @spec resolve_fuel_type_name(Assemblies.assembly(), pid() | nil) :: String.t() | nil
+  def resolve_fuel_type_name(%NetworkNode{fuel: %{type_id: type_id}}, static_data)
+      when is_integer(type_id) and is_pid(static_data) do
+    case StaticData.get_item_type(static_data, type_id) do
+      %{name: name} -> name
+      _ -> nil
+    end
+  end
+
+  def resolve_fuel_type_name(_assembly, _static_data), do: nil
+
+  @doc """
+  Returns true when the given account owns the specified assembly.
+  """
+  @spec assembly_owned_by?(String.t(), map() | nil, map() | nil) :: boolean()
+  def assembly_owned_by?(assembly_id, %{address: address}, cache_tables)
+      when is_binary(address) and is_map(cache_tables) do
+    Assemblies.assembly_owned_by?(assembly_id, address, tables: cache_tables)
+  end
+
+  def assembly_owned_by?(_assembly_id, _account, _cache_tables), do: false
 end

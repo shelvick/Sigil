@@ -55,7 +55,9 @@ defmodule SigilWeb.IntelMarketLive.State do
       reputation_cache: %{},
       feedback_recorded: %{},
       static_data_pid: socket.assigns[:static_data],
-      solar_systems: MarketData.load_solar_systems(socket.assigns[:static_data])
+      solar_systems: MarketData.load_solar_systems(socket.assigns[:static_data]),
+      browse_solar_suggestions: [],
+      seller_solar_suggestions: []
     )
     |> assign_listing_form(%{"entry_mode" => if(can_sell, do: "existing", else: "manual")})
   end
@@ -97,7 +99,13 @@ defmodule SigilWeb.IntelMarketLive.State do
         &Filtering.matches_filters?(&1, filters, socket.assigns.static_data_pid)
       )
 
-    assign(socket, filters: filters, filtered_listings: filtered)
+    browse_suggestions = filter_solar_systems(socket, filters["solar_system_name"])
+
+    assign(socket,
+      filters: filters,
+      filtered_listings: filtered,
+      browse_solar_suggestions: browse_suggestions
+    )
   end
 
   @doc """
@@ -111,9 +119,11 @@ defmodule SigilWeb.IntelMarketLive.State do
       |> Filtering.maybe_fill_from_report(socket)
       |> Filtering.maybe_fill_solar_system_id(socket.assigns.static_data_pid)
 
+    seller_suggestions = filter_solar_systems(socket, params["solar_system_name"])
+
     socket
     |> assign(entry_mode: Map.get(params, "entry_mode", socket.assigns.entry_mode))
-    |> assign(:form, to_form(params, as: :listing))
+    |> assign(form: to_form(params, as: :listing), seller_solar_suggestions: seller_suggestions)
   end
 
   @doc """
@@ -295,4 +305,15 @@ defmodule SigilWeb.IntelMarketLive.State do
   end
 
   defp maybe_put_reputation_registry_id(opts, _reputation_registry_id), do: opts
+
+  @spec filter_solar_systems(Phoenix.LiveView.Socket.t(), String.t() | nil) :: list()
+  defp filter_solar_systems(socket, query) when is_binary(query) and byte_size(query) >= 2 do
+    q = String.downcase(query)
+
+    socket.assigns.solar_systems
+    |> Enum.filter(&String.contains?(String.downcase(&1.name), q))
+    |> Enum.take(10)
+  end
+
+  defp filter_solar_systems(_socket, _query), do: []
 end
