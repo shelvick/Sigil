@@ -15,7 +15,7 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
       <div class="flex items-start justify-between gap-4">
         <div>
           <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Sell Intel</p>
-          <h2 class="mt-3 text-2xl font-semibold text-cream">Seal-encrypted listing</h2>
+          <h2 class="mt-3 text-2xl font-semibold text-cream">Encrypted Intel Listing</h2>
         </div>
         <span :if={@seal_status} class="rounded-full border border-quantum-400/40 bg-quantum-400/10 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-quantum-300">
           <%= @seal_status %>
@@ -128,7 +128,9 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
             </label>
           <% end %>
 
-          <div class="grid gap-5 md:grid-cols-2">
+          <p class="font-mono text-xs uppercase tracking-[0.24em] text-quantum-300">Public — visible to all browsers</p>
+
+          <div class="grid gap-5 md:grid-cols-3">
             <label class="block space-y-2">
               <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Report Type</span>
               <select
@@ -140,24 +142,62 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
               </select>
             </label>
 
-            <label class="block space-y-2">
+            <div class="relative space-y-2">
               <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Solar System</span>
               <input
                 type="text"
                 name="listing[solar_system_name]"
-                list="seller-solar-systems"
                 value={@form.params["solar_system_name"] || ""}
-                placeholder="Optional — leave blank to keep private"
+                placeholder="Type to search…"
+                autocomplete="off"
+                phx-debounce="150"
                 class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition placeholder:text-space-600 focus:border-quantum-400"
+              />
+              <div
+                :if={@seller_solar_suggestions != []}
+                class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-2xl border border-space-600/80 bg-space-900/95 shadow-2xl backdrop-blur"
+              >
+                <button
+                  :for={system <- @seller_solar_suggestions}
+                  type="button"
+                  phx-click="select_seller_system"
+                  phx-value-name={system.name}
+                  class="block w-full px-4 py-2.5 text-left text-sm text-cream transition first:rounded-t-2xl last:rounded-b-2xl hover:bg-space-800/80 hover:text-quantum-300"
+                >
+                  <%= system.name %>
+                </button>
+              </div>
+            </div>
+
+            <label class="block space-y-2">
+              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Price (SUI)</span>
+              <input
+                type="text"
+                name="listing[price_sui]"
+                value={@form.params["price_sui"] || ""}
+                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
               />
             </label>
           </div>
+
+          <label class="block space-y-2">
+            <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Description</span>
+            <input
+              type="text"
+              name="listing[description]"
+              value={@form.params["description"] || ""}
+              placeholder="Plaintext teaser — buyers see this before purchase"
+              class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition placeholder:text-space-600 focus:border-quantum-400"
+            />
+          </label>
 
           <%= if solar_system_id = @form.params["solar_system_id"] do %>
             <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500">
               Canonical solar system ID: <%= solar_system_id %>
             </p>
           <% end %>
+
+          <p class="font-mono text-xs uppercase tracking-[0.24em] text-warning">Encrypted — only visible after purchase</p>
 
           <label class="block space-y-2">
             <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Assembly ID</span>
@@ -174,46 +214,15 @@ defmodule SigilWeb.IntelMarketLive.SellForm do
             <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Notes</span>
             <textarea
               name="listing[notes]"
-              rows="4"
-              class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
+              rows="3"
+              placeholder="Detailed intel — coordinates, observations, tactical notes"
+              class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition placeholder:text-space-600 focus:border-quantum-400"
             ><%= @form.params["notes"] || "" %></textarea>
-          </label>
-
-          <div class="grid gap-5 md:grid-cols-2">
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Price (SUI)</span>
-              <input
-                type="text"
-                name="listing[price_sui]"
-                value={@form.params["price_sui"] || ""}
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              />
-            </label>
-
-            <label class="block space-y-2">
-              <span class="font-mono text-xs uppercase tracking-[0.24em] text-space-500">Description</span>
-              <input
-                type="text"
-                name="listing[description]"
-                value={@form.params["description"] || ""}
-                class="w-full rounded-2xl border border-space-600/80 bg-space-950/70 px-4 py-3 text-sm text-cream outline-none transition focus:border-quantum-400"
-              />
-            </label>
-          </div>
-
-          <label :if={@tribe_id} class="flex items-center gap-3 rounded-2xl border border-space-600/80 bg-space-950/50 px-4 py-3 text-sm text-cream">
-            <input type="hidden" name="listing[restricted]" value="false" />
-            <input type="checkbox" name="listing[restricted]" value="true" checked={@form.params["restricted"] == "true"} class="h-4 w-4 rounded border-space-600 bg-space-900 text-quantum-400 focus:ring-quantum-400" />
-            Restrict to your tribe
           </label>
 
           <p :if={!@active_pseudonym} class="rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning">
             Create and activate a pseudonym before publishing a listing.
           </p>
-
-          <datalist id="seller-solar-systems">
-            <option :for={system <- @solar_systems} value={system.name}></option>
-          </datalist>
 
           <button
             type="submit"

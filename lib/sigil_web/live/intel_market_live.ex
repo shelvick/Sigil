@@ -39,6 +39,16 @@ defmodule SigilWeb.IntelMarketLive do
     {:noreply, State.apply_filters(socket, filters)}
   end
 
+  def handle_event("select_browse_system", %{"name" => name}, socket) do
+    filters = Map.put(socket.assigns.filters, "solar_system_name", name)
+    {:noreply, State.apply_filters(socket, filters)}
+  end
+
+  def handle_event("select_seller_system", %{"name" => name}, socket) do
+    params = Map.put(socket.assigns.form.params, "solar_system_name", name)
+    {:noreply, State.assign_listing_form(socket, params)}
+  end
+
   @doc false
   def handle_event("show_section", %{"section" => section}, socket) do
     {:noreply, assign(socket, :page_section, PageHelpers.normalize_section(section))}
@@ -376,7 +386,7 @@ defmodule SigilWeb.IntelMarketLive do
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p class="font-mono text-xs uppercase tracking-[0.35em] text-quantum-300">Intel marketplace</p>
-              <h1 class="mt-3 text-4xl font-semibold text-cream">Seal-encrypted trade</h1>
+              <h1 class="mt-3 text-4xl font-semibold text-cream">Encrypted Intel Trade</h1>
               <p class="mt-3 max-w-3xl text-sm leading-6 text-space-500">
                 Browse active intel listings, encrypt and upload sealed offers, and settle purchases through your wallet.
               </p>
@@ -424,7 +434,7 @@ defmodule SigilWeb.IntelMarketLive do
             <% else %>
               <SigilWeb.IntelMarketLive.Components.filter_bar
                 filters={@filters}
-                solar_systems={@solar_systems}
+                browse_solar_suggestions={@browse_solar_suggestions}
               />
 
               <div class="grid gap-8 xl:grid-cols-[1.1fr_0.9fr]">
@@ -459,7 +469,7 @@ defmodule SigilWeb.IntelMarketLive do
                     pseudonym_error_message={@pseudonym_error_message}
                     pseudonym_delete_warning={@pseudonym_delete_warning}
                     seal_status={@seal_status}
-                    solar_systems={@solar_systems}
+                    seller_solar_suggestions={@seller_solar_suggestions}
                     tribe_id={@tribe_id}
                   />
 

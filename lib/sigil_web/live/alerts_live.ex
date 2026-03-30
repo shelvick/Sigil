@@ -5,7 +5,12 @@ defmodule SigilWeb.AlertsLive do
 
   use SigilWeb, :live_view
 
-  alias Sigil.Alerts
+  import SigilWeb.TransactionHelpers, only: [localnet_signer_address: 0]
+
+  alias Sigil.{Alerts, Diplomacy}
+  alias Sigil.Alerts.{Alert, WebhookConfig}
+
+  @notifier Application.compile_env(:sigil, :webhook_notifier, Alerts.WebhookNotifier.Discord)
 
   @doc """
   Mounts the alerts feed for the authenticated account.
@@ -21,6 +26,7 @@ defmodule SigilWeb.AlertsLive do
           |> assign_base_state()
           |> load_alerts()
           |> load_unread_count()
+          |> load_webhook_state()
           |> maybe_subscribe()
 
         {:ok, socket}
@@ -114,6 +120,30 @@ defmodule SigilWeb.AlertsLive do
      )}
   end
 
+  def handle_event("save_webhook", %{"webhook" => params}, socket) do
+    if socket.assigns.is_leader do
+      {:noreply, save_webhook(socket, params)}
+    else
+      {:noreply, put_flash(socket, :error, "Only the tribe leader can configure webhooks")}
+    end
+  end
+
+  def handle_event("toggle_webhook", _params, socket) do
+    if socket.assigns.is_leader do
+      {:noreply, toggle_webhook(socket)}
+    else
+      {:noreply, put_flash(socket, :error, "Only the tribe leader can configure webhooks")}
+    end
+  end
+
+  def handle_event("test_webhook", _params, socket) do
+    if socket.assigns.is_leader do
+      {:noreply, test_webhook(socket)}
+    else
+      {:noreply, put_flash(socket, :error, "Only the tribe leader can test webhooks")}
+    end
+  end
+
   @doc false
   @impl true
   @spec handle_info(term(), Phoenix.LiveView.Socket.t()) ::
@@ -144,7 +174,17 @@ defmodule SigilWeb.AlertsLive do
           show_dismissed={@show_dismissed}
         />
 
-        <SigilWeb.AlertsLive.Components.alerts_feed alerts={@alerts} has_more={@has_more} />
+        <SigilWeb.AlertsLive.Components.webhook_panel
+          is_leader={@is_leader}
+          webhook_config={@webhook_config}
+          webhook_form={@webhook_form}
+        />
+
+        <SigilWeb.AlertsLive.Components.alerts_feed
+          alerts={@alerts}
+          has_more={@has_more}
+          active_character={@active_character}
+        />
       </div>
     </section>
     """
@@ -159,7 +199,10 @@ defmodule SigilWeb.AlertsLive do
       show_dismissed: false,
       has_more: false,
       page_limit: 25,
-      loaded_count: 0
+      loaded_count: 0,
+      is_leader: false,
+      webhook_config: nil,
+      webhook_form: webhook_form(nil)
     )
   end
 
@@ -213,6 +256,124 @@ defmodule SigilWeb.AlertsLive do
     else
       Keyword.put(filters, :status, ["new", "acknowledged"])
     end
+  end
+
+  @spec load_webhook_state(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp load_webhook_state(socket) do
+    tribe_id = socket.assigns.current_account.tribe_id
+    cache_tables = socket.assigns[:cache_tables]
+
+    if is_integer(tribe_id) and is_map(cache_tables) and is_map_key(cache_tables, :standings) do
+      opts = [
+        tables: cache_tables,
+        sender: localnet_signer_address() || socket.assigns.current_account.address,
+        tribe_id: tribe_id
+      ]
+
+      is_leader = Diplomacy.leader?(opts)
+      config = if is_leader, do: Alerts.get_webhook_config(tribe_id, [])
+
+      assign(socket,
+        is_leader: is_leader,
+        webhook_config: config,
+        webhook_form: webhook_form(config)
+      )
+    else
+      socket
+    end
+  end
+
+  @spec save_webhook(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+  defp save_webhook(socket, params) do
+    tribe_id = socket.assigns.current_account.tribe_id
+    url = Map.get(params, "webhook_url", "")
+
+    attrs = %{
+      "webhook_url" => url,
+      "enabled" => current_webhook_enabled(socket.assigns.webhook_config)
+    }
+
+    case Alerts.upsert_webhook_config(tribe_id, attrs, []) do
+      {:ok, _config} ->
+        socket
+        |> put_flash(:info, "Webhook configuration saved")
+        |> load_webhook_state()
+
+      {:error, %Ecto.Changeset{}} ->
+        socket
+        |> put_flash(:error, "Webhook URL is required")
+        |> assign(:webhook_form, webhook_form(%{"webhook_url" => url}))
+    end
+  end
+
+  @spec toggle_webhook(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp toggle_webhook(%{assigns: %{webhook_config: %WebhookConfig{} = config}} = socket) do
+    tribe_id = socket.assigns.current_account.tribe_id
+
+    attrs = %{
+      "webhook_url" => config.webhook_url,
+      "enabled" => !config.enabled
+    }
+
+    case Alerts.upsert_webhook_config(tribe_id, attrs, []) do
+      {:ok, _updated} ->
+        socket
+        |> put_flash(:info, webhook_toggle_message(!config.enabled))
+        |> load_webhook_state()
+
+      {:error, %Ecto.Changeset{}} ->
+        put_flash(socket, :error, "Unable to update webhook delivery state")
+    end
+  end
+
+  defp toggle_webhook(socket) do
+    put_flash(socket, :error, "Set a webhook URL before toggling delivery")
+  end
+
+  @spec current_webhook_enabled(WebhookConfig.t() | nil) :: boolean()
+  defp current_webhook_enabled(%WebhookConfig{enabled: enabled}), do: enabled
+  defp current_webhook_enabled(_config), do: true
+
+  @spec webhook_toggle_message(boolean()) :: String.t()
+  defp webhook_toggle_message(true), do: "Webhook delivery enabled"
+  defp webhook_toggle_message(false), do: "Webhook delivery disabled"
+
+  @spec webhook_form(WebhookConfig.t() | map() | nil) :: Phoenix.HTML.Form.t()
+  defp webhook_form(%WebhookConfig{webhook_url: url}),
+    do: to_form(%{"webhook_url" => url || ""}, as: :webhook)
+
+  defp webhook_form(%{"webhook_url" => _} = params), do: to_form(params, as: :webhook)
+  defp webhook_form(_config), do: to_form(%{"webhook_url" => ""}, as: :webhook)
+
+  @spec test_webhook(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  defp test_webhook(%{assigns: %{webhook_config: %WebhookConfig{} = config}} = socket) do
+    test_alert = %Alert{
+      type: "fuel_low",
+      severity: "info",
+      status: "new",
+      assembly_id: nil,
+      assembly_name: "Test Delivery",
+      account_address: socket.assigns.current_account.address,
+      tribe_id: socket.assigns.current_account.tribe_id,
+      message: "This is a test alert from Sigil to verify your webhook configuration.",
+      metadata: %{},
+      inserted_at: DateTime.utc_now()
+    }
+
+    case @notifier.deliver(test_alert, config, []) do
+      :ok ->
+        put_flash(socket, :info, "Test alert sent to Discord")
+
+      {:error, {:webhook_failed, status}} ->
+        put_flash(socket, :error, "Webhook returned HTTP #{status} — check your URL")
+
+      {:error, {:network_error, _reason}} ->
+        put_flash(socket, :error, "Could not reach webhook endpoint — check your URL")
+    end
+  end
+
+  defp test_webhook(socket) do
+    put_flash(socket, :error, "Save a webhook URL before sending a test")
   end
 
   @spec parse_id(String.t()) :: {:ok, integer()} | :error

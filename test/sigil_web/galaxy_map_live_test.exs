@@ -255,6 +255,9 @@ defmodule SigilWeb.GalaxyMapLiveTest do
       "tribe_scouting" => _,
       "marketplace" => _
     })
+
+    assert_push_event(view, "update_system_colors", %{"categories" => categories})
+    assert is_map(categories)
   end
 
   test "tribe overlay data separates location and scouting reports", %{
@@ -291,6 +294,15 @@ defmodule SigilWeb.GalaxyMapLiveTest do
       "tribe_scouting" => tribe_scouting,
       "marketplace" => []
     })
+
+    assert_push_event(view, "update_system_colors", %{"categories" => categories})
+
+    assert categories[Integer.to_string(@system_id)] in [
+             "both",
+             "assembly",
+             "fuel_low",
+             "fuel_critical"
+           ]
 
     assert [%{"assembly_id" => assembly_id, "label" => label, "system_id" => @system_id}] =
              tribe_locations

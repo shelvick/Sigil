@@ -106,7 +106,8 @@ defmodule SigilWeb.DiplomacyLive.Events do
      |> Transactions.build_transaction(&Diplomacy.build_claim_leadership_tx/1)}
   end
 
-  def handle_event("filter_tribes", %{"query" => query}, socket) do
+  def handle_event("filter_tribes", params, socket) do
+    query = params["value"] || params["query"] || ""
     {:noreply, Phoenix.Component.assign(socket, :tribe_filter, query)}
   end
 

@@ -5,18 +5,15 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   use SigilWeb, :live_view
 
-  import SigilWeb.AssemblyHelpers, except: [assembly_name: 1]
+  import SigilWeb.AssemblyHelpers, except: [assembly_owned_by?: 3]
   import SigilWeb.TransactionHelpers, only: [localnet?: 0, sui_chain: 0]
-
   import SigilWeb.MonitorHelpers, only: [monitor_dependencies: 1, initial_depletion: 1]
 
   alias Sigil.{Assemblies, Intel, StaticData}
-  alias SigilWeb.AssemblyDetailLive.IntelHelpers
   alias Sigil.GameState.MonitorSupervisor
   alias Sigil.Intel.IntelReport
-  alias Sigil.Sui.Types.{Assembly, Character, Gate, NetworkNode, StorageUnit, Turret}
-
-  @assembly_topic_prefix "assembly:"
+  alias Sigil.Sui.Types.{Character, Gate}
+  alias SigilWeb.AssemblyDetailLive.IntelHelpers
 
   @doc """
   Loads the requested cached assembly, subscribes for updates, and ensures a monitor is running.
@@ -31,9 +28,10 @@ defmodule SigilWeb.AssemblyDetailLive do
           |> assign(
             assembly: assembly,
             assembly_type: assembly_type(assembly),
-            page_title: assembly_name(assembly, socket.assigns[:static_data]),
+            page_title: assembly_name(assembly, intel_name_opts(socket)),
             signing_state: :idle,
             depletion: initial_depletion(assembly),
+            fuel_type_name: resolve_fuel_type_name(assembly, socket.assigns[:static_data]),
             is_owner: owner?(socket, assembly_id)
           )
           |> assign_intel_state()
@@ -75,9 +73,8 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
-  def handle_event("authorize_extension", _params, socket) do
-    {:noreply, put_flash(socket, :error, "Reconnect your wallet")}
-  end
+  def handle_event("authorize_extension", _params, socket),
+    do: {:noreply, put_flash(socket, :error, "Reconnect your wallet")}
 
   def handle_event("transaction_signed", %{"bytes" => tx_bytes, "signature" => signature}, socket) do
     case Assemblies.submit_signed_extension_tx(tx_bytes, signature, assembly_opts(socket)) do
@@ -95,23 +92,37 @@ defmodule SigilWeb.AssemblyDetailLive do
         {:noreply, socket}
 
       {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, inspect(reason))
-         |> assign(signing_state: :idle)}
+        {:noreply, socket |> put_flash(:error, inspect(reason)) |> assign(signing_state: :idle)}
     end
   end
 
-  def handle_event("transaction_error", %{"reason" => reason}, socket) do
-    {:noreply,
-     socket
-     |> put_flash(:error, reason)
-     |> assign(signing_state: :idle)}
+  def handle_event("transaction_error", %{"reason" => reason}, socket),
+    do: {:noreply, socket |> put_flash(:error, reason) |> assign(signing_state: :idle)}
+
+  def handle_event("set_location", %{"location" => params}, socket),
+    do: {:noreply, persist_location(socket, params)}
+
+  def handle_event(
+        "filter_solar_systems",
+        %{"location" => %{"solar_system_name" => query}},
+        socket
+      ) do
+    filtered =
+      if String.length(query) >= 2 do
+        q = String.downcase(query)
+
+        socket.assigns.solar_systems
+        |> Enum.filter(&String.contains?(String.downcase(&1.name), q))
+        |> Enum.take(10)
+      else
+        []
+      end
+
+    {:noreply, assign(socket, filtered_solar_systems: filtered, solar_system_query: query)}
   end
 
-  def handle_event("set_location", %{"location" => params}, socket) do
-    {:noreply, persist_location(socket, params)}
-  end
+  def handle_event("select_solar_system", %{"name" => name}, socket),
+    do: {:noreply, assign(socket, solar_system_query: name, filtered_solar_systems: [])}
 
   def handle_event("wallet_detected", _params, socket), do: {:noreply, socket}
   def handle_event("wallet_error", _params, socket), do: {:noreply, socket}
@@ -127,7 +138,7 @@ defmodule SigilWeb.AssemblyDetailLive do
          assign(socket,
            assembly: assembly,
            assembly_type: assembly_type(assembly),
-           page_title: assembly_name(assembly, socket.assigns[:static_data]),
+           page_title: assembly_name(assembly, intel_name_opts(socket)),
            depletion: depletion,
            signing_state: reset_signing_state(socket.assigns.signing_state)
          )}
@@ -137,7 +148,7 @@ defmodule SigilWeb.AssemblyDetailLive do
          assign(socket,
            assembly: assembly,
            assembly_type: assembly_type(assembly),
-           page_title: assembly_name(assembly, socket.assigns[:static_data]),
+           page_title: assembly_name(assembly, intel_name_opts(socket)),
            depletion: initial_depletion(assembly),
            signing_state: reset_signing_state(socket.assigns.signing_state)
          )}
@@ -180,15 +191,15 @@ defmodule SigilWeb.AssemblyDetailLive do
               </span>
               <span class={status_badge_classes(@assembly)}><%= assembly_status(@assembly) %></span>
             </div>
-            <h1 class="mt-4 text-4xl font-semibold text-cream"><%= assembly_name(@assembly) %></h1>
+            <h1 class="mt-4 text-4xl font-semibold text-cream"><%= assembly_name(@assembly, cache_tables: assigns[:cache_tables], tribe_id: assigns[:tribe_id]) %></h1>
             <div class="mt-3 flex items-center gap-2">
-              <p class="break-all font-mono text-sm text-foreground"><%= @assembly.id %></p>
+              <p class="font-mono text-sm text-space-500"><%= truncate_id(@assembly.id) %></p>
               <button
                 type="button"
-                class="shrink-0 rounded-full border border-space-600/80 bg-space-900/70 px-2 py-0.5 font-mono text-[0.6rem] text-space-500 transition hover:border-quantum-400/40 hover:text-quantum-300"
-                onclick={"navigator.clipboard.writeText('#{@assembly.id}').then(() => { this.textContent = 'Copied!'; setTimeout(() => { this.textContent = 'Copy'; }, 1500); })"}
+                class="shrink-0 rounded-full border border-space-600/80 bg-space-900/70 px-3 py-1 font-mono text-[0.6rem] text-space-500 transition hover:border-quantum-400/40 hover:text-quantum-300"
+                onclick={"navigator.clipboard.writeText('#{@assembly.id}').then(() => { const s = this.querySelector('span'); s.textContent = 'Copied!'; setTimeout(() => { s.textContent = 'Copy address'; }, 1500); })"}
               >
-                Copy
+                <span>Copy address</span>
               </button>
             </div>
             <p :if={has_description?(@assembly)} class="mt-4 max-w-3xl text-sm leading-6 text-space-500"><%= assembly_description(@assembly) %></p>
@@ -211,26 +222,31 @@ defmodule SigilWeb.AssemblyDetailLive do
           </div>
         </div>
 
-        <div class="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div class="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <.detail_card
-            title="Owner Cap ID"
-            value={truncate_or_placeholder(@assembly.owner_cap_id)}
-            mono
-            full_value={@assembly.owner_cap_id}
+            title="Type"
+            value={assembly_type_label(@assembly, @static_data)}
           />
-          <.detail_card title="Type ID" value={to_string(@assembly.type_id)} mono />
           <.detail_card
             title="Location Hash"
             value={format_location_hash(@assembly.location.location_hash)}
             mono
             full_value={Base.encode16(@assembly.location.location_hash, case: :lower)}
           />
-          <.detail_card
-            title="Energy Source ID"
-            value={truncate_or_placeholder(Map.get(@assembly, :energy_source_id))}
-            mono
-            full_value={Map.get(@assembly, :energy_source_id)}
-          />
+          <div class="rounded-2xl border border-space-600/80 bg-space-800/70 p-4">
+            <p class="font-mono text-xs uppercase tracking-[0.3em] text-quantum-300">Energy Source</p>
+            <%= if energy_id = Map.get(@assembly, :energy_source_id) do %>
+              <.link
+                navigate={~p"/assembly/#{energy_id}"}
+                class="mt-3 block text-sm text-quantum-300 transition hover:text-cream"
+                title={energy_id}
+              >
+                <%= SigilWeb.AssemblyHelpers.resolve_intel_label(energy_id, [cache_tables: assigns[:cache_tables], tribe_id: assigns[:tribe_id]]) || truncate_id(energy_id) %>
+              </.link>
+            <% else %>
+              <p class="mt-3 font-mono text-sm text-foreground">Not set</p>
+            <% end %>
+          </div>
         </div>
 
         <SigilWeb.AssemblyDetailLive.Components.location_panel
@@ -239,7 +255,8 @@ defmodule SigilWeb.AssemblyDetailLive do
           location_solar_system_id={@location_solar_system_id}
           can_edit_location={@can_edit_location}
           form={@location_form}
-          solar_systems={@solar_systems}
+          filtered_solar_systems={@filtered_solar_systems}
+          solar_system_query={@solar_system_query}
         />
 
         <SigilWeb.AssemblyDetailLive.Components.type_specific_section
@@ -247,6 +264,8 @@ defmodule SigilWeb.AssemblyDetailLive do
           assembly_type={@assembly_type}
           active_character={@active_character}
           depletion={@depletion}
+          fuel_type_name={@fuel_type_name}
+          intel_opts={[cache_tables: @cache_tables, tribe_id: @tribe_id]}
           is_owner={@is_owner}
           signing_state={@signing_state}
         />
@@ -317,6 +336,8 @@ defmodule SigilWeb.AssemblyDetailLive do
       location_visible: location_visible,
       static_data_pid: static_data_pid,
       solar_systems: load_solar_systems(socket, static_data_pid, can_edit_location),
+      filtered_solar_systems: [],
+      solar_system_query: "",
       can_edit_location: can_edit_location,
       location_form: to_form(%{}, as: :location)
     )
@@ -334,7 +355,6 @@ defmodule SigilWeb.AssemblyDetailLive do
   end
 
   defp load_location_report(_socket, _tribe_id, _intel_enabled?), do: nil
-
   @spec load_solar_systems(Phoenix.LiveView.Socket.t(), pid() | nil, boolean()) :: list()
   defp load_solar_systems(socket, static_data_pid, true) when is_pid(static_data_pid) do
     if connected?(socket), do: StaticData.list_solar_systems(static_data_pid), else: []
@@ -359,7 +379,6 @@ defmodule SigilWeb.AssemblyDetailLive do
        do: solar_system_id
 
   defp report_solar_system_id(_report), do: nil
-
   @spec persist_location(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
   defp persist_location(socket, %{"solar_system_name" => solar_system_name} = params) do
     with true <- socket.assigns.can_edit_location,
@@ -374,7 +393,7 @@ defmodule SigilWeb.AssemblyDetailLive do
                tribe_id: tribe_id,
                assembly_id: socket.assigns.assembly.id,
                solar_system_id: solar_system.id,
-               label: assembly_name(socket.assigns.assembly, socket.assigns[:static_data]),
+               label: assembly_name(socket.assigns.assembly, intel_name_opts(socket)),
                notes: "Assembly location update",
                reported_by: socket.assigns.current_account.address,
                reported_by_name: IntelHelpers.character_name(active_character),
@@ -398,7 +417,11 @@ defmodule SigilWeb.AssemblyDetailLive do
       _other ->
         put_flash(socket, :error, "Unknown or ambiguous solar system")
     end
-    |> assign(:location_form, to_form(params, as: :location))
+    |> assign(
+      location_form: to_form(params, as: :location),
+      solar_system_query: params["solar_system_name"] || "",
+      filtered_solar_systems: []
+    )
   end
 
   defp persist_location(socket, _params),
@@ -408,45 +431,35 @@ defmodule SigilWeb.AssemblyDetailLive do
           {:ok, Assemblies.assembly()} | {:error, :not_found}
   defp fetch_assembly(assembly_id, cache_tables)
        when is_binary(assembly_id) and is_map(cache_tables) do
-    Assemblies.get_assembly(assembly_id, tables: cache_tables)
+    case Assemblies.get_assembly(assembly_id, tables: cache_tables) do
+      {:ok, _assembly} = ok ->
+        ok
+
+      {:error, :not_found} ->
+        case Assemblies.fetch_and_cache(assembly_id, tables: cache_tables) do
+          {:ok, _assembly} = ok -> ok
+          {:error, _reason} -> {:error, :not_found}
+        end
+    end
   end
 
   defp fetch_assembly(_assembly_id, _cache_tables), do: {:error, :not_found}
 
   @spec owner?(Phoenix.LiveView.Socket.t(), String.t()) :: boolean()
-  defp owner?(socket, assembly_id) do
-    case {socket.assigns[:current_account], socket.assigns[:cache_tables]} do
-      {%{address: owner_address}, cache_tables}
-      when is_binary(owner_address) and is_map(cache_tables) ->
-        Assemblies.assembly_owned_by?(assembly_id, owner_address, tables: cache_tables)
-
-      _other ->
-        false
-    end
-  end
+  defp owner?(socket, assembly_id),
+    do:
+      SigilWeb.AssemblyHelpers.assembly_owned_by?(
+        assembly_id,
+        socket.assigns[:current_account],
+        socket.assigns[:cache_tables]
+      )
 
   @spec reset_signing_state(atom()) :: atom()
   defp reset_signing_state(:submitted), do: :idle
   defp reset_signing_state(signing_state), do: signing_state
-
-  @spec assembly_type(Assemblies.assembly()) ::
-          :gate | :turret | :network_node | :storage_unit | :assembly
-  defp assembly_type(%Gate{}), do: :gate
-  defp assembly_type(%Turret{}), do: :turret
-  defp assembly_type(%NetworkNode{}), do: :network_node
-  defp assembly_type(%StorageUnit{}), do: :storage_unit
-  defp assembly_type(%Assembly{}), do: :assembly
-
-  @spec assembly_name(Assemblies.assembly(), pid() | nil) :: String.t()
-  defp assembly_name(assembly, static_data \\ nil)
-
-  defp assembly_name(%{metadata: %{name: name}}, _static_data)
-       when is_binary(name) and byte_size(name) > 0,
-       do: name
-
-  defp assembly_name(assembly, static_data) do
-    "#{assembly_type_label(assembly, static_data)} #{truncate_id(assembly.id)}"
-  end
+  @spec intel_name_opts(Phoenix.LiveView.Socket.t()) :: keyword()
+  defp intel_name_opts(socket),
+    do: [cache_tables: socket.assigns[:cache_tables], tribe_id: socket.assigns[:tribe_id]]
 
   @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   defp enter_signing(socket, tx_bytes) do
@@ -476,13 +489,11 @@ defmodule SigilWeb.AssemblyDetailLive do
   end
 
   @spec assembly_opts(Phoenix.LiveView.Socket.t()) :: Assemblies.options()
-  defp assembly_opts(socket) do
-    [tables: socket.assigns.cache_tables, pubsub: socket.assigns.pubsub]
-  end
+  defp assembly_opts(socket),
+    do: [tables: socket.assigns.cache_tables, pubsub: socket.assigns.pubsub]
 
   @spec assembly_topic(String.t()) :: String.t()
-  defp assembly_topic(assembly_id), do: @assembly_topic_prefix <> assembly_id
-
+  defp assembly_topic(assembly_id), do: "assembly:" <> assembly_id
   @spec intel_topic(integer()) :: String.t()
   defp intel_topic(tribe_id), do: "intel:" <> Integer.to_string(tribe_id)
 end

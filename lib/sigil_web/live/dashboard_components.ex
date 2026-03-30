@@ -91,7 +91,12 @@ defmodule SigilWeb.DashboardLive.Components do
       </div>
 
       <.alerts_summary alert_summary={@alert_summary} unread_count={@unread_count} />
-      <.assembly_manifest assemblies={@assemblies} discovery_error={@discovery_error} static_data={assigns[:static_data]} />
+      <.assembly_manifest
+        assemblies={@assemblies}
+        discovery_error={@discovery_error}
+        static_data={assigns[:static_data]}
+        intel_opts={[cache_tables: assigns[:cache_tables], tribe_id: assigns[:active_character] && assigns[:active_character].tribe_id]}
+      />
     </div>
     """
   end
@@ -120,15 +125,21 @@ defmodule SigilWeb.DashboardLive.Components do
       <% else %>
         <div class="mt-6 space-y-4">
           <article :for={alert <- @alert_summary} class={card_classes(alert)}>
-            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div class="space-y-2">
+            <div class="min-w-0">
+              <div class="min-w-0 space-y-2">
                 <div class="flex flex-wrap items-center gap-3">
                   <span class={severity_badge_classes(alert.severity)}><%= type_label(alert.type) %></span>
                   <span :if={alert.status == "new"} class="inline-flex h-2.5 w-2.5 rounded-full bg-quantum-300"></span>
                 </div>
-                <p class="text-sm font-semibold text-cream"><%= alert.assembly_name %></p>
-                <p class={message_classes(alert.status)}><%= alert.message %></p>
-                <p class="text-xs text-space-500"><%= timestamp_label(alert) %></p>
+                <p :if={alert.assembly_name} class="truncate text-sm font-semibold text-cream"><%= alert.assembly_name %></p>
+                <p class={"break-all #{message_classes(alert.status)}"}><%= alert.message %></p>
+                <p class="text-xs text-space-500">
+                  <%= if char_name = alert_character_name(alert) do %>
+                    <span class="font-mono uppercase tracking-[0.15em]">via <%= char_name %></span>
+                    <span class="mx-1">&middot;</span>
+                  <% end %>
+                  <%= timestamp_label(alert) %>
+                </p>
               </div>
             </div>
           </article>
@@ -200,7 +211,7 @@ defmodule SigilWeb.DashboardLive.Components do
                   </td>
                   <td class="px-4 py-4">
                     <.link navigate={~p"/assembly/#{assembly.id}"} class="font-semibold text-cream hover:text-quantum-300">
-                      <%= assembly_name(assembly) %>
+                      <%= assembly_name(assembly, @intel_opts) %>
                     </.link>
                   </td>
                   <td class="px-4 py-4">

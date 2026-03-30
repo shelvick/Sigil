@@ -87,6 +87,25 @@ defmodule Sigil.Assemblies do
     end
   end
 
+  @doc "Fetches an assembly from chain and caches it. Used as fallback when not in ETS."
+  @spec fetch_and_cache(String.t(), options()) ::
+          {:ok, assembly()} | {:error, :not_found | Client.error_reason()}
+  def fetch_and_cache(assembly_id, opts) when is_binary(assembly_id) and is_list(opts) do
+    req_options = Keyword.get(opts, :req_options, [])
+
+    case fetch_assembly(assembly_id, req_options) do
+      {:ok, assembly} ->
+        cache_assembly(opts, "unknown", assembly)
+        {:ok, assembly}
+
+      :skip ->
+        {:error, :not_found}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   @doc "Returns whether the cached assembly belongs to the given owner."
   @spec assembly_owned_by?(String.t(), String.t(), options()) :: boolean()
   def assembly_owned_by?(assembly_id, owner, opts)

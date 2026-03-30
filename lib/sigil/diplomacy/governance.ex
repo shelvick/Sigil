@@ -298,23 +298,124 @@ defmodule Sigil.Diplomacy.Governance do
         ) ::
           {:ok, map()} | {:error, term()}
   defp do_load_dynamic_field_map(client, table_id, req_options, entry_parser, acc) do
-    with {:ok, page} <- client.get_dynamic_fields(table_id, req_options),
-         {:ok, page_map} <- build_dynamic_field_page(page.data, entry_parser) do
-      merged = Map.merge(acc, page_map)
+    case client.get_dynamic_fields(table_id, req_options) do
+      {:ok, page} ->
+        with {:ok, page_map} <- build_dynamic_field_page(page.data, entry_parser) do
+          merged = Map.merge(acc, page_map)
 
-      case page do
-        %{has_next_page: true, end_cursor: cursor} when is_binary(cursor) ->
-          do_load_dynamic_field_map(
-            client,
-            table_id,
-            Keyword.put(req_options, :cursor, cursor),
-            entry_parser,
-            merged
-          )
+          case page do
+            %{has_next_page: true, end_cursor: cursor} when is_binary(cursor) ->
+              do_load_dynamic_field_map(
+                client,
+                table_id,
+                Keyword.put(req_options, :cursor, cursor),
+                entry_parser,
+                merged
+              )
 
-        _page ->
-          {:ok, merged}
-      end
+            _page ->
+              {:ok, merged}
+          end
+        end
+
+      {:error, :not_found} ->
+        load_dynamic_fields_via_rpc(table_id, entry_parser, acc)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @spec load_dynamic_fields_via_rpc(
+          String.t(),
+          (map() -> {:ok, {term(), term()}} | {:error, term()}),
+          map()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  defp load_dynamic_fields_via_rpc(table_id, entry_parser, acc) do
+    world = Application.fetch_env!(:sigil, :eve_world)
+    worlds = Application.fetch_env!(:sigil, :eve_worlds)
+
+    case Map.get(Map.fetch!(worlds, world), :rpc_url) do
+      nil ->
+        {:error, :not_found}
+
+      rpc_url ->
+        do_load_rpc_dynamic_fields(rpc_url, table_id, nil, entry_parser, acc)
+    end
+  end
+
+  @spec do_load_rpc_dynamic_fields(String.t(), String.t(), String.t() | nil, fun(), map()) ::
+          {:ok, map()} | {:error, term()}
+  defp do_load_rpc_dynamic_fields(rpc_url, table_id, cursor, entry_parser, acc) do
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "suix_getDynamicFields",
+      "params" => [table_id, cursor, 50]
+    }
+
+    case Req.post(rpc_url, json: body, receive_timeout: 10_000) do
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "result" => %{
+             "data" => entries,
+             "hasNextPage" => has_next,
+             "nextCursor" => next_cursor
+           }
+         }
+       }} ->
+        normalized =
+          Enum.map(entries, fn entry ->
+            %{
+              name: %{json: entry["name"]["value"], type: entry["name"]["type"]},
+              value: %{
+                json: fetch_rpc_field_value(rpc_url, entry["objectId"]),
+                type: entry["objectType"]
+              }
+            }
+          end)
+
+        case build_dynamic_field_page(normalized, entry_parser) do
+          {:ok, page_map} ->
+            merged = Map.merge(acc, page_map)
+
+            if has_next and is_binary(next_cursor) do
+              do_load_rpc_dynamic_fields(rpc_url, table_id, next_cursor, entry_parser, merged)
+            else
+              {:ok, merged}
+            end
+
+          error ->
+            error
+        end
+
+      _other ->
+        {:error, :rpc_failed}
+    end
+  end
+
+  @spec fetch_rpc_field_value(String.t(), String.t()) :: term()
+  defp fetch_rpc_field_value(rpc_url, object_id) do
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "sui_getObject",
+      "params" => [object_id, %{"showContent" => true}]
+    }
+
+    case Req.post(rpc_url, json: body, receive_timeout: 5_000) do
+      {:ok,
+       %{
+         status: 200,
+         body: %{"result" => %{"data" => %{"content" => %{"fields" => %{"value" => value}}}}}
+       }} ->
+        value
+
+      _other ->
+        nil
     end
   end
 

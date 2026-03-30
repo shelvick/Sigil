@@ -6,11 +6,11 @@ defmodule SigilWeb.GalaxyMapLive do
   use SigilWeb, :live_view
 
   alias Sigil.{Intel, IntelMarket, StaticData}
-  alias Sigil.Intel.IntelListing
-  alias Sigil.Intel.IntelReport
+  alias Sigil.Intel.{IntelListing, IntelReport}
   alias SigilWeb.GalaxyMapLive.Data
 
-  import SigilWeb.GalaxyMapLive.Components, only: [map_panel: 1, detail_panel: 1]
+  import SigilWeb.GalaxyMapLive.Components,
+    only: [map_panel: 1, detail_panel: 1, overlay_toggle_classes: 1]
 
   @doc false
   @impl true
@@ -42,7 +42,8 @@ defmodule SigilWeb.GalaxyMapLive do
         tribe_location_overlays: [],
         tribe_scouting_overlays: [],
         marketplace_overlay_map: %{},
-        marketplace_overlays: []
+        marketplace_overlays: [],
+        system_categories: %{}
       )
 
     socket =
@@ -64,6 +65,7 @@ defmodule SigilWeb.GalaxyMapLive do
       |> push_event("init_systems", socket.assigns.init_systems_payload)
       |> push_event("init_constellations", socket.assigns.init_constellations_payload)
       |> push_event("update_overlays", overlay_payload(socket.assigns))
+      |> push_event("update_system_colors", %{"categories" => socket.assigns.system_categories})
 
     socket =
       if is_integer(socket.assigns.target_system_id) do
@@ -91,6 +93,13 @@ defmodule SigilWeb.GalaxyMapLive do
 
   def handle_event("system_deselected", _params, socket) do
     {:noreply, assign(socket, selected_system: nil, detail_data: nil)}
+  end
+
+  def handle_event("deselect_system", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(selected_system: nil, detail_data: nil)
+     |> push_event("select_system", %{"system_id" => nil})}
   end
 
   def handle_event("toggle_overlay", %{"layer" => layer}, socket) do
@@ -210,6 +219,37 @@ defmodule SigilWeb.GalaxyMapLive do
     <section class="relative overflow-hidden px-4 py-12 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-6xl space-y-8">
         <.map_panel static_data_available={@static_data_available} tribe_id={@tribe_id} />
+
+        <%= if @static_data_available do %>
+          <div id="map-overlay-toggles" class="-mt-4 flex flex-wrap gap-2">
+            <%= if is_integer(@tribe_id) do %>
+              <button
+                type="button"
+                phx-click="toggle_overlay"
+                phx-value-layer="tribe_locations"
+                class={overlay_toggle_classes(@overlay_toggles["tribe_locations"])}
+              >
+                Tribe Locations
+              </button>
+              <button
+                type="button"
+                phx-click="toggle_overlay"
+                phx-value-layer="tribe_scouting"
+                class={overlay_toggle_classes(@overlay_toggles["tribe_scouting"])}
+              >
+                Tribe Scouting
+              </button>
+            <% end %>
+            <button
+              type="button"
+              phx-click="toggle_overlay"
+              phx-value-layer="marketplace"
+              class={overlay_toggle_classes(@overlay_toggles["marketplace"])}
+            >
+              Marketplace
+            </button>
+          </div>
+        <% end %>
         <.detail_panel detail_data={@detail_data} tribe_id={@tribe_id} />
       </div>
     </section>
@@ -245,12 +285,15 @@ defmodule SigilWeb.GalaxyMapLive do
     marketplace_overlay_map = load_marketplace_overlay_map(socket.assigns)
     marketplace_overlays = marketplace_overlay_map |> Map.values() |> Enum.sort_by(& &1.system_id)
 
-    assign(socket,
-      tribe_location_overlays: tribe_locations,
-      tribe_scouting_overlays: tribe_scouting,
-      marketplace_overlay_map: marketplace_overlay_map,
-      marketplace_overlays: marketplace_overlays
-    )
+    socket =
+      assign(socket,
+        tribe_location_overlays: tribe_locations,
+        tribe_scouting_overlays: tribe_scouting,
+        marketplace_overlay_map: marketplace_overlay_map,
+        marketplace_overlays: marketplace_overlays
+      )
+
+    assign(socket, :system_categories, Data.build_system_categories(socket.assigns))
   end
 
   @spec load_tribe_overlays(map()) :: {[map()], [map()]}
@@ -317,12 +360,8 @@ defmodule SigilWeb.GalaxyMapLive do
   defp purchased_listings(_account, _options), do: []
 
   @spec marketplace_opts(map()) :: keyword()
-  defp marketplace_opts(assigns) do
-    [
-      tables: assigns[:cache_tables],
-      pubsub: assigns[:pubsub]
-    ]
-  end
+  defp marketplace_opts(assigns),
+    do: [tables: assigns[:cache_tables], pubsub: assigns[:pubsub]]
 
   @spec overlay_payload(map()) :: map()
   defp overlay_payload(assigns) do
@@ -335,16 +374,11 @@ defmodule SigilWeb.GalaxyMapLive do
   end
 
   @spec stringify_overlay_entries([map()]) :: [map()]
-  defp stringify_overlay_entries(entries) do
-    Enum.map(entries, &stringify_overlay_entry/1)
-  end
-
-  @spec stringify_overlay_entry(map()) :: map()
-  defp stringify_overlay_entry(entry) do
-    entry
-    |> Enum.map(fn {key, value} -> {Atom.to_string(key), value} end)
-    |> Map.new()
-  end
+  defp stringify_overlay_entries(entries),
+    do:
+      Enum.map(entries, fn e ->
+        e |> Enum.map(fn {k, v} -> {Atom.to_string(k), v} end) |> Map.new()
+      end)
 
   @spec maybe_load_connected_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_load_connected_data(socket) do
@@ -372,9 +406,10 @@ defmodule SigilWeb.GalaxyMapLive do
 
   @spec known_system?(Phoenix.LiveView.Socket.t(), integer()) :: boolean()
   defp known_system?(socket, system_id), do: is_map_key(socket.assigns.system_names, system_id)
-
   @spec refresh_overlays(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp refresh_overlays(socket) do
+    socket = assign(socket, :system_categories, Data.build_system_categories(socket.assigns))
+
     socket =
       case socket.assigns.selected_system do
         system_id when is_integer(system_id) ->
@@ -385,7 +420,9 @@ defmodule SigilWeb.GalaxyMapLive do
       end
 
     if socket.assigns.map_ready do
-      push_event(socket, "update_overlays", overlay_payload_for(socket))
+      socket
+      |> push_event("update_overlays", overlay_payload_for(socket))
+      |> push_event("update_system_colors", %{"categories" => socket.assigns.system_categories})
     else
       socket
     end
@@ -425,7 +462,6 @@ defmodule SigilWeb.GalaxyMapLive do
   end
 
   defp remove_marketplace_listing(socket, _listing_id), do: socket
-
   @spec remove_first([map()], (map() -> boolean())) :: [map()]
   defp remove_first(list, matcher) do
     {remaining, removed?} =
@@ -450,7 +486,6 @@ defmodule SigilWeb.GalaxyMapLive do
        do: tribe_id
 
   defp resolve_tribe_id(_character, _account), do: nil
-
   @spec parse_system_id(String.t() | integer() | nil) :: integer() | nil
   defp parse_system_id(value) when is_integer(value), do: value
 

@@ -32,7 +32,6 @@ defmodule Sigil.Intel.IntelReport do
 
   @location_required_fields [
     :tribe_id,
-    :assembly_id,
     :reported_by,
     :reported_by_character_id
   ]
@@ -42,7 +41,7 @@ defmodule Sigil.Intel.IntelReport do
     :reported_by_character_id,
     :notes
   ]
-  @optional_fields [:solar_system_id, :label, :notes, :reported_by_name]
+  @optional_fields [:assembly_id, :solar_system_id, :label, :notes, :reported_by_name]
   @all_fields @location_required_fields ++ @optional_fields
 
   schema "intel_reports" do
