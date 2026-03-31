@@ -408,8 +408,7 @@ defmodule Sigil.Sui.ClientHTTPTest do
         assert payload["params"] == [
                  "tx-bytes",
                  ["sig-1"],
-                 %{"showEffects" => true, "showRawEffects" => true},
-                 "WaitForEffectsCert"
+                 %{"showEffects" => true}
                ]
 
         Req.Test.json(conn, %{
@@ -427,7 +426,7 @@ defmodule Sigil.Sui.ClientHTTPTest do
               %{
                 "status" => "SUCCESS",
                 "digest" => "tx-digest",
-                "effectsBcs" => "effects-bcs-b64"
+                "effectsBcs" => nil
               }} =
                ClientHTTP.execute_transaction("tx-bytes", ["sig-1"],
                  req_options: [plug: {Req.Test, stub_name}]

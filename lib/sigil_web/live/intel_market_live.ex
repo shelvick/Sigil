@@ -310,7 +310,7 @@ defmodule SigilWeb.IntelMarketLive do
   @doc false
   def handle_event("transaction_signed", %{"bytes" => tx_bytes, "signature" => signature}, socket) do
     case socket.assigns[:pending_tx] do
-      %{tx_bytes: ^tx_bytes} ->
+      %{} = _pending ->
         {:noreply, Transactions.finalize_transaction(socket, tx_bytes, signature)}
 
       _other ->

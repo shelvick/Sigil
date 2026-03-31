@@ -185,11 +185,13 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
 
   @doc false
   def finalize_transaction(
-        %{assigns: %{pending_tx: %{kind: :create_listing}}} = socket,
+        %{assigns: %{pending_tx: %{kind: :create_listing} = pending_tx}} = socket,
         tx_bytes,
         signature
       ) do
-    case IntelMarket.submit_signed_transaction(tx_bytes, signature, State.market_opts(socket)) do
+    opts = Keyword.put(State.market_opts(socket), :kind_bytes, pending_tx.tx_bytes)
+
+    case IntelMarket.submit_signed_transaction(tx_bytes, signature, opts) do
       {:ok, %{effects_bcs: effects_bcs}} ->
         socket
         |> assign(page_state: :ready, pending_listing: nil, pending_tx: nil, seal_status: nil)
@@ -238,7 +240,7 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
         signature
       )
       when kind in [:purchase, :cancel_listing, :confirm_quality, :report_bad_quality] do
-    case submit_signed_tx(socket, tx_bytes, signature) do
+    case submit_signed_tx(socket, tx_bytes, signature, pending_tx.tx_bytes) do
       {:ok, %{effects_bcs: effects_bcs}} ->
         socket
         |> assign(page_state: :ready, pending_tx: nil, seal_status: nil)
@@ -338,15 +340,17 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
     IntelMarket.build_report_bad_quality_tx(listing_id, State.market_opts(socket))
   end
 
-  @spec submit_signed_tx(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+  @spec submit_signed_tx(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t()) ::
           {:ok, %{digest: String.t(), effects_bcs: String.t() | nil}} | {:error, term()}
-  defp submit_signed_tx(socket, tx_bytes, signature) do
+  defp submit_signed_tx(socket, tx_bytes, signature, kind_bytes) do
+    opts = Keyword.put(State.market_opts(socket), :kind_bytes, kind_bytes)
+
     case socket.assigns.pending_tx.kind do
       kind when kind in [:confirm_quality, :report_bad_quality] ->
-        IntelMarket.submit_feedback_transaction(tx_bytes, signature, State.market_opts(socket))
+        IntelMarket.submit_feedback_transaction(tx_bytes, signature, opts)
 
       _other ->
-        IntelMarket.submit_signed_transaction(tx_bytes, signature, State.market_opts(socket))
+        IntelMarket.submit_signed_transaction(tx_bytes, signature, opts)
     end
   end
 

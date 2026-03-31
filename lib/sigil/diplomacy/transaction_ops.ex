@@ -173,7 +173,8 @@ defmodule Sigil.Diplomacy.TransactionOps do
 
     case client.execute_transaction(tx_bytes, [signature], req_options) do
       {:ok, %{"status" => "SUCCESS", "digest" => digest} = effects} ->
-        PendingOps.apply(standings_table(opts), opts, tx_bytes)
+        pending_key = Keyword.get(opts, :kind_bytes, tx_bytes)
+        PendingOps.apply(standings_table(opts), opts, pending_key)
         {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
 
       {:ok, effects} ->

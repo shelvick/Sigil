@@ -190,10 +190,12 @@ defmodule Sigil.IntelMarket.Transactions do
 
     case client.execute_transaction(tx_bytes, [signature], req_options) do
       {:ok, %{"status" => "SUCCESS", "digest" => digest} = effects} ->
+        pending_key = Keyword.get(opts, :kind_bytes, tx_bytes)
+
         with {:ok, sender} <- require_sender(opts),
-             operation when not is_nil(operation) <- get_pending_tx(opts, sender, tx_bytes),
+             operation when not is_nil(operation) <- get_pending_tx(opts, sender, pending_key),
              {:ok, _result} <- PendingOps.apply(opts, operation, effects, digest) do
-          clear_pending_tx(opts, sender, tx_bytes)
+          clear_pending_tx(opts, sender, pending_key)
           {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
         else
           nil -> {:error, :pending_tx_not_found}
