@@ -746,8 +746,8 @@ defmodule Sigil.AssembliesTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "digest-1"},
-           "bcs" => "effects-bcs-1"
+           "digest" => "digest-1",
+           "effectsBcs" => "effects-bcs-1"
          }}
       end)
 
@@ -780,8 +780,8 @@ defmodule Sigil.AssembliesTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "digest-2"},
-           "bcs" => "effects-bcs-2"
+           "digest" => "digest-2",
+           "effectsBcs" => "effects-bcs-2"
          }}
       end)
 
@@ -833,8 +833,8 @@ defmodule Sigil.AssembliesTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "digest-3"},
-           "bcs" => "effects-bcs-3"
+           "digest" => "digest-3",
+           "effectsBcs" => "effects-bcs-3"
          }}
       end)
 
@@ -961,8 +961,8 @@ defmodule Sigil.AssembliesTest do
       {:ok,
        %{
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "digest-4"},
-         "bcs" => "effects-bcs-4"
+         "digest" => "digest-4",
+         "effectsBcs" => "effects-bcs-4"
        }}
     end)
 

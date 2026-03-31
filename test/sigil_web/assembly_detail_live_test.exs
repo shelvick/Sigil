@@ -991,8 +991,8 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       {:ok,
        %{
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "gate-extension-success"},
-         "bcs" => "effects-bcs-success"
+         "digest" => "gate-extension-success",
+         "effectsBcs" => "effects-bcs-success"
        }}
     end)
 
@@ -1147,8 +1147,8 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       {:ok,
        %{
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "gate-extension-acceptance"},
-         "bcs" => "effects-bcs-acceptance"
+         "digest" => "gate-extension-acceptance",
+         "effectsBcs" => "effects-bcs-acceptance"
        }}
     end)
 
@@ -1344,8 +1344,8 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       {:ok,
        %{
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "gate-extension-effects"},
-         "bcs" => "effects-bcs-data"
+         "digest" => "gate-extension-effects",
+         "effectsBcs" => "effects-bcs-data"
        }}
     end)
 

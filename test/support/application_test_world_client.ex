@@ -127,7 +127,7 @@ defmodule Sigil.DiplomacyTestSuiClient do
     {:ok,
      %{
        "status" => "SUCCESS",
-       "transaction" => %{"digest" => Keyword.get(opts, :tx_digest, "probe-digest")},
+       "digest" => Keyword.get(opts, :tx_digest, "probe-digest"),
        "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
      }}
   end
@@ -150,9 +150,4 @@ defmodule Sigil.DiplomacyTestSuiClient do
           {:error, :not_found}
   def verify_zklogin_signature(_bytes, _signature, _intent_scope, _author, _opts),
     do: {:error, :not_found}
-
-  @doc "Returns an empty event page because diplomacy probes do not query historical events."
-  @impl true
-  @spec query_events(String.t(), keyword(), keyword()) :: {:ok, Sigil.Sui.Client.events_page()}
-  def query_events(_event_type, _query_opts, _opts), do: {:ok, %{events: [], next_cursor: nil}}
 end

@@ -66,16 +66,15 @@ defmodule Sigil.Sui.Client.HTTP do
   mutation ExecuteTransaction($tx: Base64!, $sigs: [Base64!]!) {
     executeTransaction(transactionDataBcs: $tx, signatures: $sigs) {
       effects {
-        bcs
+        effectsBcs
+        digest
         status
-        transaction {
-          digest
-        }
         objectChanges {
-          type
-          objectId
-          objectType
-          version
+          nodes {
+            address
+            idCreated
+            idDeleted
+          }
         }
         gasEffects {
           gasSummary {
@@ -108,29 +107,6 @@ defmodule Sigil.Sui.Client.HTTP do
   """
 
   alias Sigil.Sui.Client.HTTP.{Coins, DynamicFields}
-
-  @query_events_query """
-  query QueryEvents($eventType: String!, $after: String, $first: Int) {
-    events(filter: {eventType: $eventType}, after: $after, first: $first) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        sendingModule {
-          package
-          name
-        }
-        type {
-          repr
-        }
-        json
-        timestamp
-        bcs
-      }
-    }
-  }
-  """
 
   @doc "Fetches a single Sui object by address."
   @impl Client
@@ -282,22 +258,6 @@ defmodule Sigil.Sui.Client.HTTP do
              opts
            ) do
       Coins.build_list(data)
-    end
-  end
-
-  @doc "Fetches one page of historical events for a Move event type."
-  @impl Client
-  @spec query_events(Client.event_type(), Client.events_query_opts(), Client.request_opts()) ::
-          {:ok, Client.events_page()} | {:error, Client.error_reason()}
-  def query_events(event_type, query_opts, request_opts \\ [])
-      when is_binary(event_type) and is_list(query_opts) and is_list(request_opts) do
-    with {:ok, data} <-
-           graphql_request(
-             @query_events_query,
-             Paging.event_query_variables(event_type, query_opts, @default_limit),
-             request_opts
-           ) do
-      Paging.build_events_page(data)
     end
   end
 

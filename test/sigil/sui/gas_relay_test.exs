@@ -212,8 +212,8 @@ defmodule Sigil.Sui.GasRelayTest do
     test "submit_sponsored forwards dual signatures" do
       execute_result = %{
         "status" => "SUCCESS",
-        "transaction" => %{"digest" => "0xrelaydigest"},
-        "bcs" => "effects-bcs"
+        "digest" => "0xrelaydigest",
+        "effectsBcs" => "effects-bcs"
       }
 
       assert {:ok, %{digest: "0xrelaydigest", effects_bcs: "effects-bcs"}} =
@@ -347,8 +347,8 @@ defmodule Sigil.Sui.GasRelayTest do
                  {:ok,
                   %{
                     "status" => "SUCCESS",
-                    "transaction" => %{"digest" => "0xlistingdigest"},
-                    "bcs" => "effects-bcs"
+                    "digest" => "0xlistingdigest",
+                    "effectsBcs" => "effects-bcs"
                   }}
              )
 

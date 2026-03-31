@@ -3,7 +3,6 @@ defmodule Sigil.IntelMarket.PendingOps do
   Applies cached marketplace operations after a signed transaction succeeds.
   """
 
-  alias Sigil.Diplomacy.ObjectCodec
   alias Sigil.Intel.IntelListing
   alias Sigil.IntelMarket
   alias Sigil.IntelMarket.{Listings, Support}
@@ -68,41 +67,8 @@ defmodule Sigil.IntelMarket.PendingOps do
     end
   end
 
-  defp reconcile_created_listing(opts, pending, effects, digest) do
-    case created_listing_metadata(effects) do
-      {:ok, listing_id, initial_shared_version} ->
-        listing =
-          Listings.persist_created_listing(%{
-            id: listing_id,
-            seller_address: pending.seller_address,
-            seal_id: encode_seal_id(pending.seal_id),
-            encrypted_blob_id: pending.encrypted_blob_id,
-            client_nonce: pending.client_nonce,
-            price_mist: pending.price,
-            report_type: pending.report_type,
-            solar_system_id: pending.solar_system_id,
-            description: pending.description,
-            status: :active,
-            buyer_address: nil,
-            restricted_to_tribe_id: pending.restricted_to_tribe_id,
-            intel_report_id: pending.intel_report_id,
-            on_chain_digest: digest
-          })
-
-        Listings.cache_listing(
-          listing,
-          opts,
-          %{
-            object_id: ObjectCodec.hex_to_bytes(listing_id),
-            initial_shared_version: initial_shared_version
-          }
-        )
-
-        {:ok, listing}
-
-      :error ->
-        reconcile_created_listing_from_chain(opts, pending, digest)
-    end
+  defp reconcile_created_listing(opts, pending, _effects, digest) do
+    reconcile_created_listing_from_chain(opts, pending, digest)
   end
 
   defp reconcile_created_listing_from_chain(opts, pending, digest) do
@@ -147,24 +113,5 @@ defmodule Sigil.IntelMarket.PendingOps do
   defp matching_pending_listing?(listing, pending) do
     listing.seller_address == pending.seller_address and
       listing.client_nonce == pending.client_nonce
-  end
-
-  defp created_listing_metadata(%{"objectChanges" => object_changes})
-       when is_list(object_changes) do
-    case Enum.find(object_changes, fn change ->
-           change["type"] == "created" and change["objectType"] == Support.listing_type()
-         end) do
-      %{"objectId" => listing_id, "version" => version} ->
-        {:ok, listing_id, Support.parse_integer(version)}
-
-      _other ->
-        :error
-    end
-  end
-
-  defp created_listing_metadata(_effects), do: :error
-
-  defp encode_seal_id(seal_id) when is_binary(seal_id) do
-    "0x" <> Base.encode16(seal_id, case: :lower)
   end
 end

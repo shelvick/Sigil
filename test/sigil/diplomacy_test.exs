@@ -1921,9 +1921,9 @@ defmodule Sigil.DiplomacyTest do
 
   defp success_effects(digest) do
     %{
-      "bcs" => "dGVzdC1lZmZlY3Rz",
+      "effectsBcs" => "dGVzdC1lZmZlY3Rz",
       "status" => "SUCCESS",
-      "transaction" => %{"digest" => digest},
+      "digest" => digest,
       "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
     }
   end
