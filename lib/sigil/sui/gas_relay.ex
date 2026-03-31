@@ -133,6 +133,34 @@ defmodule Sigil.Sui.GasRelay do
   @spec load_or_generate_keypair(options()) ::
           {:ok, Signer.keypair()} | {:error, :relay_key_not_found}
   defp load_or_generate_keypair(opts) do
+    case load_from_env() do
+      {:ok, _keypair} = ok ->
+        ok
+
+      :not_configured ->
+        load_from_file_or_generate(opts)
+    end
+  end
+
+  @spec load_from_env() :: {:ok, Signer.keypair()} | :not_configured
+  defp load_from_env do
+    case System.get_env("RELAY_KEYPAIR") do
+      nil ->
+        :not_configured
+
+      encoded ->
+        with {:ok, contents} <- Base.decode64(encoded),
+             {:ok, _keypair} = ok <- decode_keypair(contents) do
+          ok
+        else
+          _ -> :not_configured
+        end
+    end
+  end
+
+  @spec load_from_file_or_generate(options()) ::
+          {:ok, Signer.keypair()} | {:error, :relay_key_not_found}
+  defp load_from_file_or_generate(opts) do
     key_path = key_path(opts)
 
     case File.read(key_path) do
