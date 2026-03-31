@@ -48,7 +48,6 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
-  @doc false
   @impl true
   @spec handle_event(String.t(), map(), Phoenix.LiveView.Socket.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
@@ -77,7 +76,9 @@ defmodule SigilWeb.AssemblyDetailLive do
     do: {:noreply, put_flash(socket, :error, "Reconnect your wallet")}
 
   def handle_event("transaction_signed", %{"bytes" => tx_bytes, "signature" => signature}, socket) do
-    case Assemblies.submit_signed_extension_tx(tx_bytes, signature, assembly_opts(socket)) do
+    opts = Keyword.put(assembly_opts(socket), :kind_bytes, socket.assigns[:pending_kind_bytes])
+
+    case Assemblies.submit_signed_extension_tx(tx_bytes, signature, opts) do
       {:ok, %{effects_bcs: effects_bcs}} ->
         socket =
           socket
@@ -467,7 +468,7 @@ defmodule SigilWeb.AssemblyDetailLive do
       sign_and_submit_locally(socket, tx_bytes)
     else
       socket
-      |> assign(signing_state: :signing_tx)
+      |> assign(signing_state: :signing_tx, pending_kind_bytes: tx_bytes)
       |> push_event("request_sign_transaction", %{"tx_bytes" => tx_bytes})
     end
   end

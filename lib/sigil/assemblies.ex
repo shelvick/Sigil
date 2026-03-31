@@ -217,7 +217,8 @@ defmodule Sigil.Assemblies do
 
     case @sui_client.execute_transaction(tx_bytes, [signature], req_options) do
       {:ok, %{"status" => "SUCCESS", "digest" => digest} = effects} ->
-        apply_pending_extension_tx(opts, tx_bytes)
+        pending_key = Keyword.get(opts, :kind_bytes, tx_bytes)
+        apply_pending_extension_tx(opts, pending_key)
         {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
 
       {:error, _reason} = error ->

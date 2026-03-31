@@ -171,8 +171,7 @@ defmodule Sigil.Sui.Client.HTTP do
       "params" => [
         tx_bytes,
         signatures,
-        %{"showEffects" => true, "showRawEffects" => true},
-        "WaitForEffectsCert"
+        %{"showEffects" => true}
       ]
     }
 
@@ -194,18 +193,17 @@ defmodule Sigil.Sui.Client.HTTP do
        %{
          status: 200,
          body: %{
-           "result" =>
-             %{
-               "digest" => digest,
-               "effects" => %{"status" => %{"status" => "success"}}
-             } = result
+           "result" => %{
+             "digest" => digest,
+             "effects" => %{"status" => %{"status" => "success"}}
+           }
          }
        }} ->
         {:ok,
          %{
            "status" => "SUCCESS",
            "digest" => digest,
-           "effectsBcs" => result["rawEffects"]
+           "effectsBcs" => nil
          }}
 
       {:ok,

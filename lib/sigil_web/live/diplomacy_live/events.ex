@@ -186,10 +186,14 @@ defmodule SigilWeb.DiplomacyLive.Events do
   end
 
   def handle_event("transaction_signed", %{"bytes" => tx_bytes, "signature" => signature}, socket) do
-    tx_bytes = socket.assigns.pending_tx_bytes || tx_bytes
-    ignore_governance = SigilWeb.DiplomacyLive.Governance.governance_tx?(socket, tx_bytes)
+    kind_bytes = socket.assigns.pending_tx_bytes
+    ignore_governance = SigilWeb.DiplomacyLive.Governance.governance_tx?(socket, kind_bytes)
 
-    case Diplomacy.submit_signed_transaction(tx_bytes, signature, State.diplomacy_opts(socket)) do
+    case Diplomacy.submit_signed_transaction(
+           tx_bytes,
+           signature,
+           Keyword.put(State.diplomacy_opts(socket), :kind_bytes, kind_bytes)
+         ) do
       {:ok, %{digest: _digest, effects_bcs: effects_bcs}} ->
         socket =
           socket
