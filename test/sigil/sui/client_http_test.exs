@@ -1034,24 +1034,24 @@ defmodule Sigil.Sui.ClientHTTPTest do
 
         assert payload["query"] =~ "query GetCoins"
 
-        assert payload["variables"] == %{
+        assert payload["variables"]["filter"] == %{
                  "owner" => "0xowner",
                  "type" => "0x2::coin::Coin<0x2::sui::SUI>"
                }
 
         Req.Test.json(conn, %{
           "data" => %{
-            "address" => %{
-              "coins" => %{
-                "nodes" => [
-                  %{
-                    "address" => "0x" <> String.duplicate("ab", 32),
-                    "version" => "7",
-                    "digest" => digest_b58,
+            "objects" => %{
+              "nodes" => [
+                %{
+                  "address" => "0x" <> String.duplicate("ab", 32),
+                  "version" => "7",
+                  "digest" => digest_b58,
+                  "asMoveObject" => %{
                     "contents" => %{"json" => %{"balance" => "12000000"}}
                   }
-                ]
-              }
+                }
+              ]
             }
           }
         })
@@ -1069,17 +1069,15 @@ defmodule Sigil.Sui.ClientHTTPTest do
       stub_name = stub_name(:get_coins_empty)
 
       Req.Test.expect(stub_name, fn conn ->
-        assert graphql_payload(conn)["variables"] == %{
+        assert graphql_payload(conn)["variables"]["filter"] == %{
                  "owner" => "0xunfunded",
                  "type" => "0x2::coin::Coin<0x2::sui::SUI>"
                }
 
         Req.Test.json(conn, %{
           "data" => %{
-            "address" => %{
-              "coins" => %{
-                "nodes" => []
-              }
+            "objects" => %{
+              "nodes" => []
             }
           }
         })
@@ -1096,7 +1094,7 @@ defmodule Sigil.Sui.ClientHTTPTest do
       errors = [%{"message" => "coins unavailable"}]
 
       Req.Test.expect(stub_name, fn conn ->
-        assert graphql_payload(conn)["variables"] == %{
+        assert graphql_payload(conn)["variables"]["filter"] == %{
                  "owner" => "0xowner",
                  "type" => "0x2::coin::Coin<0x2::sui::SUI>"
                }

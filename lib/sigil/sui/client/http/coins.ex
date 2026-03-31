@@ -9,13 +9,13 @@ defmodule Sigil.Sui.Client.HTTP.Coins do
   alias Sigil.Sui.Client
 
   @get_coins_query """
-  query GetCoins($owner: SuiAddress!, $type: String) {
-    address(address: $owner) {
-      coins(type: $type) {
-        nodes {
-          address
-          version
-          digest
+  query GetCoins($filter: ObjectFilter!, $first: Int) {
+    objects(filter: $filter, first: $first) {
+      nodes {
+        address
+        version
+        digest
+        asMoveObject {
           contents {
             json
           }
@@ -31,7 +31,7 @@ defmodule Sigil.Sui.Client.HTTP.Coins do
 
   @doc "Parses GraphQL coin response data into a list of coin_info maps."
   @spec build_list(map()) :: {:ok, [Client.coin_info()]} | {:error, Client.error_reason()}
-  def build_list(%{"address" => %{"coins" => %{"nodes" => nodes}}}) when is_list(nodes) do
+  def build_list(%{"objects" => %{"nodes" => nodes}}) when is_list(nodes) do
     nodes
     |> Enum.reduce_while({:ok, []}, fn node, {:ok, acc} ->
       case build_coin_info(node) do
@@ -52,7 +52,7 @@ defmodule Sigil.Sui.Client.HTTP.Coins do
          "address" => address,
          "version" => version,
          "digest" => digest_b58,
-         "contents" => %{"json" => %{"balance" => balance}}
+         "asMoveObject" => %{"contents" => %{"json" => %{"balance" => balance}}}
        })
        when is_binary(address) and is_binary(digest_b58) do
     with {:ok, object_id} <- decode_sui_address(address),
