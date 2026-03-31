@@ -174,10 +174,16 @@ defmodule Sigil.IntelMarket.Listings do
   defp normalize_seal_id(nil), do: nil
 
   defp normalize_seal_id(value) when is_binary(value) do
-    if String.starts_with?(value, "0x") do
-      value
-    else
-      "0x" <> Base.encode16(value, case: :lower)
+    cond do
+      String.starts_with?(value, "0x") ->
+        value
+
+      match?({:ok, <<_::binary-size(32)>>}, Base.decode64(value)) ->
+        {:ok, bytes} = Base.decode64(value)
+        "0x" <> Base.encode16(bytes, case: :lower)
+
+      true ->
+        "0x" <> Base.encode16(value, case: :lower)
     end
   end
 
