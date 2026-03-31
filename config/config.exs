@@ -38,7 +38,8 @@ config :sigil, :eve_worlds, %{
     sigil_package_id: utopia_sigil_package_id,
     graphql_url: "https://graphql.testnet.sui.io/graphql",
     rpc_url: "https://fullnode.testnet.sui.io:443",
-    world_api_url: "https://world-api-utopia.uat.pub.evefrontier.com"
+    world_api_url: "https://world-api-utopia.uat.pub.evefrontier.com",
+    reputation_registry_id: "0x61e1f91705edd31774b7d1308ba6fbae870da07b869e4e717a32e15d49e5e580"
   },
   "internal" => %{
     package_id: "0x353988e063b4683580e3603dbe9e91fefd8f6a06263a646d43fd3a2f3ef6b8c1",
