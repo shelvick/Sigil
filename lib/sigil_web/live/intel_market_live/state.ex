@@ -293,7 +293,8 @@ defmodule SigilWeb.IntelMarketLive.State do
 
   defp maybe_put_sigil_package_id(opts, _sigil_package_id), do: opts
 
-  defp maybe_put_walrus_client(opts, walrus_client) when is_atom(walrus_client) do
+  defp maybe_put_walrus_client(opts, walrus_client)
+       when is_atom(walrus_client) and not is_nil(walrus_client) do
     Keyword.put(opts, :walrus_client, walrus_client)
   end
 

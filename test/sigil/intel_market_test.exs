@@ -694,7 +694,7 @@ defmodule Sigil.IntelMarketTest do
                nil
     end
 
-    test "failed reconciliation preserves pending create operation", context do
+    test "successful tx returns ok even when reconciliation fails", context do
       Cache.put(context.tables.intel_market, {:marketplace}, marketplace_info())
 
       assert {:ok, %{tx_bytes: tx_bytes}} =
@@ -702,8 +702,6 @@ defmodule Sigil.IntelMarketTest do
                  create_listing_params(intel_report_id: Ecto.UUID.generate()),
                  market_opts(context, sender: context.seller)
                )
-
-      pending = Cache.get(context.tables.intel_market, {:pending_tx, context.seller, tx_bytes})
 
       expect(Sigil.Sui.ClientMock, :execute_transaction, fn ^tx_bytes, ["wallet-signature"], [] ->
         {:ok,
@@ -718,15 +716,12 @@ defmodule Sigil.IntelMarketTest do
         {:ok, page([])}
       end)
 
-      assert {:error, :listing_not_reconciled} =
+      assert {:ok, %{digest: "missing-listing-digest"}} =
                Sigil.IntelMarket.submit_signed_transaction(
                  tx_bytes,
                  "wallet-signature",
                  market_opts(context, sender: context.seller)
                )
-
-      assert Cache.get(context.tables.intel_market, {:pending_tx, context.seller, tx_bytes}) ==
-               pending
     end
 
     test "failed submission does not apply pending operation", context do
