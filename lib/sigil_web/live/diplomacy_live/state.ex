@@ -216,7 +216,7 @@ defmodule SigilWeb.DiplomacyLive.State do
     socket = socket |> discover_custodian_state() |> load_standings()
 
     if socket.assigns.page_state == :no_custodian,
-      do: Process.send_after(self(), :rediscover_custodian, 2_000)
+      do: Process.send_after(self(), {:rediscover_custodian, 1}, 1_000)
 
     socket
   end

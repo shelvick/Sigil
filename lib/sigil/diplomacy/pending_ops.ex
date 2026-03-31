@@ -68,7 +68,8 @@ defmodule Sigil.Diplomacy.PendingOps do
       {:remove_oracle, tribe_id} ->
         update_oracle_address(table, tribe_id, nil)
 
-      :create_custodian ->
+      {:create_custodian, tribe_id} ->
+        refresh_active_custodian(table, opts, tribe_id)
         broadcast(opts, {:custodian_created, nil})
 
       nil ->
