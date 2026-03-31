@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <!-- Quantum gold gradient for the sigil mark -->
+    <linearGradient id="quantum" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD580"/>
+      <stop offset="50%" stop-color="#FFB829"/>
+      <stop offset="100%" stop-color="#E8863A"/>
+    </linearGradient>
+    <!-- Subtle inner glow -->
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFB829" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#FFB829" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Drop shadow filter -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#FFB829" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="64" fill="#0A0A0A"/>
+
+  <!-- Subtle radial glow behind sigil -->
+  <circle cx="256" cy="240" r="200" fill="url(#glow)"/>
+
+  <!-- === SIGIL MARK === -->
+  <!-- Outer hexagonal ring — blockchain/Sui nod -->
+  <polygon
+    points="256,60 410,149 410,331 256,420 102,331 102,149"
+    stroke="url(#quantum)" stroke-width="3" fill="none" opacity="0.35"
+  />
+
+  <!-- Inner hexagonal ring -->
+  <polygon
+    points="256,100 380,172 380,308 256,380 132,308 132,172"
+    stroke="url(#quantum)" stroke-width="2" fill="none" opacity="0.2"
+  />
+
+  <!-- Central geometric sigil — intersecting lines forming a mystical seal -->
+  <!-- Vertical axis -->
+  <line x1="256" y1="100" x2="256" y2="380" stroke="url(#quantum)" stroke-width="2.5" opacity="0.6"/>
+
+  <!-- Upward triangle — diplomacy/alliance -->
+  <polygon
+    points="256,120 360,300 152,300"
+    stroke="url(#quantum)" stroke-width="3" fill="none" filter="url(#shadow)"
+  />
+
+  <!-- Downward triangle — infrastructure/defense -->
+  <polygon
+    points="256,360 152,180 360,180"
+    stroke="url(#quantum)" stroke-width="3" fill="none" filter="url(#shadow)"
+  />
+
+  <!-- Central eye/node — the "all-seeing" operations center -->
+  <circle cx="256" cy="240" r="40" stroke="url(#quantum)" stroke-width="3" fill="none" filter="url(#shadow)"/>
+  <circle cx="256" cy="240" r="16" fill="url(#quantum)" opacity="0.9"/>
+  <circle cx="256" cy="240" r="6" fill="#0A0A0A"/>
+
+  <!-- Radiating connection lines from center to vertices — tribe network -->
+  <line x1="256" y1="240" x2="256" y2="120" stroke="url(#quantum)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="256" y1="240" x2="360" y2="180" stroke="url(#quantum)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="256" y1="240" x2="360" y2="300" stroke="url(#quantum)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="256" y1="240" x2="256" y2="360" stroke="url(#quantum)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="256" y1="240" x2="152" y2="300" stroke="url(#quantum)" stroke-width="1.5" opacity="0.4"/>
+  <line x1="256" y1="240" x2="152" y2="180" stroke="url(#quantum)" stroke-width="1.5" opacity="0.4"/>
+
+  <!-- Node dots at triangle intersections -->
+  <circle cx="256" cy="120" r="5" fill="#FFB829" opacity="0.8"/>
+  <circle cx="360" cy="180" r="5" fill="#FFB829" opacity="0.8"/>
+  <circle cx="360" cy="300" r="5" fill="#FFB829" opacity="0.8"/>
+  <circle cx="256" cy="360" r="5" fill="#FFB829" opacity="0.8"/>
+  <circle cx="152" cy="300" r="5" fill="#FFB829" opacity="0.8"/>
+  <circle cx="152" cy="180" r="5" fill="#FFB829" opacity="0.8"/>
+
+  <!-- Small accent dots at hexagon vertices -->
+  <circle cx="256" cy="60" r="3" fill="#FFB829" opacity="0.5"/>
+  <circle cx="410" cy="149" r="3" fill="#FFB829" opacity="0.5"/>
+  <circle cx="410" cy="331" r="3" fill="#FFB829" opacity="0.5"/>
+  <circle cx="256" cy="420" r="3" fill="#FFB829" opacity="0.5"/>
+  <circle cx="102" cy="331" r="3" fill="#FFB829" opacity="0.5"/>
+  <circle cx="102" cy="149" r="3" fill="#FFB829" opacity="0.5"/>
+
+  <!-- === WORDMARK === -->
+  <text
+    x="256" y="475"
+    text-anchor="middle"
+    font-family="'Space Grotesk', 'Segoe UI', sans-serif"
+    font-weight="700"
+    font-size="52"
+    letter-spacing="14"
+    fill="url(#quantum)"
+  >SIGIL</text>
+</svg>
