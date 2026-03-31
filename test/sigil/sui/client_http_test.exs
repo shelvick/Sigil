@@ -396,33 +396,39 @@ defmodule Sigil.Sui.ClientHTTPTest do
   end
 
   describe "execute_transaction/3" do
-    test "execute_transaction returns effects for successful submission" do
+    test "execute_transaction returns normalized effects for successful submission" do
       stub_name = stub_name(:execute_transaction_success)
 
-      effects = %{
-        "status" => "SUCCESS",
-        "digest" => "tx-digest",
-        "objectChanges" => %{
-          "nodes" => [
-            %{"address" => "0xlisting", "idCreated" => true, "idDeleted" => false}
-          ]
-        },
-        "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
-      }
-
       Req.Test.expect(stub_name, fn conn ->
-        payload = graphql_payload(conn)
+        {:ok, body, _conn} = Plug.Conn.read_body(conn)
+        payload = Jason.decode!(body)
 
-        assert payload["query"] =~ "mutation ExecuteTransaction"
-        assert payload["query"] =~ "objectChanges"
-        assert payload["variables"] == %{"sigs" => ["sig-1"], "tx" => "tx-bytes"}
+        assert payload["method"] == "sui_executeTransactionBlock"
+
+        assert payload["params"] == [
+                 "tx-bytes",
+                 ["sig-1"],
+                 %{"showEffects" => true, "showRawEffects" => true},
+                 "WaitForEffectsCert"
+               ]
 
         Req.Test.json(conn, %{
-          "data" => %{"executeTransaction" => %{"effects" => effects}}
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "result" => %{
+            "digest" => "tx-digest",
+            "effects" => %{"status" => %{"status" => "success"}},
+            "rawEffects" => "effects-bcs-b64"
+          }
         })
       end)
 
-      assert {:ok, ^effects} =
+      assert {:ok,
+              %{
+                "status" => "SUCCESS",
+                "digest" => "tx-digest",
+                "effectsBcs" => "effects-bcs-b64"
+              }} =
                ClientHTTP.execute_transaction("tx-bytes", ["sig-1"],
                  req_options: [plug: {Req.Test, stub_name}]
                )
@@ -430,16 +436,42 @@ defmodule Sigil.Sui.ClientHTTPTest do
       assert :ok = Req.Test.verify!(stub_name)
     end
 
-    test "execute_transaction returns graphql_errors on mutation failure" do
-      stub_name = stub_name(:execute_transaction_graphql_errors)
-      errors = [%{"message" => "signature rejected"}]
+    test "execute_transaction returns tx_failed on chain execution failure" do
+      stub_name = stub_name(:execute_transaction_tx_failed)
 
       Req.Test.expect(stub_name, fn conn ->
-        assert graphql_payload(conn)["variables"] == %{"sigs" => ["sig-1"], "tx" => "tx-bytes"}
-        Req.Test.json(conn, %{"errors" => errors})
+        Req.Test.json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "result" => %{
+            "digest" => "failed-digest",
+            "effects" => %{
+              "status" => %{"status" => "failure", "error" => "InsufficientGas"}
+            }
+          }
+        })
       end)
 
-      assert {:error, {:graphql_errors, ^errors}} =
+      assert {:error, {:tx_failed, "InsufficientGas"}} =
+               ClientHTTP.execute_transaction("tx-bytes", ["sig-1"],
+                 req_options: [plug: {Req.Test, stub_name}]
+               )
+
+      assert :ok = Req.Test.verify!(stub_name)
+    end
+
+    test "execute_transaction returns rpc_error on RPC-level failure" do
+      stub_name = stub_name(:execute_transaction_rpc_error)
+
+      Req.Test.expect(stub_name, fn conn ->
+        Req.Test.json(conn, %{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "error" => %{"message" => "signature rejected"}
+        })
+      end)
+
+      assert {:error, {:rpc_error, "signature rejected"}} =
                ClientHTTP.execute_transaction("tx-bytes", ["sig-1"],
                  req_options: [plug: {Req.Test, stub_name}]
                )

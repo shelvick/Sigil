@@ -30,18 +30,21 @@ config :sigil, :eve_worlds, %{
     package_id: "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c",
     sigil_package_id: stillness_sigil_package_id,
     graphql_url: "https://graphql.testnet.sui.io/graphql",
+    rpc_url: "https://fullnode.testnet.sui.io:443",
     world_api_url: "https://world-api-stillness.live.tech.evefrontier.com"
   },
   "utopia" => %{
     package_id: "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
     sigil_package_id: utopia_sigil_package_id,
     graphql_url: "https://graphql.testnet.sui.io/graphql",
+    rpc_url: "https://fullnode.testnet.sui.io:443",
     world_api_url: "https://world-api-utopia.uat.pub.evefrontier.com"
   },
   "internal" => %{
     package_id: "0x353988e063b4683580e3603dbe9e91fefd8f6a06263a646d43fd3a2f3ef6b8c1",
     sigil_package_id: internal_sigil_package_id,
     graphql_url: "https://graphql.testnet.sui.io/graphql",
+    rpc_url: "https://fullnode.testnet.sui.io:443",
     world_api_url: "https://world-api-stillness.live.tech.evefrontier.com"
   },
   "localnet" => %{

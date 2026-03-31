@@ -62,32 +62,6 @@ defmodule Sigil.Sui.Client.HTTP do
   }
   """
 
-  @execute_transaction_mutation """
-  mutation ExecuteTransaction($tx: Base64!, $sigs: [Base64!]!) {
-    executeTransaction(transactionDataBcs: $tx, signatures: $sigs) {
-      effects {
-        effectsBcs
-        digest
-        status
-        objectChanges {
-          nodes {
-            address
-            idCreated
-            idDeleted
-          }
-        }
-        gasEffects {
-          gasSummary {
-            computationCost
-            storageCost
-            storageRebate
-          }
-        }
-      }
-    }
-  }
-  """
-
   @verify_zklogin_query """
   query VerifyZkLoginSignature(
     $bytes: Base64!
@@ -184,25 +158,85 @@ defmodule Sigil.Sui.Client.HTTP do
     end
   end
 
-  @doc "Submits a signed transaction to the Sui GraphQL API."
+  @doc "Submits a signed transaction via Sui JSON-RPC."
   @impl Client
   @spec execute_transaction(String.t(), [String.t()], Client.request_opts()) ::
           {:ok, Client.tx_effects()} | {:error, Client.error_reason()}
   def execute_transaction(tx_bytes, signatures, opts \\ [])
       when is_binary(tx_bytes) and is_list(signatures) and is_list(opts) do
-    with {:ok, data} <-
-           graphql_request(
-             @execute_transaction_mutation,
-             %{"tx" => tx_bytes, "sigs" => signatures},
-             opts
-           ) do
-      case data do
-        %{"executeTransaction" => %{"effects" => effects}} when is_map(effects) ->
-          {:ok, effects}
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "sui_executeTransactionBlock",
+      "params" => [
+        tx_bytes,
+        signatures,
+        %{"showEffects" => true, "showRawEffects" => true},
+        "WaitForEffectsCert"
+      ]
+    }
 
-        _other ->
-          {:error, :invalid_response}
-      end
+    req_opts =
+      opts
+      |> Keyword.get(:req_options, [])
+      |> Keyword.merge(
+        url: rpc_url(),
+        json: body,
+        receive_timeout: 30_000,
+        retry: &Request.retry?/2,
+        retry_delay: retry_delay(),
+        max_retries: max_retries(),
+        retry_log_level: false
+      )
+
+    case Req.post(req_opts) do
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "result" =>
+             %{
+               "digest" => digest,
+               "effects" => %{"status" => %{"status" => "success"}}
+             } = result
+         }
+       }} ->
+        {:ok,
+         %{
+           "status" => "SUCCESS",
+           "digest" => digest,
+           "effectsBcs" => result["rawEffects"]
+         }}
+
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "result" => %{
+             "effects" => %{"status" => %{"status" => status} = status_detail}
+           }
+         }
+       }} ->
+        error_msg = Map.get(status_detail, "error", status)
+        {:error, {:tx_failed, error_msg}}
+
+      {:ok, %{status: 200, body: %{"error" => %{"message" => message}}}} ->
+        {:error, {:rpc_error, message}}
+
+      {:ok, %{status: 200, body: %{"error" => error}}} ->
+        {:error, {:rpc_error, inspect(error)}}
+
+      {:ok, %Req.Response{status: 429}} ->
+        {:error, :rate_limited}
+
+      {:ok, %Req.Response{}} ->
+        {:error, :invalid_response}
+
+      {:error, %Req.TransportError{reason: :timeout}} ->
+        {:error, :timeout}
+
+      {:error, _exception} ->
+        {:error, :invalid_response}
     end
   end
 
@@ -275,6 +309,14 @@ defmodule Sigil.Sui.Client.HTTP do
     world = Application.fetch_env!(:sigil, :eve_world)
     worlds = Application.fetch_env!(:sigil, :eve_worlds)
     %{graphql_url: url} = Map.fetch!(worlds, world)
+    url
+  end
+
+  @spec rpc_url() :: String.t()
+  defp rpc_url do
+    world = Application.fetch_env!(:sigil, :eve_world)
+    worlds = Application.fetch_env!(:sigil, :eve_worlds)
+    %{rpc_url: url} = Map.fetch!(worlds, world)
     url
   end
 
