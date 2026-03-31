@@ -57,7 +57,7 @@ defmodule Sigil.IntelMarket.Listings do
         price_mist: Support.parse_integer(Map.fetch!(object, "price")),
         report_type: Support.parse_integer(Map.fetch!(object, "report_type")),
         solar_system_id: Support.parse_integer(Map.fetch!(object, "solar_system_id")),
-        description: Map.get(object, "description"),
+        description: decode_vector_u8(Map.get(object, "description")),
         status: Support.parse_listing_status(Map.get(object, "status")),
         buyer_address: Map.get(object, "buyer"),
         restricted_to_tribe_id:
@@ -188,6 +188,15 @@ defmodule Sigil.IntelMarket.Listings do
   end
 
   defp normalize_blob_id(nil), do: nil
-  defp normalize_blob_id(value) when is_binary(value), do: value
+  defp normalize_blob_id(value) when is_binary(value), do: decode_vector_u8(value)
   defp normalize_blob_id(value) when is_list(value), do: List.to_string(value)
+
+  defp decode_vector_u8(nil), do: nil
+
+  defp decode_vector_u8(value) when is_binary(value) do
+    case Base.decode64(value) do
+      {:ok, decoded} -> decoded
+      :error -> value
+    end
+  end
 end

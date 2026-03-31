@@ -176,10 +176,10 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
         |> put_flash(:info, "Listing created")
         |> State.refresh_marketplace()
 
-      {:error, _reason} ->
+      {:error, reason} ->
         socket
         |> assign(page_state: :ready, pending_tx: nil, pending_listing: nil, seal_status: nil)
-        |> put_flash(:error, "Transaction failed")
+        |> put_flash(:error, "Transaction failed: #{inspect(reason)}")
     end
   end
 
@@ -361,7 +361,7 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
         ) :: Phoenix.LiveView.Socket.t()
   defp handle_successful_signed_tx(socket, :purchase, _pending_tx) do
     socket
-    |> put_flash(:info, "Purchase successful — seller must reveal the canonical intel payload")
+    |> put_flash(:info, "Purchase successful — decrypt your intel below")
     |> State.refresh_marketplace()
   end
 
