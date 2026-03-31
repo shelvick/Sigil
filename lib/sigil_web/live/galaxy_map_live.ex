@@ -35,8 +35,6 @@ defmodule SigilWeb.GalaxyMapLive do
         },
         static_data_available: false,
         static_tables: nil,
-        init_systems_payload: nil,
-        init_constellations_payload: nil,
         tribe_location_overlays: [],
         tribe_scouting_overlays: [],
         marketplace_overlay_map: %{},
@@ -60,14 +58,8 @@ defmodule SigilWeb.GalaxyMapLive do
     socket =
       socket
       |> assign(:map_ready, true)
-      |> push_event("init_systems", socket.assigns.init_systems_payload || %{"systems" => []})
-      |> push_event(
-        "init_constellations",
-        socket.assigns.init_constellations_payload || %{"constellations" => []}
-      )
       |> push_event("update_overlays", overlay_payload(socket.assigns))
       |> push_event("update_system_colors", %{"categories" => socket.assigns.system_categories})
-      |> assign(init_systems_payload: nil, init_constellations_payload: nil)
 
     socket =
       if is_integer(socket.assigns.target_system_id) do
@@ -262,17 +254,9 @@ defmodule SigilWeb.GalaxyMapLive do
   defp load_static_data(socket) do
     case socket.assigns[:static_data] do
       static_data when is_pid(static_data) ->
-        static_tables = StaticData.tables(static_data)
-        systems = StaticData.list_solar_systems(static_data)
-        constellations = StaticData.list_constellations(static_data)
-
         assign(socket,
           static_data_available: true,
-          static_tables: static_tables,
-          init_systems_payload: %{"systems" => Data.map_system_payload(systems)},
-          init_constellations_payload: %{
-            "constellations" => Data.map_constellation_payload(constellations)
-          }
+          static_tables: StaticData.tables(static_data)
         )
 
       _other ->

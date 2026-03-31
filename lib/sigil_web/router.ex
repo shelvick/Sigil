@@ -45,6 +45,7 @@ defmodule SigilWeb.Router do
     pipe_through :api
 
     get "/health", HealthController, :index
+    get "/static/galaxy", StaticDataController, :galaxy
   end
 
   if Application.compile_env(:sigil, :dev_routes) do

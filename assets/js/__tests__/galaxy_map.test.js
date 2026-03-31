@@ -346,6 +346,22 @@ describe("galaxy_map_utils", () => {
   })
 })
 
+const SAMPLE_SYSTEMS = [
+  { id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 }
+]
+
+function mockFetch(systems = SAMPLE_SYSTEMS) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ systems })
+      })
+    )
+  )
+}
+
 describe("GalaxyMap hook", () => {
   beforeEach(() => {
     threeState.intersections = []
@@ -360,6 +376,7 @@ describe("GalaxyMap hook", () => {
       fill: () => undefined,
       fillStyle: "#ffffff"
     }))
+    mockFetch()
   })
 
   afterEach(() => {
@@ -367,23 +384,25 @@ describe("GalaxyMap hook", () => {
     vi.unstubAllGlobals()
   })
 
-  it("GalaxyMap hook emits map_ready on mount", async () => {
+  it("GalaxyMap hook emits map_ready after fetching static data", async () => {
     const { destroy, events } = mountHook(await loadHook(), {
       id: "galaxy-map"
     })
 
-    expect(events).toContainEqual({ event: "map_ready", payload: {} })
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({ event: "map_ready", payload: {} })
+    })
 
     destroy()
   })
 
   it("GalaxyMap hook emits system_selected for clicked point", async () => {
-    const { hook, destroy, events, pushServerEvent } = mountHook(await loadHook(), {
+    const { hook, destroy, events } = mountHook(await loadHook(), {
       id: "galaxy-map"
     })
 
-    await pushServerEvent("init_systems", {
-      systems: [{ id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 }]
+    await vi.waitFor(() => {
+      expect(hook.systemIds.length).toBeGreaterThan(0)
     })
 
     threeState.intersections = [{ index: 0 }]
@@ -419,8 +438,8 @@ describe("GalaxyMap hook", () => {
       id: "galaxy-map"
     })
 
-    await pushServerEvent("init_systems", {
-      systems: [{ id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 }]
+    await vi.waitFor(() => {
+      expect(hook.systemIds.length).toBeGreaterThan(0)
     })
 
     await pushServerEvent("select_system", { system_id: 30_000_142 })
@@ -442,8 +461,8 @@ describe("GalaxyMap hook", () => {
       id: "galaxy-map"
     })
 
-    await pushServerEvent("init_systems", {
-      systems: [{ id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 }]
+    await vi.waitFor(() => {
+      expect(hook.systemIds.length).toBeGreaterThan(0)
     })
 
     await pushServerEvent("update_overlays", {
@@ -472,15 +491,17 @@ describe("GalaxyMap hook", () => {
   })
 
   it("GalaxyMap hook updates point colors from categories", async () => {
+    mockFetch([
+      { id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 },
+      { id: 30_000_900, name: "Jita", constellation_id: 200_001, x: 40, y: 50, z: 60 }
+    ])
+
     const { hook, destroy, pushServerEvent } = mountHook(await loadHook(), {
       id: "galaxy-map"
     })
 
-    await pushServerEvent("init_systems", {
-      systems: [
-        { id: 30_000_142, name: "Piekura", constellation_id: 200_001, x: 10, y: 20, z: 30 },
-        { id: 30_000_900, name: "Jita", constellation_id: 200_001, x: 40, y: 50, z: 60 }
-      ]
+    await vi.waitFor(() => {
+      expect(hook.systemIds.length).toBe(2)
     })
 
     await pushServerEvent("update_system_colors", {

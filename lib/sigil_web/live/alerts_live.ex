@@ -270,6 +270,10 @@ defmodule SigilWeb.AlertsLive do
         tribe_id: tribe_id
       ]
 
+      if connected?(socket) and is_nil(Diplomacy.get_active_custodian(opts)) do
+        Diplomacy.discover_custodian(tribe_id, opts)
+      end
+
       is_leader = Diplomacy.leader?(opts)
       config = if is_leader, do: Alerts.get_webhook_config(tribe_id, [])
 

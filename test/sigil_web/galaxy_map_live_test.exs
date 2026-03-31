@@ -217,7 +217,7 @@ defmodule SigilWeb.GalaxyMapLiveTest do
     refute html =~ "20000001"
   end
 
-  test "map_ready triggers data push to hook", %{
+  test "map_ready triggers overlay push to hook", %{
     conn: conn,
     cache_tables: cache_tables,
     pubsub: pubsub,
@@ -243,12 +243,6 @@ defmodule SigilWeb.GalaxyMapLiveTest do
 
     view
     |> render_hook("map_ready", %{})
-
-    assert_push_event(view, "init_systems", %{"systems" => systems})
-    assert length(systems) >= 2
-
-    assert_push_event(view, "init_constellations", %{"constellations" => constellations})
-    assert length(constellations) >= 2
 
     assert_push_event(view, "update_overlays", %{
       "tribe_locations" => _,
