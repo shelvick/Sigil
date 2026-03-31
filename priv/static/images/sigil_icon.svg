@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="quantum" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD580"/>
+      <stop offset="50%" stop-color="#FFB829"/>
+      <stop offset="100%" stop-color="#E8863A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFB829" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#FFB829" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#FFB829" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <rect width="256" height="256" rx="32" fill="#0A0A0A"/>
+  <circle cx="128" cy="128" r="100" fill="url(#glow)"/>
+
+  <!-- Outer hexagon -->
+  <polygon
+    points="128,28 215,78 215,178 128,228 41,178 41,78"
+    stroke="url(#quantum)" stroke-width="2" fill="none" opacity="0.35"
+  />
+
+  <!-- Inner hexagon -->
+  <polygon
+    points="128,48 200,90 200,166 128,208 56,166 56,90"
+    stroke="url(#quantum)" stroke-width="1.5" fill="none" opacity="0.2"
+  />
+
+  <!-- Vertical axis -->
+  <line x1="128" y1="48" x2="128" y2="208" stroke="url(#quantum)" stroke-width="1.5" opacity="0.5"/>
+
+  <!-- Upward triangle -->
+  <polygon
+    points="128,58 186,158 70,158"
+    stroke="url(#quantum)" stroke-width="2" fill="none" filter="url(#shadow)"
+  />
+
+  <!-- Downward triangle -->
+  <polygon
+    points="128,198 70,98 186,98"
+    stroke="url(#quantum)" stroke-width="2" fill="none" filter="url(#shadow)"
+  />
+
+  <!-- Central eye -->
+  <circle cx="128" cy="128" r="22" stroke="url(#quantum)" stroke-width="2" fill="none" filter="url(#shadow)"/>
+  <circle cx="128" cy="128" r="9" fill="url(#quantum)" opacity="0.9"/>
+  <circle cx="128" cy="128" r="3.5" fill="#0A0A0A"/>
+
+  <!-- Radiating lines -->
+  <line x1="128" y1="128" x2="128" y2="58" stroke="url(#quantum)" stroke-width="1" opacity="0.4"/>
+  <line x1="128" y1="128" x2="186" y2="98" stroke="url(#quantum)" stroke-width="1" opacity="0.4"/>
+  <line x1="128" y1="128" x2="186" y2="158" stroke="url(#quantum)" stroke-width="1" opacity="0.4"/>
+  <line x1="128" y1="128" x2="128" y2="198" stroke="url(#quantum)" stroke-width="1" opacity="0.4"/>
+  <line x1="128" y1="128" x2="70" y2="158" stroke="url(#quantum)" stroke-width="1" opacity="0.4"/>
+  <line x1="128" y1="128" x2="70" y2="98" stroke="url(#quantum)" stroke-width="1" opacity="0.4"/>
+
+  <!-- Vertex nodes -->
+  <circle cx="128" cy="58" r="3" fill="#FFB829" opacity="0.8"/>
+  <circle cx="186" cy="98" r="3" fill="#FFB829" opacity="0.8"/>
+  <circle cx="186" cy="158" r="3" fill="#FFB829" opacity="0.8"/>
+  <circle cx="128" cy="198" r="3" fill="#FFB829" opacity="0.8"/>
+  <circle cx="70" cy="158" r="3" fill="#FFB829" opacity="0.8"/>
+  <circle cx="70" cy="98" r="3" fill="#FFB829" opacity="0.8"/>
+
+  <!-- Outer hex vertex accents -->
+  <circle cx="128" cy="28" r="2" fill="#FFB829" opacity="0.5"/>
+  <circle cx="215" cy="78" r="2" fill="#FFB829" opacity="0.5"/>
+  <circle cx="215" cy="178" r="2" fill="#FFB829" opacity="0.5"/>
+  <circle cx="128" cy="228" r="2" fill="#FFB829" opacity="0.5"/>
+  <circle cx="41" cy="178" r="2" fill="#FFB829" opacity="0.5"/>
+  <circle cx="41" cy="78" r="2" fill="#FFB829" opacity="0.5"/>
+</svg>
