@@ -193,14 +193,12 @@ defmodule Sigil.IntelMarket.Transactions do
         pending_key = Keyword.get(opts, :kind_bytes, tx_bytes)
 
         with {:ok, sender} <- require_sender(opts),
-             operation when not is_nil(operation) <- get_pending_tx(opts, sender, pending_key),
-             {:ok, _result} <- PendingOps.apply(opts, operation, effects, digest) do
+             operation when not is_nil(operation) <- get_pending_tx(opts, sender, pending_key) do
+          PendingOps.apply(opts, operation, effects, digest)
           clear_pending_tx(opts, sender, pending_key)
-          {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
-        else
-          nil -> {:error, :pending_tx_not_found}
-          {:error, _reason} = error -> error
         end
+
+        {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
 
       {:ok, effects} ->
         {:error, {:tx_failed, effects}}
@@ -220,8 +218,8 @@ defmodule Sigil.IntelMarket.Transactions do
     with {:ok, sender} <- require_sender(opts),
          operation when not is_nil(operation) <- get_pending_tx(opts, sender, tx_bytes),
          {:ok, %{digest: digest, effects_bcs: effects_bcs, effects: effects}} <-
-           GasRelay.submit_sponsored(tx_bytes, pseudonym_signature, relay_signature, opts),
-         {:ok, _result} <- PendingOps.apply(opts, operation, effects, digest) do
+           GasRelay.submit_sponsored(tx_bytes, pseudonym_signature, relay_signature, opts) do
+      PendingOps.apply(opts, operation, effects, digest)
       clear_pending_tx(opts, sender, tx_bytes)
       {:ok, %{digest: digest, effects_bcs: effects_bcs}}
     else
