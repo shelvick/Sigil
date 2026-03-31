@@ -216,7 +216,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
           <article :for={listing <- @listings} class="rounded-2xl border border-space-600/80 bg-space-950/60 p-5">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div class="space-y-2">
-                <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500"><%= listing.id %></p>
+                <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500 truncate max-w-xs" title={listing.id}><%= truncate_id(listing.id) %></p>
                 <p class="text-lg font-semibold text-cream"><%= listing.description || "Untitled listing" %></p>
                 <div class="flex flex-wrap items-center gap-3 text-xs text-space-500">
                   <span><%= system_name(@static_data, listing.solar_system_id) %></span>
@@ -257,7 +257,7 @@ defmodule SigilWeb.IntelMarketLive.Components do
             <article :for={listing <- @purchased_listings} class="rounded-2xl border border-space-600/80 bg-space-950/60 p-5">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="space-y-2">
-                  <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500"><%= listing.id %></p>
+                  <p class="font-mono text-xs uppercase tracking-[0.2em] text-space-500 truncate max-w-xs" title={listing.id}><%= truncate_id(listing.id) %></p>
                   <p class="text-lg font-semibold text-cream"><%= listing.description || "Untitled listing" %></p>
                   <div class="flex flex-wrap items-center gap-3 text-xs text-space-500">
                     <span><%= system_name(@static_data, listing.solar_system_id) %></span>

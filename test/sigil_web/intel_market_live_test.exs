@@ -1357,7 +1357,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
     html = render_click(view, "show_section", %{"section" => "my_listings"})
     assert html =~ "Purchase successful"
-    assert html =~ "seller must reveal"
+    assert html =~ "decrypt your intel below"
     assert html =~ "sold"
     refute html =~ ~s(phx-click="purchase_listing")
 
