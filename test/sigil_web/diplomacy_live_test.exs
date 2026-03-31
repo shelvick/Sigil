@@ -752,7 +752,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     html = render(view)
 
-    assert html =~ "Transaction cancelled"
+    assert html =~ "Transaction failed: User rejected the request"
     refute html =~ "Approve in your wallet"
   end
 
@@ -1493,7 +1493,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     html = render(view)
 
-    assert html =~ "Transaction cancelled"
+    assert html =~ "Transaction failed: User rejected the request"
     assert html =~ "Tribe Governance"
     assert html =~ challenger_label(candidate)
     refute html =~ "Approve in your wallet"
@@ -1610,7 +1610,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     assert html =~ "Tribe Custodian"
     assert html =~ "Tribe Standings"
-    refute html =~ "Transaction cancelled"
+    refute html =~ "Transaction failed:"
   end
 
   # ---------------------------------------------------------------------------

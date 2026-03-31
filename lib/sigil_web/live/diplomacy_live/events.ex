@@ -221,10 +221,10 @@ defmodule SigilWeb.DiplomacyLive.Events do
     end
   end
 
-  def handle_event("transaction_error", %{"reason" => _reason}, socket) do
+  def handle_event("transaction_error", %{"reason" => reason}, socket) do
     {:noreply,
      socket
-     |> put_flash(:info, "Transaction cancelled")
+     |> put_flash(:error, "Transaction failed: #{reason}")
      |> Phoenix.Component.assign(
        page_state: socket.assigns.return_page_state,
        pending_tx_bytes: nil
