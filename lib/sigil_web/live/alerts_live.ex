@@ -258,9 +258,17 @@ defmodule SigilWeb.AlertsLive do
     end
   end
 
+  @spec active_tribe_id(Phoenix.LiveView.Socket.t()) :: integer() | nil
+  defp active_tribe_id(socket) do
+    case socket.assigns[:active_character] do
+      %{tribe_id: tribe_id} when is_integer(tribe_id) and tribe_id > 0 -> tribe_id
+      _other -> socket.assigns.current_account.tribe_id
+    end
+  end
+
   @spec load_webhook_state(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp load_webhook_state(socket) do
-    tribe_id = socket.assigns.current_account.tribe_id
+    tribe_id = active_tribe_id(socket)
     cache_tables = socket.assigns[:cache_tables]
 
     if is_integer(tribe_id) and is_map(cache_tables) and is_map_key(cache_tables, :standings) do
@@ -289,7 +297,7 @@ defmodule SigilWeb.AlertsLive do
 
   @spec save_webhook(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
   defp save_webhook(socket, params) do
-    tribe_id = socket.assigns.current_account.tribe_id
+    tribe_id = active_tribe_id(socket)
     url = Map.get(params, "webhook_url", "")
 
     attrs = %{
@@ -312,7 +320,7 @@ defmodule SigilWeb.AlertsLive do
 
   @spec toggle_webhook(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp toggle_webhook(%{assigns: %{webhook_config: %WebhookConfig{} = config}} = socket) do
-    tribe_id = socket.assigns.current_account.tribe_id
+    tribe_id = active_tribe_id(socket)
 
     attrs = %{
       "webhook_url" => config.webhook_url,
@@ -358,7 +366,7 @@ defmodule SigilWeb.AlertsLive do
       assembly_id: nil,
       assembly_name: "Test Delivery",
       account_address: socket.assigns.current_account.address,
-      tribe_id: socket.assigns.current_account.tribe_id,
+      tribe_id: active_tribe_id(socket),
       message: "This is a test alert from Sigil to verify your webhook configuration.",
       metadata: %{},
       inserted_at: DateTime.utc_now()

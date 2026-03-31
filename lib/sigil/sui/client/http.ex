@@ -283,12 +283,15 @@ defmodule Sigil.Sui.Client.HTTP do
   @spec get_coins(String.t(), Client.request_opts()) ::
           {:ok, [Client.coin_info()]} | {:error, Client.error_reason()}
   def get_coins(owner, opts \\ []) when is_binary(owner) and is_list(opts) do
-    with {:ok, data} <-
-           graphql_request(
-             Coins.query(),
-             %{"owner" => owner, "type" => "0x2::coin::Coin<0x2::sui::SUI>"},
-             opts
-           ) do
+    variables = %{
+      "filter" => %{
+        "type" => "0x2::coin::Coin<0x2::sui::SUI>",
+        "owner" => owner
+      },
+      "first" => @default_limit
+    }
+
+    with {:ok, data} <- graphql_request(Coins.query(), variables, opts) do
       Coins.build_list(data)
     end
   end
