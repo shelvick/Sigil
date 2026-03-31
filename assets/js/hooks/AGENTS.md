@@ -7,7 +7,7 @@
 - `pseudonym_store.js` — in-memory pseudonym keypair cache: `cachePseudonym/2`, `getPseudonym/1`, `setActivePseudonym/1`, `activatePseudonym/1`, `getActivePseudonym/0`, `clearPseudonyms/0`. Shared between `pseudonym_hook.js` and `seal_hook.js`.
 - `fuel_countdown.js` — live countdown rendering for assembly fuel depletion timestamps.
 - `infinite_scroll.js` — alerts-feed sentinel observer that pushes `load_more` when the feed bottom enters view.
-- `galaxy_map.js` — Three.js point-cloud galaxy renderer: orbit/pan/zoom controls, constellation clustering at camera distance thresholds, click-to-select via raycaster, intel/marketplace overlay layers. Event bridge: handleEvent (`init_systems`, `init_constellations`, `update_overlays`, `select_system`, `toggle_overlay`) / pushEvent (`map_ready`, `system_selected`, `system_deselected`).
+- `galaxy_map.js` — Three.js point-cloud galaxy renderer: orbit/pan/zoom controls, constellation clustering at camera distance thresholds, click-to-select via raycaster, intel/marketplace overlay layers. Fetches star data from `/api/static/galaxy` on mount, then signals LiveView. Event bridge: handleEvent (`update_overlays`, `select_system`, `toggle_overlay`, `update_system_colors`) / pushEvent (`map_ready`, `system_selected`, `system_deselected`).
 - `galaxy_map_utils.js` — pure utility functions: `normalizeCoordinates` (iterative reduce for min/max/radius), `normalizeWithTransform`, `buildSystemIndex`, `buildOverlayPositions`, `resolveSystemId`, `createDefaultCamera`, `shouldShowConstellations`.
 
 ## Marketplace Hook Contract

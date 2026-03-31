@@ -107,7 +107,7 @@ const GalaxyMap = {
 
     this._bindDomEvents()
     this._startAnimationLoop()
-    this.pushEvent("map_ready", {})
+    this._fetchStaticData()
   },
 
   updated() {
@@ -154,15 +154,6 @@ const GalaxyMap = {
   },
 
   _registerEvents() {
-    this.handleEvent("init_systems", ({ systems } = {}) => {
-      this._initSystems(systems || [])
-    })
-
-    // Kept for protocol compatibility with the LiveView event bridge.
-    this.handleEvent("init_constellations", () => {
-      return undefined
-    })
-
     this.handleEvent("update_overlays", (payload = {}) => {
       this._updateOverlays(payload)
     })
@@ -193,6 +184,18 @@ const GalaxyMap = {
       this._focusSystemByIndex(index)
       this.pushEvent("system_selected", { system_id: systemId })
     })
+  },
+
+  async _fetchStaticData() {
+    try {
+      const response = await fetch("/api/static/galaxy")
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json()
+      this._initSystems(data.systems || [])
+      this.pushEvent("map_ready", {})
+    } catch (error) {
+      console.error("Failed to load galaxy data:", error)
+    }
   },
 
   _initializeRenderer() {
