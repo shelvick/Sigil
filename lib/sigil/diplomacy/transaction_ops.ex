@@ -50,7 +50,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
-      store_pending_tx(opts, tx_bytes, :create_custodian)
+      store_pending_tx(opts, tx_bytes, {:create_custodian, Keyword.fetch!(opts, :tribe_id)})
 
       {:ok, %{tx_bytes: tx_bytes}}
     end

@@ -2370,7 +2370,17 @@ defmodule SigilWeb.DiplomacyLiveTest do
        }}
     end)
 
-    # After creation, re-discovery finds the new custodian
+    # PendingOps attempts discovery immediately after tx success
+    expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
+      {:ok,
+       %{
+         data: [custodian_object_json(table_id(0xFE), wallet_address, @tribe_id, 99)],
+         has_next_page: false,
+         end_cursor: nil
+       }}
+    end)
+
+    # LiveView re-discovery confirms the custodian
     expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @custodian_type], [] ->
       {:ok,
        %{

@@ -11,19 +11,17 @@ defmodule SigilWeb.GalaxyMapLive.Data do
   """
   @spec build_detail_data(integer(), map()) :: map() | nil
   def build_detail_data(system_id, assigns) do
-    case Map.get(assigns.system_names, system_id) do
+    case lookup_system(assigns[:static_tables], system_id) do
       nil ->
         nil
 
-      system_name ->
+      system ->
         locations = Enum.filter(assigns.tribe_location_overlays, &(&1.system_id == system_id))
         scouting = Enum.filter(assigns.tribe_scouting_overlays, &(&1.system_id == system_id))
         marketplace = Enum.filter(assigns.marketplace_overlays, &(&1.system_id == system_id))
 
         constellation_name =
-          assigns.system_constellations
-          |> Map.get(system_id)
-          |> then(&Map.get(assigns.constellation_names, &1, "Unknown"))
+          lookup_constellation_name(assigns[:static_tables], system.constellation_id)
 
         assemblies =
           Enum.map(locations, fn %{assembly_id: assembly_id, label: label} ->
@@ -31,7 +29,7 @@ defmodule SigilWeb.GalaxyMapLive.Data do
           end)
 
         %{
-          system_name: system_name,
+          system_name: system.name,
           constellation_name: constellation_name,
           tribe_location_count: length(locations),
           tribe_scouting_count: length(scouting),
@@ -79,20 +77,20 @@ defmodule SigilWeb.GalaxyMapLive.Data do
   """
   @spec build_system_categories(map()) :: %{optional(String.t()) => String.t()}
   def build_system_categories(assigns) do
-    system_names = Map.get(assigns, :system_names, %{})
+    static_tables = Map.get(assigns, :static_tables)
     now = DateTime.utc_now()
 
     assembly_categories =
       assigns
       |> Map.get(:tribe_location_overlays, [])
       |> Enum.reduce(%{}, fn entry, acc ->
-        put_assembly_category(acc, entry, assigns, system_names, now)
+        put_assembly_category(acc, entry, assigns, static_tables, now)
       end)
 
     intel_categories =
       (Map.get(assigns, :tribe_scouting_overlays, []) ++
          Map.get(assigns, :marketplace_overlays, []))
-      |> Enum.reduce(%{}, fn entry, acc -> put_intel_category(acc, entry, system_names) end)
+      |> Enum.reduce(%{}, fn entry, acc -> put_intel_category(acc, entry, static_tables) end)
 
     assembly_categories
     |> Map.merge(intel_categories, fn
@@ -106,35 +104,35 @@ defmodule SigilWeb.GalaxyMapLive.Data do
     end)
   end
 
-  @spec put_assembly_category(map(), map(), map(), map(), DateTime.t()) :: map()
+  @spec put_assembly_category(map(), map(), map(), map() | nil, DateTime.t()) :: map()
   defp put_assembly_category(
          acc,
          %{system_id: system_id, assembly_id: assembly_id},
          assigns,
-         system_names,
+         static_tables,
          now
        )
        when is_integer(system_id) and is_binary(assembly_id) do
-    if Map.has_key?(system_names, system_id) do
+    if system_in_ets?(static_tables, system_id) do
       merge_category(acc, system_id, assembly_category(assigns, assembly_id, now))
     else
       acc
     end
   end
 
-  defp put_assembly_category(acc, _entry, _assigns, _system_names, _now), do: acc
+  defp put_assembly_category(acc, _entry, _assigns, _static_tables, _now), do: acc
 
-  @spec put_intel_category(map(), map(), map()) :: map()
-  defp put_intel_category(acc, %{system_id: system_id}, system_names)
+  @spec put_intel_category(map(), map(), map() | nil) :: map()
+  defp put_intel_category(acc, %{system_id: system_id}, static_tables)
        when is_integer(system_id) do
-    if Map.has_key?(system_names, system_id) do
+    if system_in_ets?(static_tables, system_id) do
       Map.put(acc, system_id, :intel)
     else
       acc
     end
   end
 
-  defp put_intel_category(acc, _entry, _system_names), do: acc
+  defp put_intel_category(acc, _entry, _static_tables), do: acc
 
   @spec merge_category(map(), integer(), atom()) :: map()
   defp merge_category(categories, system_id, category) do
@@ -197,4 +195,29 @@ defmodule SigilWeb.GalaxyMapLive.Data do
   @spec fuel_category_from_ratio(float()) :: atom()
   defp fuel_category_from_ratio(ratio) when ratio < 0.20, do: :fuel_low
   defp fuel_category_from_ratio(_ratio), do: :assembly
+
+  @spec lookup_system(map() | nil, integer()) :: struct() | nil
+  defp lookup_system(%{solar_systems: tid}, system_id) do
+    case :ets.lookup(tid, system_id) do
+      [{^system_id, system}] -> system
+      [] -> nil
+    end
+  end
+
+  defp lookup_system(_tables, _system_id), do: nil
+
+  @spec lookup_constellation_name(map() | nil, integer() | nil) :: String.t()
+  defp lookup_constellation_name(%{constellations: tid}, constellation_id)
+       when is_integer(constellation_id) do
+    case :ets.lookup(tid, constellation_id) do
+      [{^constellation_id, constellation}] -> constellation.name
+      [] -> "Unknown"
+    end
+  end
+
+  defp lookup_constellation_name(_tables, _id), do: "Unknown"
+
+  @spec system_in_ets?(map() | nil, integer()) :: boolean()
+  defp system_in_ets?(%{solar_systems: tid}, system_id), do: :ets.member(tid, system_id)
+  defp system_in_ets?(_tables, _system_id), do: false
 end

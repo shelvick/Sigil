@@ -34,11 +34,9 @@ defmodule SigilWeb.GalaxyMapLive do
           "marketplace" => true
         },
         static_data_available: false,
-        system_names: %{},
-        system_constellations: %{},
-        constellation_names: %{},
-        init_systems_payload: %{"systems" => []},
-        init_constellations_payload: %{"constellations" => []},
+        static_tables: nil,
+        init_systems_payload: nil,
+        init_constellations_payload: nil,
         tribe_location_overlays: [],
         tribe_scouting_overlays: [],
         marketplace_overlay_map: %{},
@@ -62,10 +60,14 @@ defmodule SigilWeb.GalaxyMapLive do
     socket =
       socket
       |> assign(:map_ready, true)
-      |> push_event("init_systems", socket.assigns.init_systems_payload)
-      |> push_event("init_constellations", socket.assigns.init_constellations_payload)
+      |> push_event("init_systems", socket.assigns.init_systems_payload || %{"systems" => []})
+      |> push_event(
+        "init_constellations",
+        socket.assigns.init_constellations_payload || %{"constellations" => []}
+      )
       |> push_event("update_overlays", overlay_payload(socket.assigns))
       |> push_event("update_system_colors", %{"categories" => socket.assigns.system_categories})
+      |> assign(init_systems_payload: nil, init_constellations_payload: nil)
 
     socket =
       if is_integer(socket.assigns.target_system_id) do
@@ -260,14 +262,13 @@ defmodule SigilWeb.GalaxyMapLive do
   defp load_static_data(socket) do
     case socket.assigns[:static_data] do
       static_data when is_pid(static_data) ->
+        static_tables = StaticData.tables(static_data)
         systems = StaticData.list_solar_systems(static_data)
         constellations = StaticData.list_constellations(static_data)
 
         assign(socket,
           static_data_available: true,
-          system_names: Map.new(systems, &{&1.id, &1.name}),
-          system_constellations: Map.new(systems, &{&1.id, &1.constellation_id}),
-          constellation_names: Map.new(constellations, &{&1.id, &1.name}),
+          static_tables: static_tables,
           init_systems_payload: %{"systems" => Data.map_system_payload(systems)},
           init_constellations_payload: %{
             "constellations" => Data.map_constellation_payload(constellations)
@@ -334,23 +335,26 @@ defmodule SigilWeb.GalaxyMapLive do
   defp load_tribe_overlays(_assigns), do: {[], []}
 
   @spec load_marketplace_overlay_map(map()) :: %{optional(String.t()) => map()}
-  defp load_marketplace_overlay_map(assigns) do
+  defp load_marketplace_overlay_map(%{static_tables: %{solar_systems: tid}} = assigns) do
     options = marketplace_opts(assigns)
 
     listings =
       IntelMarket.list_listings(options) ++
         purchased_listings(assigns[:current_account], options)
 
-    listings
-    |> Enum.reduce(%{}, fn
+    Enum.reduce(listings, %{}, fn
       %IntelListing{id: id, solar_system_id: system_id}, acc
-      when is_binary(id) and is_integer(system_id) and is_map_key(assigns.system_names, system_id) ->
-        Map.put(acc, id, %{system_id: system_id})
+      when is_binary(id) and is_integer(system_id) ->
+        if :ets.member(tid, system_id),
+          do: Map.put(acc, id, %{system_id: system_id}),
+          else: acc
 
       _other, acc ->
         acc
     end)
   end
+
+  defp load_marketplace_overlay_map(_assigns), do: %{}
 
   @spec purchased_listings(map() | nil, keyword()) :: [IntelListing.t()]
   defp purchased_listings(%{address: address}, options) when is_binary(address) do
@@ -373,12 +377,8 @@ defmodule SigilWeb.GalaxyMapLive do
     }
   end
 
-  @spec stringify_overlay_entries([map()]) :: [map()]
   defp stringify_overlay_entries(entries),
-    do:
-      Enum.map(entries, fn e ->
-        e |> Enum.map(fn {k, v} -> {Atom.to_string(k), v} end) |> Map.new()
-      end)
+    do: Enum.map(entries, fn e -> Map.new(e, fn {k, v} -> {Atom.to_string(k), v} end) end)
 
   @spec maybe_load_connected_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_load_connected_data(socket) do
@@ -405,7 +405,10 @@ defmodule SigilWeb.GalaxyMapLive do
   end
 
   @spec known_system?(Phoenix.LiveView.Socket.t(), integer()) :: boolean()
-  defp known_system?(socket, system_id), do: is_map_key(socket.assigns.system_names, system_id)
+  defp known_system?(%{assigns: %{static_tables: %{solar_systems: tid}}}, system_id),
+    do: :ets.member(tid, system_id)
+
+  defp known_system?(_socket, _system_id), do: false
   @spec refresh_overlays(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp refresh_overlays(socket) do
     socket = assign(socket, :system_categories, Data.build_system_categories(socket.assigns))
@@ -428,7 +431,6 @@ defmodule SigilWeb.GalaxyMapLive do
     end
   end
 
-  @spec overlay_payload_for(Phoenix.LiveView.Socket.t()) :: map()
   defp overlay_payload_for(socket), do: overlay_payload(socket.assigns)
 
   @spec put_marketplace_listing(Phoenix.LiveView.Socket.t(), IntelListing.t()) ::
@@ -437,15 +439,18 @@ defmodule SigilWeb.GalaxyMapLive do
          socket,
          %IntelListing{id: listing_id, solar_system_id: system_id}
        )
-       when is_binary(listing_id) and is_integer(system_id) and
-              is_map_key(socket.assigns.system_names, system_id) do
-    overlay_map =
-      Map.put(socket.assigns.marketplace_overlay_map, listing_id, %{system_id: system_id})
+       when is_binary(listing_id) and is_integer(system_id) do
+    if known_system?(socket, system_id) do
+      overlay_map =
+        Map.put(socket.assigns.marketplace_overlay_map, listing_id, %{system_id: system_id})
 
-    assign(socket,
-      marketplace_overlay_map: overlay_map,
-      marketplace_overlays: overlay_map |> Map.values() |> Enum.sort_by(& &1.system_id)
-    )
+      assign(socket,
+        marketplace_overlay_map: overlay_map,
+        marketplace_overlays: overlay_map |> Map.values() |> Enum.sort_by(& &1.system_id)
+      )
+    else
+      socket
+    end
   end
 
   defp put_marketplace_listing(socket, _listing), do: socket
@@ -462,18 +467,13 @@ defmodule SigilWeb.GalaxyMapLive do
   end
 
   defp remove_marketplace_listing(socket, _listing_id), do: socket
+
   @spec remove_first([map()], (map() -> boolean())) :: [map()]
   defp remove_first(list, matcher) do
-    {remaining, removed?} =
-      Enum.reduce(list, {[], false}, fn entry, {acc, removed?} ->
-        cond do
-          removed? -> {[entry | acc], removed?}
-          matcher.(entry) -> {acc, true}
-          true -> {[entry | acc], removed?}
-        end
-      end)
-
-    if removed?, do: Enum.reverse(remaining), else: list
+    case Enum.find_index(list, matcher) do
+      nil -> list
+      index -> List.delete_at(list, index)
+    end
   end
 
   @spec resolve_tribe_id(map() | nil, map() | nil) :: integer() | nil

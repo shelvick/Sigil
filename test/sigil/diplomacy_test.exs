@@ -370,6 +370,7 @@ defmodule Sigil.DiplomacyTest do
       assert {:ok, %{tx_bytes: tx_bytes}} =
                Diplomacy.build_create_custodian_tx(
                  tables: tables,
+                 tribe_id: 1,
                  registry_ref: registry,
                  character_ref: character
                )

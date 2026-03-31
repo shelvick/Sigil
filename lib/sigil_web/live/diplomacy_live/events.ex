@@ -257,8 +257,18 @@ defmodule SigilWeb.DiplomacyLive.Events do
   def handle_info({:custodian_created, _custodian}, socket),
     do: {:noreply, socket |> State.apply_cached_custodian_state() |> State.load_standings()}
 
-  def handle_info(:rediscover_custodian, socket),
-    do: {:noreply, socket |> State.discover_custodian_state() |> State.load_standings()}
+  def handle_info({:rediscover_custodian, attempt}, socket) when attempt <= 3 do
+    socket = socket |> State.discover_custodian_state() |> State.load_standings()
+
+    if socket.assigns.page_state == :no_custodian do
+      delay = min(attempt * 1_000, 4_000)
+      Process.send_after(self(), {:rediscover_custodian, attempt + 1}, delay)
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:rediscover_custodian, _attempt}, socket), do: {:noreply, socket}
 
   def handle_info(
         {:governance_updated, %{tribe_id: tribe_id}},
