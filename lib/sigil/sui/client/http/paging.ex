@@ -27,22 +27,6 @@ defmodule Sigil.Sui.Client.HTTP.Paging do
     %{"filter" => filter, "after" => after_cursor, "first" => limit}
   end
 
-  @doc "Builds event query GraphQL variables from pagination options."
-  @spec event_query_variables(Client.event_type(), Client.events_query_opts(), pos_integer()) ::
-          map()
-  def event_query_variables(event_type, query_opts, default_limit) do
-    {after_cursor, limit} =
-      Enum.reduce(query_opts, {nil, default_limit}, fn
-        {:after, cursor}, {_after_cursor, limit} ->
-          {cursor, limit}
-
-        {:limit, page_size}, {after_cursor, _limit} ->
-          {after_cursor, page_size}
-      end)
-
-    %{"eventType" => event_type, "after" => after_cursor, "first" => limit}
-  end
-
   @doc "Builds normalized object pagination results from GraphQL response data."
   @spec build_objects_page(map()) ::
           {:ok, Client.objects_page()} | {:error, Client.error_reason()}
@@ -60,21 +44,6 @@ defmodule Sigil.Sui.Client.HTTP.Paging do
   end
 
   def build_objects_page(_other), do: {:error, :invalid_response}
-
-  @doc "Builds normalized event pagination results from GraphQL response data."
-  @spec build_events_page(map()) :: {:ok, Client.events_page()} | {:error, Client.error_reason()}
-  def build_events_page(%{"events" => %{"pageInfo" => page_info, "nodes" => nodes}})
-      when is_map(page_info) and is_list(nodes) do
-    with {:ok, next_cursor} <- fetch_end_cursor(page_info),
-         {:ok, events} <- extract_event_data(nodes) do
-      {:ok, %{events: events, next_cursor: next_cursor}}
-    else
-      :error -> {:error, :invalid_response}
-      {:error, :invalid_response} -> {:error, :invalid_response}
-    end
-  end
-
-  def build_events_page(_other), do: {:error, :invalid_response}
 
   @doc "Extracts endCursor while tolerating null pagination cursors."
   @spec fetch_end_cursor(map()) :: {:ok, String.t() | nil} | :error
@@ -104,30 +73,6 @@ defmodule Sigil.Sui.Client.HTTP.Paging do
 
     case reduced_nodes do
       {:ok, object_data} -> {:ok, Enum.reverse(object_data)}
-      {:error, :invalid_response} = error -> error
-    end
-  end
-
-  @doc "Extracts decoded JSON event payloads from GraphQL event nodes."
-  @spec extract_event_data([map()]) :: {:ok, [map()]} | {:error, Client.error_reason()}
-  def extract_event_data(nodes) do
-    reduced_nodes =
-      Enum.reduce_while(nodes, {:ok, []}, fn
-        %{"json" => json}, {:ok, acc} when is_binary(json) ->
-          case Jason.decode(json) do
-            {:ok, decoded} when is_map(decoded) ->
-              {:cont, {:ok, [decoded | acc]}}
-
-            _other ->
-              {:halt, {:error, :invalid_response}}
-          end
-
-        _node, _acc ->
-          {:halt, {:error, :invalid_response}}
-      end)
-
-    case reduced_nodes do
-      {:ok, events} -> {:ok, Enum.reverse(events)}
       {:error, :invalid_response} = error -> error
     end
   end

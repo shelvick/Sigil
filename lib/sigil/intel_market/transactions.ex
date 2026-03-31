@@ -189,12 +189,12 @@ defmodule Sigil.IntelMarket.Transactions do
     req_options = Keyword.get(opts, :req_options, [])
 
     case client.execute_transaction(tx_bytes, [signature], req_options) do
-      {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}} = effects} ->
+      {:ok, %{"status" => "SUCCESS", "digest" => digest} = effects} ->
         with {:ok, sender} <- require_sender(opts),
              operation when not is_nil(operation) <- get_pending_tx(opts, sender, tx_bytes),
              {:ok, _result} <- PendingOps.apply(opts, operation, effects, digest) do
           clear_pending_tx(opts, sender, tx_bytes)
-          {:ok, %{digest: digest, effects_bcs: effects["bcs"]}}
+          {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
         else
           nil -> {:error, :pending_tx_not_found}
           {:error, _reason} = error -> error
@@ -237,8 +237,8 @@ defmodule Sigil.IntelMarket.Transactions do
     req_options = Keyword.get(opts, :req_options, [])
 
     case client.execute_transaction(tx_bytes, [signature], req_options) do
-      {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}} = effects} ->
-        {:ok, %{digest: digest, effects_bcs: effects["bcs"]}}
+      {:ok, %{"status" => "SUCCESS", "digest" => digest} = effects} ->
+        {:ok, %{digest: digest, effects_bcs: effects["effectsBcs"]}}
 
       {:ok, effects} ->
         {:error, {:tx_failed, effects}}

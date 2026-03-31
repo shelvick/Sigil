@@ -632,8 +632,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "create-digest"},
-           "bcs" => "effects-bcs-create",
+           "digest" => "create-digest",
+           "effectsBcs" => "effects-bcs-create",
            "objectChanges" => [
              %{
                "type" => "created",
@@ -643,6 +643,24 @@ defmodule Sigil.IntelMarketTest do
              }
            ]
          }}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @listing_type], [] ->
+        {:ok,
+         page([
+           listing_object_json(
+             id: created_listing_id,
+             seller: context.seller,
+             seal_id: params.seal_id,
+             encrypted_blob_id: params.encrypted_blob_id,
+             client_nonce: client_nonce,
+             price: params.price,
+             report_type: params.report_type,
+             solar_system_id: params.solar_system_id,
+             description: params.description,
+             initial_shared_version: 17
+           )
+         ])}
       end)
 
       assert {:ok, %{digest: "create-digest", effects_bcs: "effects-bcs-create"}} =
@@ -691,8 +709,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "missing-listing-digest"},
-           "bcs" => "effects-bcs-missing"
+           "digest" => "missing-listing-digest",
+           "effectsBcs" => "effects-bcs-missing"
          }}
       end)
 
@@ -726,7 +744,7 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "FAILURE",
-           "transaction" => %{"digest" => "failed-digest"},
+           "digest" => "failed-digest",
            "errors" => [%{"message" => "proof rejected"}]
          }}
       end)
@@ -750,7 +768,7 @@ defmodule Sigil.IntelMarketTest do
 
       params = create_listing_params(intel_report_id: Ecto.UUID.generate())
 
-      assert {:ok, %{tx_bytes: create_tx_bytes}} =
+      assert {:ok, %{tx_bytes: create_tx_bytes, client_nonce: create_nonce}} =
                Sigil.IntelMarket.build_create_listing_tx(
                  params,
                  market_opts(context, sender: context.seller)
@@ -762,7 +780,7 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "create-event-digest"},
+           "digest" => "create-event-digest",
            "objectChanges" => [
              %{
                "type" => "created",
@@ -772,6 +790,24 @@ defmodule Sigil.IntelMarketTest do
              }
            ]
          }}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @listing_type], [] ->
+        {:ok,
+         page([
+           listing_object_json(
+             id: address(0x82),
+             seller: context.seller,
+             seal_id: params.seal_id,
+             encrypted_blob_id: params.encrypted_blob_id,
+             client_nonce: create_nonce,
+             price: params.price,
+             report_type: params.report_type,
+             solar_system_id: params.solar_system_id,
+             description: params.description,
+             initial_shared_version: 19
+           )
+         ])}
       end)
 
       assert {:ok, _result} =
@@ -802,8 +838,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "purchase-event-digest"},
-           "bcs" => "effects-bcs-purchase"
+           "digest" => "purchase-event-digest",
+           "effectsBcs" => "effects-bcs-purchase"
          }}
       end)
 
@@ -845,8 +881,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "cancel-event-digest"},
-           "bcs" => "effects-bcs-cancel"
+           "digest" => "cancel-event-digest",
+           "effectsBcs" => "effects-bcs-cancel"
          }}
       end)
 
@@ -867,7 +903,7 @@ defmodule Sigil.IntelMarketTest do
       intel_report = insert_location_report!(%{reported_by: context.seller})
       params = create_listing_params(intel_report_id: intel_report.id)
 
-      assert {:ok, %{tx_bytes: create_tx_bytes}} =
+      assert {:ok, %{tx_bytes: create_tx_bytes, client_nonce: create_nonce}} =
                Sigil.IntelMarket.build_create_listing_tx(
                  params,
                  market_opts(context, sender: context.seller)
@@ -881,8 +917,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "acceptance-create-digest"},
-           "bcs" => "effects-bcs-create",
+           "digest" => "acceptance-create-digest",
+           "effectsBcs" => "effects-bcs-create",
            "objectChanges" => [
              %{
                "type" => "created",
@@ -892,6 +928,24 @@ defmodule Sigil.IntelMarketTest do
              }
            ]
          }}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @listing_type], [] ->
+        {:ok,
+         page([
+           listing_object_json(
+             id: created_listing_id,
+             seller: context.seller,
+             seal_id: params.seal_id,
+             encrypted_blob_id: params.encrypted_blob_id,
+             client_nonce: create_nonce,
+             price: params.price,
+             report_type: params.report_type,
+             solar_system_id: params.solar_system_id,
+             description: params.description,
+             initial_shared_version: 29
+           )
+         ])}
       end)
 
       assert {:ok, %{digest: "acceptance-create-digest"}} =
@@ -913,8 +967,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "acceptance-purchase-digest"},
-           "bcs" => "effects-bcs-purchase"
+           "digest" => "acceptance-purchase-digest",
+           "effectsBcs" => "effects-bcs-purchase"
          }}
       end)
 
@@ -950,8 +1004,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "resync-digest"},
-           "bcs" => "effects-bcs-resync"
+           "digest" => "resync-digest",
+           "effectsBcs" => "effects-bcs-resync"
          }}
       end)
 
@@ -1158,8 +1212,8 @@ defmodule Sigil.IntelMarketTest do
         {:ok,
          %{
            "status" => "SUCCESS",
-           "transaction" => %{"digest" => "pseudonym-create-digest"},
-           "bcs" => "pseudonym-effects-bcs",
+           "digest" => "pseudonym-create-digest",
+           "effectsBcs" => "pseudonym-effects-bcs",
            "objectChanges" => [
              %{
                "type" => "created",
@@ -1169,6 +1223,24 @@ defmodule Sigil.IntelMarketTest do
              }
            ]
          }}
+      end)
+
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: @listing_type], [] ->
+        {:ok,
+         page([
+           listing_object_json(
+             id: created_listing_id,
+             seller: address(0xA7),
+             seal_id: params.seal_id,
+             encrypted_blob_id: params.encrypted_blob_id,
+             client_nonce: client_nonce,
+             price: params.price,
+             report_type: params.report_type,
+             solar_system_id: params.solar_system_id,
+             description: params.description,
+             initial_shared_version: 21
+           )
+         ])}
       end)
 
       assert {:ok, %{digest: "pseudonym-create-digest", effects_bcs: "pseudonym-effects-bcs"}} =

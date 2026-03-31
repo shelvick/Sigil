@@ -1025,9 +1025,9 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
       {:ok,
        %{
-         "bcs" => "feedback-effects-bcs",
+         "effectsBcs" => "feedback-effects-bcs",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "feedback-digest"}
+         "digest" => "feedback-digest"
        }}
     end)
 
@@ -1169,7 +1169,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
     nonce = "marketplace-sell-nonce"
     seed_nonce(cache_tables, nonce, wallet_address)
     expect_wallet_registration(wallet_address)
-    seed_chain_marketplace([])
+    seed_chain_marketplace_with_reconciliation([], cache_tables, pseudonym.pseudonym_address)
     :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
 
     created_listing_id = unique_object_id()
@@ -1193,9 +1193,9 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
       {:ok,
        %{
-         "bcs" => "effects-bcs-data",
+         "effectsBcs" => "effects-bcs-data",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "marketplace-create-digest"},
+         "digest" => "marketplace-create-digest",
          "objectChanges" => [
            %{
              "type" => "created",
@@ -1324,9 +1324,9 @@ defmodule SigilWeb.IntelMarketLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
       {:ok,
        %{
-         "bcs" => "purchase-effects-bcs",
+         "effectsBcs" => "purchase-effects-bcs",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "purchase-digest"}
+         "digest" => "purchase-digest"
        }}
     end)
 
@@ -1484,9 +1484,9 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
       {:ok,
        %{
-         "bcs" => "cancel-effects-bcs",
+         "effectsBcs" => "cancel-effects-bcs",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "cancel-digest"}
+         "digest" => "cancel-digest"
        }}
     end)
 
@@ -1812,9 +1812,9 @@ defmodule SigilWeb.IntelMarketLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
       {:ok,
        %{
-         "bcs" => "restricted-purchase-effects",
+         "effectsBcs" => "restricted-purchase-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "restricted-purchase-digest"}
+         "digest" => "restricted-purchase-digest"
        }}
     end)
 
@@ -2476,6 +2476,69 @@ defmodule SigilWeb.IntelMarketLiveTest do
              end_cursor: nil
            }}
       end
+    end)
+  end
+
+  defp seed_chain_marketplace_with_reconciliation(listings, cache_tables, pseudonym_address) do
+    stub(Sigil.Sui.ClientMock, :get_objects, fn filters, [] ->
+      case Keyword.get(filters, :type) do
+        @marketplace_type ->
+          {:ok,
+           %{
+             data: [
+               %{
+                 "id" => unique_object_id(),
+                 "shared" => %{"initialSharedVersion" => "7"},
+                 "initialSharedVersion" => "7"
+               }
+             ],
+             has_next_page: false,
+             end_cursor: nil
+           }}
+
+        @listing_type ->
+          pending_listings = find_pending_create_listings(cache_tables, pseudonym_address)
+
+          {:ok,
+           %{
+             data: Enum.map(listings, &listing_object_json/1) ++ pending_listings,
+             has_next_page: false,
+             end_cursor: nil
+           }}
+      end
+    end)
+  end
+
+  defp find_pending_create_listings(cache_tables, seller_address) do
+    cache_tables.intel_market
+    |> :ets.tab2list()
+    |> Enum.flat_map(fn
+      {{:pending_tx, _sender, _tx_bytes}, {:create_listing, pending}} ->
+        if pending.seller_address == seller_address do
+          [
+            %{
+              "id" => unique_object_id(),
+              "seller" => pending.seller_address,
+              "seal_id" => pending.seal_id,
+              "encrypted_blob_id" => pending.encrypted_blob_id,
+              "client_nonce" => Integer.to_string(pending.client_nonce),
+              "price" => Integer.to_string(pending.price),
+              "report_type" => pending.report_type,
+              "solar_system_id" => pending.solar_system_id,
+              "description" => pending.description,
+              "status" => "0",
+              "buyer" => nil,
+              "restricted_to_tribe_id" => pending.restricted_to_tribe_id,
+              "shared" => %{"initialSharedVersion" => "7"},
+              "initialSharedVersion" => "7"
+            }
+          ]
+        else
+          []
+        end
+
+      _other ->
+        []
     end)
   end
 

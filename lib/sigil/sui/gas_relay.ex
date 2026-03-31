@@ -82,11 +82,11 @@ defmodule Sigil.Sui.GasRelay do
            [pseudonym_signature, relay_signature],
            request_opts(opts)
          ) do
-      {:ok, %{"status" => "SUCCESS", "transaction" => %{"digest" => digest}} = effects}
+      {:ok, %{"status" => "SUCCESS", "digest" => digest} = effects}
       when is_binary(digest) ->
-        {:ok, %{digest: digest, effects_bcs: Map.get(effects, "bcs"), effects: effects}}
+        {:ok, %{digest: digest, effects_bcs: Map.get(effects, "effectsBcs"), effects: effects}}
 
-      {:ok, %{"transaction" => %{"digest" => _digest}}} ->
+      {:ok, %{"digest" => _digest}} ->
         {:error, :invalid_response}
 
       {:ok, _effects} ->

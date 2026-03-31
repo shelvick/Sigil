@@ -642,9 +642,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "dGVzdC1lZmZlY3Rz",
+         "effectsBcs" => "dGVzdC1lZmZlY3Rz",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "success-digest"},
+         "digest" => "success-digest",
          "gasEffects" => %{"gasSummary" => %{"computationCost" => "1"}}
        }}
     end)
@@ -901,9 +901,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "default-effects",
+         "effectsBcs" => "default-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "default-digest"}
+         "digest" => "default-digest"
        }}
     end)
 
@@ -1287,9 +1287,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "claim-effects",
+         "effectsBcs" => "claim-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "claim-digest"}
+         "digest" => "claim-digest"
        }}
     end)
 
@@ -1540,9 +1540,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "governance-effects",
+         "effectsBcs" => "governance-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "governance-vote-digest"}
+         "digest" => "governance-vote-digest"
        }}
     end)
 
@@ -1633,9 +1633,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "effects-bcs-data",
+         "effectsBcs" => "effects-bcs-data",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "effects-digest"}
+         "digest" => "effects-digest"
        }}
     end)
 
@@ -1692,9 +1692,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "dGVzdC1lZmZlY3Rz",
+         "effectsBcs" => "dGVzdC1lZmZlY3Rz",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "acceptance-flow-digest"}
+         "digest" => "acceptance-flow-digest"
        }}
     end)
 
@@ -1939,9 +1939,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "oracle-enable-effects",
+         "effectsBcs" => "oracle-enable-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "oracle-enable-digest"}
+         "digest" => "oracle-enable-digest"
        }}
     end)
 
@@ -2022,9 +2022,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_sig], [] ->
       {:ok,
        %{
-         "bcs" => "oracle-disable-effects",
+         "effectsBcs" => "oracle-disable-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "oracle-disable-digest"}
+         "digest" => "oracle-disable-digest"
        }}
     end)
 
@@ -2364,9 +2364,9 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
       {:ok,
        %{
-         "bcs" => "created-custodian-effects",
+         "effectsBcs" => "created-custodian-effects",
          "status" => "SUCCESS",
-         "transaction" => %{"digest" => "created-custodian"}
+         "digest" => "created-custodian"
        }}
     end)
 
