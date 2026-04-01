@@ -6,6 +6,7 @@ defmodule Sigil.Sui.TxCustodian do
   alias Sigil.Sui.BCS
   alias Sigil.Sui.TransactionBuilder
   alias Sigil.Sui.TransactionBuilder.PTB
+  alias Sigil.Worlds
 
   @module_name "tribe_custodian"
 
@@ -27,15 +28,16 @@ defmodule Sigil.Sui.TxCustodian do
           initial_shared_version: non_neg_integer()
         }
 
+  @typedoc "Single transaction option accepted by custodian transaction builders."
+  @type tx_opt() ::
+          {:sender, PTB.bytes32()}
+          | {:gas_payment, [PTB.object_ref()]}
+          | {:gas_price, non_neg_integer()}
+          | {:gas_budget, non_neg_integer()}
+          | {:world, Worlds.world_name()}
+
   @typedoc "Base transaction options required by the transaction builder."
-  @type tx_opts() ::
-          []
-          | [
-              sender: PTB.bytes32(),
-              gas_payment: [PTB.object_ref()],
-              gas_price: non_neg_integer(),
-              gas_budget: non_neg_integer()
-            ]
+  @type tx_opts() :: [tx_opt()]
 
   @typedoc "Custodian standing tier."
   @type standing() :: 0..4
@@ -278,25 +280,29 @@ defmodule Sigil.Sui.TxCustodian do
   end
 
   defp build_opts(tx_opts, inputs, function) do
-    tx_opts ++ [inputs: inputs, commands: [move_call(function, input_arguments(inputs))]]
+    tx_opts ++ [inputs: inputs, commands: [move_call(function, input_arguments(inputs), tx_opts)]]
   end
 
-  defp move_call(function, arguments) do
-    {:move_call, sigil_package_id_bytes(), @module_name, function, [], arguments}
+  defp move_call(function, arguments, tx_opts) when is_list(tx_opts) do
+    {:move_call, sigil_package_id_bytes(tx_opts), @module_name, function, [], arguments}
   end
 
-  @spec sigil_package_id_bytes() :: binary()
-  defp sigil_package_id_bytes do
-    "0x" <> hex = sigil_package_id()
+  @spec sigil_package_id_bytes(tx_opts()) :: binary()
+  defp sigil_package_id_bytes(tx_opts) when is_list(tx_opts) do
+    "0x" <> hex = sigil_package_id(tx_opts)
     Base.decode16!(hex, case: :mixed)
   end
 
-  @spec sigil_package_id() :: String.t()
-  defp sigil_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{sigil_package_id: id} = Map.fetch!(worlds, world)
-    id
+  @spec sigil_package_id(tx_opts()) :: String.t()
+  defp sigil_package_id(tx_opts) when is_list(tx_opts) do
+    tx_opts
+    |> world()
+    |> Worlds.sigil_package_id()
+  end
+
+  @spec world(tx_opts()) :: Worlds.world_name()
+  defp world(tx_opts) when is_list(tx_opts) do
+    Keyword.get(tx_opts, :world, Worlds.default_world())
   end
 
   defp input_arguments(inputs) do

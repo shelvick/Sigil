@@ -6,6 +6,7 @@ defmodule Sigil.GameState.AssemblyEventRouter do
   use GenServer
 
   alias Sigil.GameState.AssemblyEventParser
+  alias Sigil.Worlds
 
   @default_pubsub Sigil.PubSub
   @default_topic "chain_events"
@@ -13,6 +14,7 @@ defmodule Sigil.GameState.AssemblyEventRouter do
   @typedoc "Runtime state for the assembly event router."
   @type state() :: %{
           pubsub: atom() | module(),
+          world: Worlds.world_name(),
           topic: String.t(),
           registry: atom(),
           parser_module: module()
@@ -21,6 +23,7 @@ defmodule Sigil.GameState.AssemblyEventRouter do
   @typedoc "Start option accepted by the assembly event router."
   @type option() ::
           {:pubsub, atom() | module()}
+          | {:world, Worlds.world_name()}
           | {:topic, String.t()}
           | {:registry, atom()}
           | {:parser_module, module()}
@@ -38,10 +41,13 @@ defmodule Sigil.GameState.AssemblyEventRouter do
   @impl true
   @spec init(options()) :: {:ok, state(), {:continue, :subscribe}}
   def init(opts) do
+    world = Keyword.get(opts, :world, Worlds.default_world())
+
     {:ok,
      %{
        pubsub: Keyword.get(opts, :pubsub, @default_pubsub),
-       topic: Keyword.get(opts, :topic, @default_topic),
+       world: world,
+       topic: Keyword.get(opts, :topic, Worlds.topic(world, @default_topic)),
        registry: Keyword.fetch!(opts, :registry),
        parser_module: Keyword.get(opts, :parser_module, AssemblyEventParser)
      }, {:continue, :subscribe}}

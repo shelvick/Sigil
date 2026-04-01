@@ -24,7 +24,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_standing(character_ref, target_tribe_id, standing, [])
+        |> TxCustodian.build_set_standing(character_ref, target_tribe_id, standing, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -46,7 +46,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
          {:ok, character_ref} <- require_character_ref(opts) do
       tx_bytes =
         registry_ref
-        |> TxCustodian.build_create_custodian(character_ref, [])
+        |> TxCustodian.build_create_custodian(character_ref, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -69,7 +69,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_batch_set_standings(character_ref, updates, [])
+        |> TxCustodian.build_batch_set_standings(character_ref, updates, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -98,7 +98,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
           character_ref,
           ObjectCodec.hex_to_bytes(pilot),
           standing,
-          []
+          tx_opts(opts)
         )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
@@ -123,7 +123,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_default_standing(character_ref, standing, [])
+        |> TxCustodian.build_set_default_standing(character_ref, standing, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -149,7 +149,11 @@ defmodule Sigil.Diplomacy.TransactionOps do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_batch_set_pilot_standings(character_ref, encoded_updates, [])
+        |> TxCustodian.build_batch_set_pilot_standings(
+          character_ref,
+          encoded_updates,
+          tx_opts(opts)
+        )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -190,7 +194,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
           {:ok, %{digest: String.t()}} | {:error, term()}
   def sign_and_submit_locally(kind_bytes_b64, opts)
       when is_binary(kind_bytes_b64) and is_list(opts) do
-    case LocalSigner.sign_and_submit(kind_bytes_b64) do
+    case LocalSigner.sign_and_submit(kind_bytes_b64, opts) do
       {:ok, digest} ->
         PendingOps.apply(standings_table(opts), opts, kind_bytes_b64)
         {:ok, %{digest: digest}}
@@ -215,7 +219,11 @@ defmodule Sigil.Diplomacy.TransactionOps do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_oracle(character_ref, oracle_address_bytes, [])
+        |> TxCustodian.build_set_oracle(
+          character_ref,
+          oracle_address_bytes,
+          tx_opts(normalized_opts)
+        )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -238,7 +246,7 @@ defmodule Sigil.Diplomacy.TransactionOps do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_remove_oracle(character_ref, [])
+        |> TxCustodian.build_remove_oracle(character_ref, tx_opts(normalized_opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -281,6 +289,11 @@ defmodule Sigil.Diplomacy.TransactionOps do
   @spec store_pending_tx(Sigil.Diplomacy.options(), String.t(), term()) :: :ok
   defp store_pending_tx(opts, tx_bytes, operation) do
     Cache.put(standings_table(opts), {:pending_tx, tx_bytes}, operation)
+  end
+
+  @spec tx_opts(Sigil.Diplomacy.options()) :: Sigil.Sui.TxCustodian.tx_opts()
+  defp tx_opts(opts) when is_list(opts) do
+    [world: Keyword.get(opts, :world, Sigil.Worlds.default_world())]
   end
 
   @spec decode_address(String.t()) :: {:ok, <<_::256>>} | {:error, :invalid_oracle_address}

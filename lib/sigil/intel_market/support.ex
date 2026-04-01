@@ -7,6 +7,7 @@ defmodule Sigil.IntelMarket.Support do
   alias Sigil.IntelMarket
   alias Sigil.Intel.IntelListing
   alias Sigil.Sui.Client
+  alias Sigil.Worlds
 
   @doc "Returns the intel marketplace ETS table from context options."
   @spec market_table(IntelMarket.options()) :: Cache.table_id()
@@ -18,7 +19,7 @@ defmodule Sigil.IntelMarket.Support do
   @spec broadcast(IntelMarket.options(), term()) :: :ok | {:error, term()}
   def broadcast(opts, event) do
     pubsub = Keyword.get(opts, :pubsub, Sigil.PubSub)
-    Phoenix.PubSub.broadcast(pubsub, IntelMarket.topic(), event)
+    Phoenix.PubSub.broadcast(pubsub, IntelMarket.topic(opts), event)
   end
 
   @doc "Lists all matching chain objects across paginated Sui responses."
@@ -54,15 +55,15 @@ defmodule Sigil.IntelMarket.Support do
   def parse_listing_status(2), do: :cancelled
 
   @doc "Returns the fully qualified Sui type for the marketplace singleton."
-  @spec marketplace_type() :: String.t()
-  def marketplace_type do
-    "#{sigil_package_id()}::intel_market::IntelMarketplace"
+  @spec marketplace_type(IntelMarket.options()) :: String.t()
+  def marketplace_type(opts \\ []) when is_list(opts) do
+    "#{sigil_package_id(opts)}::intel_market::IntelMarketplace"
   end
 
   @doc "Returns the fully qualified Sui type for marketplace listings."
-  @spec listing_type() :: String.t()
-  def listing_type do
-    "#{sigil_package_id()}::intel_market::IntelListing"
+  @spec listing_type(IntelMarket.options()) :: String.t()
+  def listing_type(opts \\ []) when is_list(opts) do
+    "#{sigil_package_id(opts)}::intel_market::IntelListing"
   end
 
   defp list_objects(client, filters, req_options, acc) do
@@ -86,10 +87,12 @@ defmodule Sigil.IntelMarket.Support do
     {:ok, all_objects}
   end
 
-  defp sigil_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{sigil_package_id: id} = Map.fetch!(worlds, world)
-    id
+  @spec sigil_package_id(IntelMarket.options()) :: String.t()
+  defp sigil_package_id(opts) when is_list(opts) do
+    Keyword.get_lazy(opts, :sigil_package_id, fn ->
+      opts
+      |> Keyword.get(:world, Worlds.default_world())
+      |> Worlds.sigil_package_id()
+    end)
   end
 end

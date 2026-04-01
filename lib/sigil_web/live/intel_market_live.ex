@@ -6,7 +6,7 @@ defmodule SigilWeb.IntelMarketLive do
   use SigilWeb, :live_view
 
   import SigilWeb.DiplomacyLive.Components, only: [signing_overlay: 1]
-  import SigilWeb.TransactionHelpers, only: [sui_chain: 0]
+  import SigilWeb.TransactionHelpers, only: [sui_chain: 1]
 
   alias Sigil.Intel.IntelListing
   alias Sigil.Pseudonyms
@@ -357,7 +357,7 @@ defmodule SigilWeb.IntelMarketLive do
   def render(assigns) do
     ~H"""
     <%= if @authenticated? do %>
-      <div id="wallet-signer" phx-hook="WalletConnect" data-sui-chain={sui_chain()} class="hidden"></div>
+      <div id="wallet-signer" phx-hook="WalletConnect" data-sui-chain={sui_chain(@world)} class="hidden"></div>
     <% end %>
 
     <%= if @authenticated? do %>
@@ -366,7 +366,7 @@ defmodule SigilWeb.IntelMarketLive do
         phx-hook="SealEncrypt"
         data-address={@sender}
         data-active-pseudonym={@active_pseudonym}
-        data-sui-chain={sui_chain()}
+        data-sui-chain={sui_chain(@world)}
         data-config={@seal_config_json}
         class="hidden"
       ></div>
@@ -375,7 +375,7 @@ defmodule SigilWeb.IntelMarketLive do
         id="pseudonym-key"
         phx-hook="PseudonymKey"
         data-address={@sender}
-        data-sui-chain={sui_chain()}
+        data-sui-chain={sui_chain(@world)}
         class="hidden"
       ></div>
     <% end %>

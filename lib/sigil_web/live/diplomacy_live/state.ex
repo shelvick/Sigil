@@ -6,9 +6,9 @@ defmodule SigilWeb.DiplomacyLive.State do
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3]
 
-  import SigilWeb.TransactionHelpers, only: [localnet_signer_address: 0]
+  import SigilWeb.TransactionHelpers, only: [localnet_signer_address: 1]
 
-  alias Sigil.{Cache, Diplomacy}
+  alias Sigil.{Cache, Diplomacy, Worlds}
 
   @doc "Assigns baseline diplomacy page state for the selected tribe."
   @spec assign_base_state(Phoenix.LiveView.Socket.t(), non_neg_integer()) ::
@@ -116,7 +116,9 @@ defmodule SigilWeb.DiplomacyLive.State do
   def load_standings(socket) do
     cache_tables = socket.assigns[:cache_tables]
     tribe_id = socket.assigns[:tribe_id]
-    sender = localnet_signer_address() || socket.assigns.current_account.address
+
+    sender =
+      localnet_signer_address(socket.assigns.world) || socket.assigns.current_account.address
 
     if is_map(cache_tables) and is_map_key(cache_tables, :standings) do
       active_character = socket.assigns[:active_character]
@@ -127,7 +129,13 @@ defmodule SigilWeb.DiplomacyLive.State do
           %{id: character_id} -> Cache.get(cache_tables.standings, {:character_ref, character_id})
         end
 
-      opts = [tables: cache_tables, tribe_id: tribe_id, sender: sender]
+      opts = [
+        tables: cache_tables,
+        tribe_id: tribe_id,
+        sender: sender,
+        world: socket.assigns.world
+      ]
+
       active_custodian = Diplomacy.get_active_custodian(opts) || socket.assigns.active_custodian
 
       world_tribes =
@@ -171,9 +179,12 @@ defmodule SigilWeb.DiplomacyLive.State do
     pubsub = socket.assigns[:pubsub]
 
     if Phoenix.LiveView.connected?(socket) and pubsub do
-      Phoenix.PubSub.subscribe(pubsub, "diplomacy")
-      Phoenix.PubSub.subscribe(pubsub, "reputation")
-      Phoenix.PubSub.subscribe(pubsub, Diplomacy.topic(socket.assigns.tribe_id))
+      opts = diplomacy_opts(socket)
+      world = Keyword.fetch!(opts, :world)
+
+      Phoenix.PubSub.subscribe(pubsub, Diplomacy.legacy_topic(opts))
+      Phoenix.PubSub.subscribe(pubsub, Worlds.topic(world, "reputation"))
+      Phoenix.PubSub.subscribe(pubsub, Diplomacy.topic(socket.assigns.tribe_id, opts))
     end
 
     socket
@@ -187,10 +198,12 @@ defmodule SigilWeb.DiplomacyLive.State do
     [
       tables: socket.assigns.cache_tables,
       pubsub: socket.assigns.pubsub,
-      sender: localnet_signer_address() || socket.assigns.current_account.address,
+      sender:
+        localnet_signer_address(socket.assigns.world) || socket.assigns.current_account.address,
       tribe_id: socket.assigns.tribe_id,
       character_id: active_character && active_character.id,
-      character_ref: socket.assigns.character_ref
+      character_ref: socket.assigns.character_ref,
+      world: socket.assigns.world
     ]
   end
 

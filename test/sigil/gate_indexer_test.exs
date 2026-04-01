@@ -22,7 +22,7 @@ defmodule Sigil.GateIndexerTest do
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
-    :ok = Phoenix.PubSub.subscribe(pubsub, "gate_network")
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "gate_network"))
 
     {:ok, tables: Cache.tables(cache_pid), pubsub: pubsub}
   end

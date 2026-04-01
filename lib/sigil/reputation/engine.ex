@@ -8,6 +8,7 @@ defmodule Sigil.Reputation.Engine do
   require Logger
 
   alias Sigil.Cache
+  alias Sigil.Worlds
   alias Sigil.Reputation.Engine.{OracleSubmitter, Persistence, ScoreState, Scorer, Tables}
   alias Sigil.Reputation.{EventParser, ReputationScore, Scoring}
 
@@ -51,12 +52,14 @@ defmodule Sigil.Reputation.Engine do
           | {:repo_module, module()}
           | {:sandbox_owner, pid()}
           | {:enabled, boolean()}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
 
   @typedoc "Engine runtime state."
   @type state() :: %{
           pubsub: atom() | module(),
+          world: Worlds.world_name(),
           tables: tables() | nil,
           resolve_tables: (-> tables() | nil),
           scoring_module: module(),
@@ -89,12 +92,18 @@ defmodule Sigil.Reputation.Engine do
     enabled =
       Keyword.get(opts, :enabled, Application.get_env(:sigil, :start_reputation_engine, false))
 
+    world = Keyword.get(opts, :world, Worlds.default_world())
+
     if enabled do
       {:ok,
        %{
          pubsub: Keyword.get(opts, :pubsub, @default_pubsub),
+         world: world,
          tables: Keyword.get(opts, :tables),
-         resolve_tables: Keyword.get(opts, :resolve_tables, &default_resolve_tables/0),
+         resolve_tables:
+           Keyword.get(opts, :resolve_tables, fn ->
+             default_resolve_tables(world)
+           end),
          scoring_module: Keyword.get(opts, :scoring_module, Scoring),
          now_fun: Keyword.get(opts, :now_fun, &DateTime.utc_now/0),
          submit_fn: Keyword.get(opts, :submit_fn, fn _args -> {:ok, :noop} end),
@@ -114,7 +123,7 @@ defmodule Sigil.Reputation.Engine do
   @impl true
   def handle_continue(:post_init, state) do
     :ok = maybe_allow_sandbox_owner(state.repo_module, state.sandbox_owner)
-    :ok = Phoenix.PubSub.subscribe(state.pubsub, @chain_events_topic)
+    :ok = Phoenix.PubSub.subscribe(state.pubsub, Worlds.topic(state.world, @chain_events_topic))
     schedule_decay(state.decay_interval_ms)
     schedule_flush(state.flush_interval_ms)
 
@@ -456,10 +465,13 @@ defmodule Sigil.Reputation.Engine do
       target_tribe_name: nil
     }
 
-    Phoenix.PubSub.broadcast(state.pubsub, @reputation_topic, {:reputation_updated, payload})
+    Phoenix.PubSub.broadcast(
+      state.pubsub,
+      Worlds.topic(state.world, @reputation_topic),
+      {:reputation_updated, payload}
+    )
   end
 
-  @spec account_address_for(integer() | nil, %{standings: Cache.table_id()}) :: String.t() | nil
   defp account_address_for(source_tribe_id, tables) do
     case Cache.get(tables.standings, {:active_custodian, source_tribe_id}) do
       %{current_leader: current_leader} when is_binary(current_leader) -> current_leader
@@ -467,17 +479,12 @@ defmodule Sigil.Reputation.Engine do
     end
   end
 
-  @spec maybe_resolve_tables(state()) :: state()
   defp maybe_resolve_tables(state), do: Tables.maybe_resolve(state, @required_tables)
+  defp default_resolve_tables(world), do: Tables.default_resolve_tables(world)
 
-  @spec default_resolve_tables() :: tables() | nil
-  defp default_resolve_tables, do: Tables.default_resolve_tables()
-
-  @spec maybe_allow_sandbox_owner(module(), pid() | nil) :: :ok
   defp maybe_allow_sandbox_owner(repo_module, owner),
     do: Tables.maybe_allow_sandbox_owner(repo_module, owner)
 
-  @spec decay_hours_since(DateTime.t() | nil, DateTime.t()) :: non_neg_integer()
   defp decay_hours_since(nil, _now), do: @default_decay_hours
 
   defp decay_hours_since(%DateTime{} = last_decay_at, now) do
@@ -488,9 +495,6 @@ defmodule Sigil.Reputation.Engine do
     |> max(1)
   end
 
-  @spec schedule_decay(pos_integer()) :: reference()
   defp schedule_decay(interval_ms), do: Process.send_after(self(), :decay_tick, interval_ms)
-
-  @spec schedule_flush(pos_integer()) :: reference()
   defp schedule_flush(interval_ms), do: Process.send_after(self(), :flush_state, interval_ms)
 end

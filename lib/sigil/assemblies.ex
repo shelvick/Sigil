@@ -6,6 +6,7 @@ defmodule Sigil.Assemblies do
   alias Sigil.Cache
   alias Sigil.Sui.{Client, TransactionBuilder, TxGateExtension}
   alias Sigil.Sui.Types.{Assembly, Gate, NetworkNode, StorageUnit, Turret}
+  alias Sigil.Worlds
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
 
@@ -21,6 +22,7 @@ defmodule Sigil.Assemblies do
           | {:pubsub, atom() | module()}
           | {:req_options, Client.request_opts()}
           | {:character_ids, [String.t()]}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
 
@@ -38,7 +40,7 @@ defmodule Sigil.Assemblies do
     req_options = Keyword.get(opts, :req_options, [])
     query_owners = Keyword.fetch!(opts, :character_ids)
 
-    with {:ok, owner_caps} <- fetch_all_owner_caps(query_owners, req_options) do
+    with {:ok, owner_caps} <- fetch_all_owner_caps(query_owners, req_options, opts) do
       assemblies =
         owner_caps
         |> Enum.map(&Map.fetch!(&1, "authorized_object_id"))
@@ -175,7 +177,8 @@ defmodule Sigil.Assemblies do
           %{
             object_id: hex_to_bytes(character_id),
             initial_shared_version: parse_shared_version!(character_json)
-          }
+          },
+          world: world(opts)
         )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
@@ -197,7 +200,7 @@ defmodule Sigil.Assemblies do
       when is_binary(kind_bytes_b64) and is_list(opts) do
     alias Sigil.Diplomacy.LocalSigner
 
-    case LocalSigner.sign_and_submit(kind_bytes_b64) do
+    case LocalSigner.sign_and_submit(kind_bytes_b64, opts) do
       {:ok, digest} ->
         apply_pending_extension_tx(opts, kind_bytes_b64)
         {:ok, %{digest: digest}}
@@ -226,12 +229,12 @@ defmodule Sigil.Assemblies do
     end
   end
 
-  @spec fetch_all_owner_caps([String.t()], Client.request_opts()) ::
+  @spec fetch_all_owner_caps([String.t()], Client.request_opts(), options()) ::
           {:ok, [map()]} | {:error, Client.error_reason()}
-  defp fetch_all_owner_caps(query_owners, req_options) do
+  defp fetch_all_owner_caps(query_owners, req_options, opts) do
     Enum.reduce_while(query_owners, {:ok, []}, fn query_owner, {:ok, acc} ->
       case @sui_client.get_objects(
-             [type: owner_cap_type_string(), owner: query_owner],
+             [type: owner_cap_type_string(opts), owner: query_owner],
              req_options
            ) do
         {:ok, %{data: caps}} -> {:cont, {:ok, acc ++ caps}}
@@ -328,17 +331,21 @@ defmodule Sigil.Assemblies do
   @spec hex_to_bytes(String.t()) :: binary()
   defp hex_to_bytes("0x" <> hex), do: Base.decode16!(hex, case: :mixed)
 
-  @spec owner_cap_type_string() :: String.t()
-  defp owner_cap_type_string do
-    "#{world_package_id()}::access::OwnerCap"
+  @spec owner_cap_type_string(options()) :: String.t()
+  defp owner_cap_type_string(opts) do
+    "#{world_package_id(opts)}::access::OwnerCap"
   end
 
-  @spec world_package_id() :: String.t()
-  defp world_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{package_id: package_id} = Map.fetch!(worlds, world)
-    package_id
+  @spec world_package_id(options()) :: String.t()
+  defp world_package_id(opts) do
+    opts
+    |> world()
+    |> Worlds.package_id()
+  end
+
+  @spec world(options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 
   @spec owner_topic(String.t()) :: String.t()

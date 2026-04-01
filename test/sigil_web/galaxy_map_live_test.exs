@@ -309,7 +309,7 @@ defmodule SigilWeb.GalaxyMapLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.Intel.topic(@tribe_id),
+      Sigil.Intel.topic(@tribe_id, world: "test"),
       {:intel_updated, new_scouting_report}
     )
 
@@ -401,7 +401,7 @@ defmodule SigilWeb.GalaxyMapLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.IntelMarket.topic(),
+      Sigil.IntelMarket.topic(world: "test"),
       {:listing_purchased, purchased_listing}
     )
 
@@ -459,7 +459,11 @@ defmodule SigilWeb.GalaxyMapLiveTest do
 
     assert render(view) =~ "1 assembly locations, 0 scouting reports"
 
-    Phoenix.PubSub.broadcast(pubsub, Sigil.Intel.topic(@tribe_id), {:intel_deleted, report})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_deleted, report}
+    )
 
     html = render(view)
 
@@ -596,7 +600,11 @@ defmodule SigilWeb.GalaxyMapLiveTest do
       "overlay_toggles" => %{"marketplace" => false}
     })
 
-    Phoenix.PubSub.broadcast(pubsub, Sigil.IntelMarket.topic(), {:listing_created, listing})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.IntelMarket.topic(world: "test"),
+      {:listing_created, listing}
+    )
 
     render(view)
 
@@ -649,7 +657,11 @@ defmodule SigilWeb.GalaxyMapLiveTest do
       "system_id" => @system_id
     }
 
-    Phoenix.PubSub.broadcast(pubsub, Sigil.Intel.topic(@tribe_id), {:intel_updated, report})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_updated, report}
+    )
 
     render(view)
 
@@ -699,7 +711,11 @@ defmodule SigilWeb.GalaxyMapLiveTest do
         solar_system_id: @system_id
       })
 
-    Phoenix.PubSub.broadcast(pubsub, Sigil.IntelMarket.topic(), {:listing_created, listing})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.IntelMarket.topic(world: "test"),
+      {:listing_created, listing}
+    )
 
     render(view)
 
@@ -758,7 +774,7 @@ defmodule SigilWeb.GalaxyMapLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.IntelMarket.topic(),
+      Sigil.IntelMarket.topic(world: "test"),
       {:listing_purchased, purchased_by_other}
     )
 

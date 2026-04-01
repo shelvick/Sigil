@@ -76,7 +76,7 @@ defmodule Sigil.IntelMarket.PendingOps do
     req_options = Keyword.get(opts, :req_options, [])
 
     with {:ok, objects} <-
-           Support.list_objects(client, [type: Support.listing_type()], req_options),
+           Support.list_objects(client, [type: Support.listing_type(opts)], req_options),
          %{listing: listing, ref: ref} <-
            Enum.find_value(objects, fn object ->
              parsed = Listings.parse_listing_object!(object)

@@ -11,6 +11,7 @@ defmodule Sigil.Diplomacy.Governance do
   alias Sigil.Diplomacy
   alias Sigil.Diplomacy.ObjectCodec
   alias Sigil.Sui.{TransactionBuilder, TxCustodian}
+  alias Sigil.Worlds
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
 
@@ -25,7 +26,7 @@ defmodule Sigil.Diplomacy.Governance do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_standing(character_ref, target_tribe_id, standing, [])
+        |> TxCustodian.build_set_standing(character_ref, target_tribe_id, standing, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -47,7 +48,7 @@ defmodule Sigil.Diplomacy.Governance do
          {:ok, character_ref} <- Diplomacy.require_character_ref(opts) do
       tx_bytes =
         registry_ref
-        |> TxCustodian.build_create_custodian(character_ref, [])
+        |> TxCustodian.build_create_custodian(character_ref, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -70,7 +71,7 @@ defmodule Sigil.Diplomacy.Governance do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_batch_set_standings(character_ref, updates, [])
+        |> TxCustodian.build_batch_set_standings(character_ref, updates, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -99,7 +100,7 @@ defmodule Sigil.Diplomacy.Governance do
           character_ref,
           ObjectCodec.hex_to_bytes(pilot),
           standing,
-          []
+          tx_opts(opts)
         )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
@@ -125,7 +126,7 @@ defmodule Sigil.Diplomacy.Governance do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_set_default_standing(character_ref, standing, [])
+        |> TxCustodian.build_set_default_standing(character_ref, standing, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -156,7 +157,11 @@ defmodule Sigil.Diplomacy.Governance do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_batch_set_pilot_standings(character_ref, encoded_updates, [])
+        |> TxCustodian.build_batch_set_pilot_standings(
+          character_ref,
+          encoded_updates,
+          tx_opts(opts)
+        )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -180,7 +185,11 @@ defmodule Sigil.Diplomacy.Governance do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_vote_leader(character_ref, ObjectCodec.hex_to_bytes(candidate), [])
+        |> TxCustodian.build_vote_leader(
+          character_ref,
+          ObjectCodec.hex_to_bytes(candidate),
+          tx_opts(opts)
+        )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -201,7 +210,7 @@ defmodule Sigil.Diplomacy.Governance do
       tx_bytes =
         active_custodian
         |> ObjectCodec.to_custodian_ref()
-        |> TxCustodian.build_claim_leadership(character_ref, [])
+        |> TxCustodian.build_claim_leadership(character_ref, tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -251,6 +260,11 @@ defmodule Sigil.Diplomacy.Governance do
     )
   end
 
+  @spec tx_opts(Diplomacy.options()) :: Sigil.Sui.TxCustodian.tx_opts()
+  defp tx_opts(opts) when is_list(opts) do
+    [world: Keyword.get(opts, :world, Worlds.default_world())]
+  end
+
   @spec load_vote_map(String.t(), Diplomacy.options()) ::
           {:ok, Diplomacy.vote_map()} | {:error, term()}
   defp load_vote_map(table_id, opts) do
@@ -285,8 +299,9 @@ defmodule Sigil.Diplomacy.Governance do
   defp load_dynamic_field_map(table_id, opts, entry_parser) do
     client = Keyword.get(opts, :client, @sui_client)
     req_options = Keyword.get(opts, :req_options, [])
+    world = Keyword.get(opts, :world, Worlds.default_world())
 
-    do_load_dynamic_field_map(client, table_id, req_options, entry_parser, %{})
+    do_load_dynamic_field_map(client, table_id, req_options, entry_parser, %{}, world)
   end
 
   @spec do_load_dynamic_field_map(
@@ -294,11 +309,14 @@ defmodule Sigil.Diplomacy.Governance do
           String.t(),
           keyword(),
           (map() -> {:ok, {term(), term()}} | {:error, term()}),
-          map()
+          map(),
+          Worlds.world_name()
         ) ::
           {:ok, map()} | {:error, term()}
-  defp do_load_dynamic_field_map(client, table_id, req_options, entry_parser, acc) do
-    case client.get_dynamic_fields(table_id, req_options) do
+  defp do_load_dynamic_field_map(client, table_id, req_options, entry_parser, acc, world) do
+    world_req_options = Keyword.put(req_options, :world, world)
+
+    case client.get_dynamic_fields(table_id, world_req_options) do
       {:ok, page} ->
         with {:ok, page_map} <- build_dynamic_field_page(page.data, entry_parser) do
           merged = Map.merge(acc, page_map)
@@ -310,7 +328,8 @@ defmodule Sigil.Diplomacy.Governance do
                 table_id,
                 Keyword.put(req_options, :cursor, cursor),
                 entry_parser,
-                merged
+                merged,
+                world
               )
 
             _page ->
@@ -319,7 +338,7 @@ defmodule Sigil.Diplomacy.Governance do
         end
 
       {:error, :not_found} ->
-        load_dynamic_fields_via_rpc(table_id, entry_parser, acc)
+        load_dynamic_fields_via_rpc(table_id, entry_parser, acc, world)
 
       {:error, _reason} = error ->
         error
@@ -329,21 +348,17 @@ defmodule Sigil.Diplomacy.Governance do
   @spec load_dynamic_fields_via_rpc(
           String.t(),
           (map() -> {:ok, {term(), term()}} | {:error, term()}),
-          map()
+          map(),
+          Worlds.world_name()
         ) ::
           {:ok, map()} | {:error, term()}
-  defp load_dynamic_fields_via_rpc(table_id, entry_parser, acc) do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-
-    case Map.get(Map.fetch!(worlds, world), :rpc_url) do
-      nil ->
-        {:error, :not_found}
-
-      rpc_url ->
-        do_load_rpc_dynamic_fields(rpc_url, table_id, nil, entry_parser, acc)
-    end
+  defp load_dynamic_fields_via_rpc(table_id, entry_parser, acc, world) when is_binary(world) do
+    rpc_url = world_rpc_url(world)
+    do_load_rpc_dynamic_fields(rpc_url, table_id, nil, entry_parser, acc)
   end
+
+  @spec world_rpc_url(Worlds.world_name()) :: String.t()
+  defp world_rpc_url(world) when is_binary(world), do: Worlds.rpc_url(world)
 
   @spec do_load_rpc_dynamic_fields(String.t(), String.t(), String.t() | nil, fun(), map()) ::
           {:ok, map()} | {:error, term()}

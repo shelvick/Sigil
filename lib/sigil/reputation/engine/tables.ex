@@ -7,6 +7,7 @@ defmodule Sigil.Reputation.Engine.Tables do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Sigil.Cache
+  alias Sigil.Worlds
 
   @doc "Resolves runtime tables from state when missing or stale."
   @spec maybe_resolve(map(), [atom()]) :: map()
@@ -23,17 +24,18 @@ defmodule Sigil.Reputation.Engine.Tables do
   @doc "Discovers cache table ids from the application supervisor."
   @spec default_resolve_tables() :: map() | nil
   def default_resolve_tables do
+    default_resolve_tables(Worlds.default_world())
+  end
+
+  @doc "Discovers cache table ids for a specific world from the application supervisor."
+  @spec default_resolve_tables(Worlds.world_name()) :: map() | nil
+  def default_resolve_tables(world) when is_binary(world) do
     case Process.whereis(Sigil.Supervisor) do
       pid when is_pid(pid) ->
-        pid
-        |> Supervisor.which_children()
-        |> Enum.find_value(fn
-          {Sigil.Cache, cache_pid, _kind, _modules} when is_pid(cache_pid) ->
-            Cache.tables(cache_pid)
+        children = Supervisor.which_children(pid)
 
-          _other ->
-            nil
-        end)
+        find_world_cache_tables(children, world) ||
+          if(single_world_mode?(), do: find_single_world_cache_tables(children), else: nil)
 
       _other ->
         nil
@@ -69,6 +71,33 @@ defmodule Sigil.Reputation.Engine.Tables do
       _other ->
         %{state | tables: nil}
     end
+  end
+
+  @spec find_world_cache_tables([Supervisor.child_spec()], Worlds.world_name()) :: map() | nil
+  defp find_world_cache_tables(children, world) do
+    Enum.find_value(children, fn
+      {{Sigil.Cache, ^world}, cache_pid, _kind, _modules} when is_pid(cache_pid) ->
+        Cache.tables(cache_pid)
+
+      _other ->
+        nil
+    end)
+  end
+
+  @spec find_single_world_cache_tables([Supervisor.child_spec()]) :: map() | nil
+  defp find_single_world_cache_tables(children) do
+    Enum.find_value(children, fn
+      {Sigil.Cache, cache_pid, _kind, _modules} when is_pid(cache_pid) ->
+        Cache.tables(cache_pid)
+
+      _other ->
+        nil
+    end)
+  end
+
+  @spec single_world_mode?() :: boolean()
+  defp single_world_mode? do
+    length(Worlds.active_worlds()) == 1
   end
 
   @spec valid_tables?(map(), [atom()]) :: boolean()

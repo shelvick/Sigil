@@ -73,7 +73,7 @@ defmodule SigilWeb.IntelMarketLive.Transactions do
             "seal_id" => seal_id,
             "blob_id" => encrypted_blob_id,
             "seller_address" => listing.seller_address,
-            "config" => IntelMarket.build_seal_config(opts)
+            "config" => IntelMarket.build_seal_config(State.seal_opts(socket))
           })
         else
           socket

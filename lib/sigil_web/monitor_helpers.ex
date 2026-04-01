@@ -20,8 +20,10 @@ defmodule SigilWeb.MonitorHelpers do
         {:ok, supervisor, registry}
 
       _other ->
-        case {CacheResolver.application_monitor_supervisor(),
-              Application.get_env(:sigil, :monitor_registry)} do
+        world = socket.assigns[:world] || Sigil.Worlds.default_world()
+
+        case {CacheResolver.application_monitor_supervisor(world),
+              CacheResolver.application_monitor_registry(world)} do
           {supervisor, registry} when is_pid(supervisor) and is_atom(registry) ->
             {:ok, supervisor, registry}
 

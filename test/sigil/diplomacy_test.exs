@@ -24,7 +24,7 @@ defmodule Sigil.DiplomacyTest do
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
-    :ok = Phoenix.PubSub.subscribe(pubsub, "diplomacy")
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "diplomacy"))
 
     {:ok,
      tables: Cache.tables(cache_pid),
@@ -778,25 +778,25 @@ defmodule Sigil.DiplomacyTest do
       )
 
       expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 4, fn table_id, opts ->
-        case {table_id, opts} do
-          {^votes_table_id, []} ->
+        case {table_id, Keyword.get(opts, :cursor), Keyword.get(opts, :world)} do
+          {^votes_table_id, nil, "test"} ->
             {:ok,
              page([dynamic_field_entry(voter_one, candidate_one)],
                has_next_page: true,
                end_cursor: "votes-1"
              )}
 
-          {^votes_table_id, [cursor: "votes-1"]} ->
+          {^votes_table_id, "votes-1", "test"} ->
             {:ok, page([dynamic_field_entry(voter_two, candidate_two)])}
 
-          {^tallies_table_id, []} ->
+          {^tallies_table_id, nil, "test"} ->
             {:ok,
              page([dynamic_field_entry(candidate_one, 2, value_type: "u64")],
                has_next_page: true,
                end_cursor: "tallies-1"
              )}
 
-          {^tallies_table_id, [cursor: "tallies-1"]} ->
+          {^tallies_table_id, "tallies-1", "test"} ->
             {:ok, page([dynamic_field_entry(candidate_two, 1, value_type: "u64")])}
         end
       end)
@@ -840,11 +840,11 @@ defmodule Sigil.DiplomacyTest do
       )
 
       expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 2, fn table_id, opts ->
-        case {table_id, opts} do
-          {^votes_table_id, []} ->
+        case {table_id, Keyword.get(opts, :cursor), Keyword.get(opts, :world)} do
+          {^votes_table_id, nil, "test"} ->
             {:ok, page([dynamic_field_entry(voter, candidate)])}
 
-          {^tallies_table_id, []} ->
+          {^tallies_table_id, nil, "test"} ->
             {:ok, page([dynamic_field_entry(candidate, 1, value_type: "u64")])}
         end
       end)
@@ -875,8 +875,12 @@ defmodule Sigil.DiplomacyTest do
         )
       )
 
-      expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn ^votes_table_id, [] ->
-        {:error, :timeout}
+      expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn ^votes_table_id, opts ->
+        if Keyword.get(opts, :world) == "test" and is_nil(Keyword.get(opts, :cursor)) do
+          {:error, :timeout}
+        else
+          {:error, :invalid_response}
+        end
       end)
 
       assert Diplomacy.load_governance_data(tables: tables, tribe_id: tribe_id) ==
@@ -963,7 +967,7 @@ defmodule Sigil.DiplomacyTest do
       sender: sender,
       source_tribe_id: tribe_id
     } do
-      topic = "diplomacy:#{tribe_id}"
+      topic = Diplomacy.topic(tribe_id, world: "test")
       Phoenix.PubSub.subscribe(pubsub, topic)
 
       Cache.put(
@@ -1013,9 +1017,9 @@ defmodule Sigil.DiplomacyTest do
         tallies_table_id = address(0xE7)
 
         expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 2, fn table_id, opts ->
-          case {table_id, opts} do
-            {^votes_table_id, []} -> {:ok, page([])}
-            {^tallies_table_id, []} -> {:ok, page([])}
+          case {table_id, Keyword.get(opts, :cursor), Keyword.get(opts, :world)} do
+            {^votes_table_id, nil, "test"} -> {:ok, page([])}
+            {^tallies_table_id, nil, "test"} -> {:ok, page([])}
           end
         end)
 
@@ -1040,7 +1044,7 @@ defmodule Sigil.DiplomacyTest do
       sender: sender,
       source_tribe_id: tribe_id
     } do
-      topic = "diplomacy:#{tribe_id}"
+      topic = Diplomacy.topic(tribe_id, world: "test")
       Phoenix.PubSub.subscribe(pubsub, topic)
 
       candidate = address(0xE9)
@@ -1092,11 +1096,11 @@ defmodule Sigil.DiplomacyTest do
       end)
 
       expect(Sigil.Sui.ClientMock, :get_dynamic_fields, 2, fn table_id, opts ->
-        case {table_id, opts} do
-          {^votes_table_id, []} ->
+        case {table_id, Keyword.get(opts, :cursor), Keyword.get(opts, :world)} do
+          {^votes_table_id, nil, "test"} ->
             {:ok, page([dynamic_field_entry(sender, candidate)])}
 
-          {^tallies_table_id, []} ->
+          {^tallies_table_id, nil, "test"} ->
             {:ok, page([dynamic_field_entry(candidate, 2, value_type: "u64")])}
         end
       end)
@@ -1181,7 +1185,7 @@ defmodule Sigil.DiplomacyTest do
       sender: sender,
       source_tribe_id: tribe_id
     } do
-      topic = "diplomacy:#{tribe_id}"
+      topic = Diplomacy.topic(tribe_id, world: "test")
       Phoenix.PubSub.subscribe(pubsub, topic)
 
       tx_bytes = "markerless-claim-tx"
@@ -1613,7 +1617,7 @@ defmodule Sigil.DiplomacyTest do
         custodian_info(tribe_id: tribe_id, current_leader: sender)
       )
 
-      :ok = Phoenix.PubSub.subscribe(pubsub, "reputation")
+      :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "reputation"))
 
       assert {:ok, _row} =
                %ReputationScore{}
@@ -1655,7 +1659,7 @@ defmodule Sigil.DiplomacyTest do
         custodian_info(tribe_id: tribe_id, current_leader: sender)
       )
 
-      :ok = Phoenix.PubSub.subscribe(pubsub, "reputation")
+      :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "reputation"))
 
       assert {:ok, _row} =
                %ReputationScore{}

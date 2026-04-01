@@ -11,7 +11,7 @@ defmodule Sigil.StaticData do
   alias Sigil.StaticData.DetsFile
   alias Sigil.StaticData.ItemType
   alias Sigil.StaticData.SolarSystem
-
+  alias Sigil.Worlds
   @table_names [:solar_systems, :item_types, :constellations]
 
   @table_metadata %{
@@ -47,6 +47,7 @@ defmodule Sigil.StaticData do
           | {:world_client, module()}
           | {:test_data, test_data()}
           | {:mox_owner, pid()}
+          | {:world, Worlds.world_name()}
 
   @doc "Returns a unique child spec so tests can start multiple isolated instances."
   @spec child_spec([option()]) :: Supervisor.child_spec()
@@ -201,7 +202,7 @@ defmodule Sigil.StaticData do
     world_client =
       Keyword.get(opts, :world_client, Application.fetch_env!(:sigil, :world_client))
 
-    world_api_url = resolve_world_api_url()
+    world_api_url = resolve_world_api_url(opts)
 
     Enum.each(@table_names, fn table_name ->
       tables
@@ -386,15 +387,11 @@ defmodule Sigil.StaticData do
     end
   end
 
-  @spec resolve_world_api_url() :: String.t() | nil
-  defp resolve_world_api_url do
-    world = Application.get_env(:sigil, :eve_world)
-    worlds = Application.get_env(:sigil, :eve_worlds, %{})
-
-    case worlds do
-      %{^world => %{world_api_url: url}} when is_binary(url) -> url
-      _ -> nil
-    end
+  @spec resolve_world_api_url([option()]) :: String.t() | nil
+  defp resolve_world_api_url(opts) when is_list(opts) do
+    opts
+    |> Keyword.get(:world, Worlds.default_world())
+    |> Worlds.world_api_url()
   end
 
   @spec default_dets_dir() :: String.t()

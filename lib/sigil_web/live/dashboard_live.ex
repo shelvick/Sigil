@@ -292,7 +292,6 @@ defmodule SigilWeb.DashboardLive do
     )
   end
 
-  @spec maybe_load_assemblies(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_load_assemblies(%{assigns: %{current_account: nil}} = socket), do: socket
 
   defp maybe_load_assemblies(%{assigns: %{current_account: account}} = socket) do
@@ -304,7 +303,8 @@ defmodule SigilWeb.DashboardLive do
              address,
              character_ids,
              socket.assigns[:cache_tables],
-             socket.assigns[:pubsub]
+             socket.assigns[:pubsub],
+             socket.assigns.world
            ) do
         {:ok, assemblies} ->
           assign(socket,
@@ -329,7 +329,6 @@ defmodule SigilWeb.DashboardLive do
     end
   end
 
-  @spec maybe_subscribe(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_subscribe(%{assigns: %{current_account: nil}} = socket), do: socket
 
   defp maybe_subscribe(
@@ -344,15 +343,12 @@ defmodule SigilWeb.DashboardLive do
     end
   end
 
-  @spec maybe_ensure_monitors(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_ensure_monitors(%{assigns: %{current_account: nil}} = socket), do: socket
 
   defp maybe_ensure_monitors(%{assigns: %{assemblies: assemblies}} = socket) do
     maybe_ensure_monitors_for(socket, assemblies)
   end
 
-  @spec maybe_ensure_monitors_for(Phoenix.LiveView.Socket.t(), [Assemblies.assembly()]) ::
-          Phoenix.LiveView.Socket.t()
   defp maybe_ensure_monitors_for(socket, assemblies) when is_list(assemblies) do
     with true <- connected?(socket),
          {:ok, supervisor, registry} <- monitor_dependencies(socket),
@@ -363,7 +359,8 @@ defmodule SigilWeb.DashboardLive do
           Enum.map(assemblies, & &1.id),
           registry: registry,
           tables: socket.assigns.cache_tables,
-          pubsub: socket.assigns.pubsub
+          pubsub: socket.assigns.pubsub,
+          world: socket.assigns.world
         )
 
       socket
@@ -373,22 +370,21 @@ defmodule SigilWeb.DashboardLive do
     end
   end
 
-  @spec active_character_ids(Phoenix.LiveView.Socket.t()) :: [String.t()]
   defp active_character_ids(%{assigns: %{active_character: %{id: id}}}), do: [id]
   defp active_character_ids(_socket), do: []
 
-  @spec discover_assemblies(String.t(), [String.t()], map() | nil, atom() | module()) ::
-          {:ok, [Assemblies.assembly()]} | {:error, term()}
-  defp discover_assemblies(address, character_ids, cache_tables, pubsub)
-       when is_map(cache_tables) do
+  defp discover_assemblies(address, character_ids, cache_tables, pubsub, world)
+       when is_map(cache_tables) and is_binary(world) do
     Assemblies.discover_for_owner(address,
       tables: cache_tables,
       pubsub: pubsub,
-      character_ids: character_ids
+      character_ids: character_ids,
+      world: world
     )
   end
 
-  defp discover_assemblies(_address, _character_ids, _cache_tables, _pubsub), do: {:ok, []}
+  defp discover_assemblies(_address, _character_ids, _cache_tables, _pubsub, _world),
+    do: {:ok, []}
 
   @spec maybe_load_alert_summary(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_load_alert_summary(%{assigns: %{current_account: nil}} = socket), do: socket

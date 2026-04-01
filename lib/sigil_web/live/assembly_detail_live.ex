@@ -6,7 +6,7 @@ defmodule SigilWeb.AssemblyDetailLive do
   use SigilWeb, :live_view
 
   import SigilWeb.AssemblyHelpers, except: [assembly_owned_by?: 3]
-  import SigilWeb.TransactionHelpers, only: [localnet?: 0, sui_chain: 0]
+  import SigilWeb.TransactionHelpers, only: [localnet?: 1, sui_chain: 1]
   import SigilWeb.MonitorHelpers, only: [monitor_dependencies: 1, initial_depletion: 1]
 
   alias Sigil.{Assemblies, Intel, StaticData}
@@ -178,7 +178,7 @@ defmodule SigilWeb.AssemblyDetailLive do
       :if={@is_owner}
       id={"wallet-hook-#{@assembly.id}"}
       phx-hook="WalletConnect"
-      data-sui-chain={sui_chain()}
+      data-sui-chain={sui_chain(@world)}
       class="hidden"
     ></div>
     <section class="px-4 py-12 sm:px-6 lg:px-8">
@@ -275,21 +275,21 @@ defmodule SigilWeb.AssemblyDetailLive do
     """
   end
 
-  @spec maybe_subscribe(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_subscribe(socket, assembly_id) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(socket.assigns.pubsub, assembly_topic(assembly_id))
 
       if is_integer(socket.assigns[:tribe_id]) do
-        Phoenix.PubSub.subscribe(socket.assigns.pubsub, intel_topic(socket.assigns.tribe_id))
+        Phoenix.PubSub.subscribe(
+          socket.assigns.pubsub,
+          intel_topic(socket.assigns.tribe_id, socket.assigns.world)
+        )
       end
     end
 
     socket
   end
 
-  @spec maybe_ensure_monitor(Phoenix.LiveView.Socket.t(), String.t()) ::
-          Phoenix.LiveView.Socket.t()
   defp maybe_ensure_monitor(socket, assembly_id) do
     with true <- connected?(socket),
          {:ok, supervisor, registry} <- monitor_dependencies(socket),
@@ -300,7 +300,8 @@ defmodule SigilWeb.AssemblyDetailLive do
           [assembly_id],
           registry: registry,
           tables: socket.assigns.cache_tables,
-          pubsub: socket.assigns.pubsub
+          pubsub: socket.assigns.pubsub,
+          world: socket.assigns.world
         )
 
       socket
@@ -310,7 +311,6 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
-  @spec assign_intel_state(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp assign_intel_state(socket) do
     tribe_id =
       IntelHelpers.current_tribe_id(
@@ -345,26 +345,27 @@ defmodule SigilWeb.AssemblyDetailLive do
     |> assign_location_report(location_report)
   end
 
-  @spec load_location_report(Phoenix.LiveView.Socket.t(), integer() | nil, boolean()) ::
-          IntelReport.t() | nil
   defp load_location_report(socket, tribe_id, true) when is_integer(tribe_id) do
     Intel.get_location(
       tribe_id,
       socket.assigns.assembly.id,
-      IntelHelpers.intel_opts(socket.assigns.cache_tables, socket.assigns.pubsub, tribe_id)
+      IntelHelpers.intel_opts(
+        socket.assigns.cache_tables,
+        socket.assigns.pubsub,
+        tribe_id,
+        socket.assigns.world
+      )
     )
   end
 
   defp load_location_report(_socket, _tribe_id, _intel_enabled?), do: nil
-  @spec load_solar_systems(Phoenix.LiveView.Socket.t(), pid() | nil, boolean()) :: list()
+
   defp load_solar_systems(socket, static_data_pid, true) when is_pid(static_data_pid) do
     if connected?(socket), do: StaticData.list_solar_systems(static_data_pid), else: []
   end
 
   defp load_solar_systems(_socket, _static_data_pid, _can_edit_location), do: []
 
-  @spec assign_location_report(Phoenix.LiveView.Socket.t(), IntelReport.t() | nil) ::
-          Phoenix.LiveView.Socket.t()
   defp assign_location_report(socket, report) do
     assign(socket,
       location_report: report,
@@ -374,13 +375,12 @@ defmodule SigilWeb.AssemblyDetailLive do
     )
   end
 
-  @spec report_solar_system_id(IntelReport.t() | nil) :: integer() | nil
   defp report_solar_system_id(%IntelReport{solar_system_id: solar_system_id})
        when is_integer(solar_system_id) and solar_system_id > 0,
        do: solar_system_id
 
   defp report_solar_system_id(_report), do: nil
-  @spec persist_location(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
+
   defp persist_location(socket, %{"solar_system_name" => solar_system_name} = params) do
     with true <- socket.assigns.can_edit_location,
          static_data_pid when is_pid(static_data_pid) <- socket.assigns.static_data_pid,
@@ -400,7 +400,12 @@ defmodule SigilWeb.AssemblyDetailLive do
                reported_by_name: IntelHelpers.character_name(active_character),
                reported_by_character_id: active_character.id
              },
-             IntelHelpers.intel_opts(socket.assigns.cache_tables, socket.assigns.pubsub, tribe_id)
+             IntelHelpers.intel_opts(
+               socket.assigns.cache_tables,
+               socket.assigns.pubsub,
+               tribe_id,
+               socket.assigns.world
+             )
            ) do
       socket
       |> put_flash(:info, "Location saved")
@@ -428,8 +433,6 @@ defmodule SigilWeb.AssemblyDetailLive do
   defp persist_location(socket, _params),
     do: put_flash(socket, :error, "Unknown or ambiguous solar system")
 
-  @spec fetch_assembly(String.t(), map() | nil) ::
-          {:ok, Assemblies.assembly()} | {:error, :not_found}
   defp fetch_assembly(assembly_id, cache_tables)
        when is_binary(assembly_id) and is_map(cache_tables) do
     case Assemblies.get_assembly(assembly_id, tables: cache_tables) do
@@ -446,7 +449,6 @@ defmodule SigilWeb.AssemblyDetailLive do
 
   defp fetch_assembly(_assembly_id, _cache_tables), do: {:error, :not_found}
 
-  @spec owner?(Phoenix.LiveView.Socket.t(), String.t()) :: boolean()
   defp owner?(socket, assembly_id),
     do:
       SigilWeb.AssemblyHelpers.assembly_owned_by?(
@@ -455,16 +457,14 @@ defmodule SigilWeb.AssemblyDetailLive do
         socket.assigns[:cache_tables]
       )
 
-  @spec reset_signing_state(atom()) :: atom()
   defp reset_signing_state(:submitted), do: :idle
   defp reset_signing_state(signing_state), do: signing_state
-  @spec intel_name_opts(Phoenix.LiveView.Socket.t()) :: keyword()
+
   defp intel_name_opts(socket),
     do: [cache_tables: socket.assigns[:cache_tables], tribe_id: socket.assigns[:tribe_id]]
 
-  @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   defp enter_signing(socket, tx_bytes) do
-    if localnet?() do
+    if localnet?(socket.assigns.world) do
       sign_and_submit_locally(socket, tx_bytes)
     else
       socket
@@ -473,8 +473,6 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
-  @spec sign_and_submit_locally(Phoenix.LiveView.Socket.t(), String.t()) ::
-          Phoenix.LiveView.Socket.t()
   defp sign_and_submit_locally(socket, kind_bytes) do
     case Assemblies.sign_and_submit_extension_locally(kind_bytes, assembly_opts(socket)) do
       {:ok, %{digest: _digest}} ->
@@ -489,12 +487,13 @@ defmodule SigilWeb.AssemblyDetailLive do
     end
   end
 
-  @spec assembly_opts(Phoenix.LiveView.Socket.t()) :: Assemblies.options()
   defp assembly_opts(socket),
-    do: [tables: socket.assigns.cache_tables, pubsub: socket.assigns.pubsub]
+    do: [
+      tables: socket.assigns.cache_tables,
+      pubsub: socket.assigns.pubsub,
+      world: socket.assigns.world
+    ]
 
-  @spec assembly_topic(String.t()) :: String.t()
   defp assembly_topic(assembly_id), do: "assembly:" <> assembly_id
-  @spec intel_topic(integer()) :: String.t()
-  defp intel_topic(tribe_id), do: "intel:" <> Integer.to_string(tribe_id)
+  defp intel_topic(tribe_id, world), do: Intel.topic(tribe_id, world: world)
 end

@@ -5,6 +5,7 @@ defmodule Sigil.Diplomacy do
 
   alias Sigil.Cache
   alias Sigil.Diplomacy.{Discovery, Governance, ObjectCodec, ReputationOps, TransactionOps}
+  alias Sigil.Worlds
 
   @diplomacy_topic "diplomacy"
 
@@ -80,6 +81,7 @@ defmodule Sigil.Diplomacy do
           | {:character_ref, character_ref()}
           | {:registry_ref, registry_ref()}
           | {:client, module()}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
 
@@ -244,15 +246,17 @@ defmodule Sigil.Diplomacy do
   @spec member?(options()) :: boolean()
   defdelegate member?(opts), to: Governance
 
-  @doc "Returns the tribe-scoped diplomacy topic."
-  @spec topic(non_neg_integer()) :: String.t()
-  def topic(tribe_id) when is_integer(tribe_id) and tribe_id >= 0 do
-    "diplomacy:#{tribe_id}"
+  @doc "Returns the world- and tribe-scoped diplomacy topic."
+  @spec topic(non_neg_integer(), options()) :: String.t()
+  def topic(tribe_id, opts \\ []) when is_integer(tribe_id) and tribe_id >= 0 and is_list(opts) do
+    Worlds.topic(world(opts), "diplomacy:#{tribe_id}")
   end
 
-  @doc "Returns the legacy shared diplomacy topic used by standings consumers."
-  @spec legacy_topic() :: String.t()
-  def legacy_topic, do: @diplomacy_topic
+  @doc "Returns the world-scoped shared diplomacy topic used by standings consumers."
+  @spec legacy_topic(options()) :: String.t()
+  def legacy_topic(opts \\ []) when is_list(opts) do
+    Worlds.topic(world(opts), @diplomacy_topic)
+  end
 
   @doc "Submits a wallet-signed transaction and updates cache on success."
   @spec submit_signed_transaction(String.t(), String.t(), options()) ::
@@ -376,5 +380,10 @@ defmodule Sigil.Diplomacy do
   @spec store_pending_tx(options(), String.t(), term()) :: :ok
   def store_pending_tx(opts, tx_bytes, operation) do
     Cache.put(standings_table(opts), {:pending_tx, tx_bytes}, operation)
+  end
+
+  @spec world(options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 end

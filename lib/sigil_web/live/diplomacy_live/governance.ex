@@ -12,7 +12,7 @@ defmodule SigilWeb.DiplomacyLive.Governance do
   import Phoenix.LiveView, only: [put_flash: 3, push_event: 3, connected?: 1]
 
   import SigilWeb.TransactionHelpers,
-    only: [localnet?: 0, localnet_signer_address: 0]
+    only: [localnet?: 1, localnet_signer_address: 1]
 
   alias Sigil.{Cache, Diplomacy, Tribes}
 
@@ -78,7 +78,7 @@ defmodule SigilWeb.DiplomacyLive.Governance do
   @doc "Enters the signing flow or submits locally, returning the updated socket."
   @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   def enter_signing(socket, tx_bytes) do
-    if localnet?() do
+    if localnet?(socket.assigns.world) do
       sign_and_submit_locally(socket, tx_bytes)
     else
       socket
@@ -208,7 +208,9 @@ defmodule SigilWeb.DiplomacyLive.Governance do
   def load_standings(socket) do
     cache_tables = socket.assigns[:cache_tables]
     tribe_id = socket.assigns[:tribe_id]
-    sender = localnet_signer_address() || socket.assigns.current_account.address
+
+    sender =
+      localnet_signer_address(socket.assigns.world) || socket.assigns.current_account.address
 
     if is_map(cache_tables) and is_map_key(cache_tables, :standings) do
       active_character = socket.assigns[:active_character]
@@ -252,7 +254,8 @@ defmodule SigilWeb.DiplomacyLive.Governance do
     [
       tables: socket.assigns.cache_tables,
       pubsub: socket.assigns.pubsub,
-      sender: localnet_signer_address() || socket.assigns.current_account.address,
+      sender:
+        localnet_signer_address(socket.assigns.world) || socket.assigns.current_account.address,
       tribe_id: socket.assigns.tribe_id,
       character_id: active_character && active_character.id,
       character_ref: socket.assigns.character_ref

@@ -6,7 +6,7 @@ defmodule SigilWeb.DiplomacyLive.Transactions do
   import Phoenix.Component, only: [assign: 2]
   import Phoenix.LiveView, only: [put_flash: 3, push_event: 3]
 
-  import SigilWeb.TransactionHelpers, only: [localnet?: 0]
+  import SigilWeb.TransactionHelpers, only: [localnet?: 1]
 
   alias Sigil.Diplomacy
   alias SigilWeb.DiplomacyLive.State
@@ -49,7 +49,7 @@ defmodule SigilWeb.DiplomacyLive.Transactions do
 
   @spec enter_signing(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
   defp enter_signing(socket, tx_bytes) do
-    if localnet?() do
+    if localnet?(socket.assigns.world) do
       sign_and_submit_locally(socket, tx_bytes)
     else
       socket

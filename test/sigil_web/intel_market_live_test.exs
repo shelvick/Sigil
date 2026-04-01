@@ -38,7 +38,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
     pubsub = unique_pubsub_name()
     start_supervised!({Phoenix.PubSub, name: pubsub})
-    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic(world: "test"))
 
     static_data =
       start_supervised!(
@@ -1170,7 +1170,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
     seed_nonce(cache_tables, nonce, wallet_address)
     expect_wallet_registration(wallet_address)
     seed_chain_marketplace_with_reconciliation([], cache_tables, pseudonym.pseudonym_address)
-    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic(world: "test"))
 
     created_listing_id = unique_object_id()
 
@@ -1319,7 +1319,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
       })
 
     seed_chain_marketplace([listing])
-    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic(world: "test"))
 
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
       {:ok,
@@ -1463,7 +1463,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
       })
 
     seed_chain_marketplace([listing])
-    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic(world: "test"))
 
     expect(Sigil.Sui.ClientMock, :get_coins, fn relay_owner, [] ->
       assert is_binary(relay_owner)
@@ -1807,7 +1807,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
       })
 
     seed_chain_marketplace([listing])
-    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic())
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.IntelMarket.topic(world: "test"))
 
     expect(Sigil.Sui.ClientMock, :execute_transaction, fn _tx_bytes, [_signature], [] ->
       {:ok,
@@ -1867,7 +1867,11 @@ defmodule SigilWeb.IntelMarketLiveTest do
         price_mist: 300_000_000
       })
 
-    Phoenix.PubSub.broadcast(pubsub, Sigil.IntelMarket.topic(), {:listing_created, listing})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.IntelMarket.topic(world: "test"),
+      {:listing_created, listing}
+    )
 
     html = render(view)
     assert html =~ listing.description
@@ -1918,7 +1922,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.IntelMarket.topic(),
+      Sigil.IntelMarket.topic(world: "test"),
       {:listing_purchased, sold_listing}
     )
 
@@ -1931,7 +1935,7 @@ defmodule SigilWeb.IntelMarketLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.IntelMarket.topic(),
+      Sigil.IntelMarket.topic(world: "test"),
       {:listing_removed, removed_listing.id}
     )
 

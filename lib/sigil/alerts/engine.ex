@@ -12,6 +12,7 @@ defmodule Sigil.Alerts.Engine do
   alias Sigil.Alerts.{Alert, WebhookConfig}
   alias Sigil.Alerts.Engine.{Dispatcher, RuleEvaluator, Runtime}
   alias Sigil.Cache
+  alias Sigil.Worlds
 
   @default_discovery_interval_ms 60_000
   @default_purge_interval_ms 86_400_000
@@ -31,6 +32,7 @@ defmodule Sigil.Alerts.Engine do
   @typedoc "Runtime state for the alert engine."
   @type state() :: %{
           pubsub: atom() | module(),
+          world: Worlds.world_name(),
           registry: atom() | nil,
           resolve_registry: (-> atom() | nil),
           tables: %{assemblies: Cache.table_id(), accounts: Cache.table_id()} | nil,
@@ -55,6 +57,7 @@ defmodule Sigil.Alerts.Engine do
   @typedoc "Start option accepted by the alert engine."
   @type option() ::
           {:pubsub, atom() | module()}
+          | {:world, Worlds.world_name()}
           | {:registry, atom()}
           | {:resolve_registry, (-> atom() | nil)}
           | {:tables, %{assemblies: Cache.table_id(), accounts: Cache.table_id()}}
@@ -135,8 +138,11 @@ defmodule Sigil.Alerts.Engine do
     :ok = Runtime.maybe_allow_sandbox_owner(state.sandbox_owner)
     :ok = Dispatcher.maybe_allow_mock_owner(state.mox_owner || state.owner_pid, state.notifier)
     :ok = Dispatcher.maybe_allow_req_test_owner(state.owner_pid, state.notifier_opts)
-    :ok = Phoenix.PubSub.subscribe(state.pubsub, @monitor_lifecycle_topic)
-    :ok = Phoenix.PubSub.subscribe(state.pubsub, @reputation_topic)
+
+    :ok =
+      Phoenix.PubSub.subscribe(state.pubsub, Worlds.topic(state.world, @monitor_lifecycle_topic))
+
+    :ok = Phoenix.PubSub.subscribe(state.pubsub, Worlds.topic(state.world, @reputation_topic))
     send(self(), :discover_monitors)
     Runtime.schedule_purge(state.purge_interval_ms)
     {:noreply, state}
@@ -162,7 +168,7 @@ defmodule Sigil.Alerts.Engine do
       state
       |> Runtime.maybe_resolve_registry()
       |> Runtime.maybe_resolve_tables()
-      |> Runtime.discover_monitors(state.pubsub)
+      |> Runtime.discover_monitors(state.pubsub, state.world)
 
     interval =
       case {next_state.registry, next_state.tables} do

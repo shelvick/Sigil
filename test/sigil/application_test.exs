@@ -9,6 +9,29 @@ defmodule Sigil.ApplicationTest do
   alias Sigil.StaticDataTestFixtures, as: Fixtures
 
   @default_monitor_registry Sigil.GameState.MonitorRegistry
+  @stillness_world "stillness"
+  @utopia_world "utopia"
+  @multi_worlds [@stillness_world, @utopia_world]
+  @stillness_monitor_registry Sigil.GameState.MonitorRegistry.Stillness
+  @utopia_monitor_registry Sigil.GameState.MonitorRegistry.Utopia
+  @multi_world_monitor_registries %{
+    @stillness_world => @stillness_monitor_registry,
+    @utopia_world => @utopia_monitor_registry
+  }
+  @multi_world_eve_worlds %{
+    @stillness_world => %{
+      package_id: "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c",
+      sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
+      graphql_url: "https://graphql.testnet.sui.io/graphql",
+      rpc_url: "https://fullnode.testnet.sui.io:443"
+    },
+    @utopia_world => %{
+      package_id: "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
+      sigil_package_id: "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1",
+      graphql_url: "https://graphql.testnet.sui.io/graphql",
+      rpc_url: "https://fullnode.testnet.sui.io:443"
+    }
+  }
 
   test "application starts all required children" do
     snapshot = running_application_snapshot!()
@@ -24,6 +47,56 @@ defmodule Sigil.ApplicationTest do
     snapshot = running_application_snapshot!()
 
     assert inspect(Sigil.Cache) in snapshot.child_ids
+  end
+
+  test "starts world-scoped workers when multiple worlds are active" do
+    snapshot =
+      configured_application_snapshot!(
+        active_worlds: @multi_worlds,
+        eve_world: @stillness_world,
+        eve_worlds: @multi_world_eve_worlds,
+        monitor_registry: nil,
+        monitor_registries: @multi_world_monitor_registries,
+        start_gate_indexer: true,
+        start_monitor_supervisor: true,
+        start_alert_engine: true,
+        start_grpc_stream: true,
+        start_assembly_event_router: true,
+        start_reputation_engine: true
+      )
+
+    assert inspect({Sigil.Cache, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.Cache, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({Sigil.GateIndexer, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.GateIndexer, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({Sigil.GameState.MonitorSupervisor, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.GameState.MonitorSupervisor, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({Sigil.Alerts.Engine, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.Alerts.Engine, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({Sigil.Sui.GrpcStream, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.Sui.GrpcStream, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({Sigil.GameState.AssemblyEventRouter, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.GameState.AssemblyEventRouter, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({Sigil.Reputation.Engine, @stillness_world}) in snapshot.child_ids
+    assert inspect({Sigil.Reputation.Engine, @utopia_world}) in snapshot.child_ids
+
+    assert inspect({:monitor_registry, @stillness_world, @stillness_monitor_registry}) in snapshot.child_ids
+
+    assert inspect({:monitor_registry, @utopia_world, @utopia_monitor_registry}) in snapshot.child_ids
+
+    refute inspect(Sigil.Cache) in snapshot.child_ids
+    refute inspect(Sigil.GateIndexer) in snapshot.child_ids
+    refute inspect(Sigil.GameState.MonitorSupervisor) in snapshot.child_ids
+    refute inspect(Sigil.Alerts.Engine) in snapshot.child_ids
+    refute inspect(Sigil.Sui.GrpcStream) in snapshot.child_ids
+    refute inspect(Sigil.GameState.AssemblyEventRouter) in snapshot.child_ids
+    refute inspect(Sigil.Reputation.Engine) in snapshot.child_ids
   end
 
   test "StaticData and GateIndexer start when config flags enabled" do
@@ -334,6 +407,8 @@ defmodule Sigil.ApplicationTest do
         |> Keyword.put(:world_client, Sigil.ApplicationTestWorldClient)
         |> Keyword.put_new(:grpc_connector, Sigil.ApplicationTestGrpcConnector)
         |> Keyword.put_new(:monitor_registry, @default_monitor_registry)
+        |> Keyword.put_new(:monitor_registries, %{})
+        |> Keyword.put_new(:active_worlds, ["test"])
       )
 
     script = """

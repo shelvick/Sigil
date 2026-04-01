@@ -8,6 +8,7 @@ defmodule Sigil.Intel do
   alias Sigil.Cache
   alias Sigil.Intel.IntelReport
   alias Sigil.Repo
+  alias Sigil.Worlds
 
   @intel_topic_prefix "intel:"
 
@@ -16,6 +17,7 @@ defmodule Sigil.Intel do
           {:tables, %{intel: Cache.table_id()}}
           | {:pubsub, atom() | module()}
           | {:authorized_tribe_id, integer()}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
 
@@ -69,10 +71,11 @@ defmodule Sigil.Intel do
     end
   end
 
-  @doc "Returns the PubSub topic for a tribe's intel stream."
-  @spec topic(integer()) :: String.t()
-  def topic(tribe_id) when is_integer(tribe_id),
-    do: @intel_topic_prefix <> Integer.to_string(tribe_id)
+  @doc "Returns the world-scoped PubSub topic for a tribe's intel stream."
+  @spec topic(integer(), options()) :: String.t()
+  def topic(tribe_id, opts \\ []) when is_integer(tribe_id) and is_list(opts) do
+    Worlds.topic(world(opts), @intel_topic_prefix <> Integer.to_string(tribe_id))
+  end
 
   @doc "Lists intel reports for the authorized tribe ordered newest first."
   @spec list_intel(integer(), options()) :: [IntelReport.t()]
@@ -201,6 +204,11 @@ defmodule Sigil.Intel do
   @spec broadcast(options(), integer(), term()) :: :ok | {:error, term()}
   defp broadcast(opts, tribe_id, event) do
     pubsub = Keyword.get(opts, :pubsub, Sigil.PubSub)
-    Phoenix.PubSub.broadcast(pubsub, topic(tribe_id), event)
+    Phoenix.PubSub.broadcast(pubsub, topic(tribe_id, opts), event)
+  end
+
+  @spec world(options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 end

@@ -1563,7 +1563,12 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
         updated_at: DateTime.utc_now()
       }
 
-      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_updated, scouting})
+      Phoenix.PubSub.broadcast(
+        pubsub,
+        Sigil.Intel.topic(account.tribe_id, world: "test"),
+        {:intel_updated, scouting}
+      )
+
       # Scouting broadcast should not populate the location card
       assert render(view) =~ "Location unknown"
 
@@ -1574,7 +1579,11 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
           notes: "Updated location"
       }
 
-      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_updated, location})
+      Phoenix.PubSub.broadcast(
+        pubsub,
+        Sigil.Intel.topic(account.tribe_id, world: "test"),
+        {:intel_updated, location}
+      )
 
       html = render(view)
       assert html =~ "B 31337"
@@ -1618,10 +1627,20 @@ defmodule SigilWeb.AssemblyDetailLiveTest do
       assert render(view) =~ "A 2560"
 
       scouting = %{report | id: Ecto.UUID.generate(), report_type: :scouting}
-      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_deleted, scouting})
+
+      Phoenix.PubSub.broadcast(
+        pubsub,
+        Sigil.Intel.topic(account.tribe_id, world: "test"),
+        {:intel_deleted, scouting}
+      )
+
       assert render(view) =~ "A 2560"
 
-      Phoenix.PubSub.broadcast(pubsub, "intel:#{account.tribe_id}", {:intel_deleted, report})
+      Phoenix.PubSub.broadcast(
+        pubsub,
+        Sigil.Intel.topic(account.tribe_id, world: "test"),
+        {:intel_deleted, report}
+      )
 
       html = render(view)
       assert html =~ "Location unknown"

@@ -5,7 +5,7 @@ defmodule SigilWeb.AlertsLive do
 
   use SigilWeb, :live_view
 
-  import SigilWeb.TransactionHelpers, only: [localnet_signer_address: 0]
+  import SigilWeb.TransactionHelpers, only: [localnet_signer_address: 1]
 
   alias Sigil.{Alerts, Diplomacy}
   alias Sigil.Alerts.{Alert, WebhookConfig}
@@ -274,8 +274,10 @@ defmodule SigilWeb.AlertsLive do
     if is_integer(tribe_id) and is_map(cache_tables) and is_map_key(cache_tables, :standings) do
       opts = [
         tables: cache_tables,
-        sender: localnet_signer_address() || socket.assigns.current_account.address,
-        tribe_id: tribe_id
+        sender:
+          localnet_signer_address(socket.assigns.world) || socket.assigns.current_account.address,
+        tribe_id: tribe_id,
+        world: socket.assigns.world
       ]
 
       if connected?(socket) and is_nil(Diplomacy.get_active_custodian(opts)) do

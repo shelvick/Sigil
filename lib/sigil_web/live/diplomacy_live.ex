@@ -8,7 +8,7 @@ defmodule SigilWeb.DiplomacyLive do
   import SigilWeb.DiplomacyLive.Components
 
   import SigilWeb.TransactionHelpers,
-    only: [sui_chain: 0, localnet_signer_address: 0]
+    only: [sui_chain: 1, localnet_signer_address: 1]
 
   import SigilWeb.TribeHelpers, only: [authorize_tribe: 2]
 
@@ -74,7 +74,7 @@ defmodule SigilWeb.DiplomacyLive do
     assigns = assign(assigns, :content_state, content_state)
 
     ~H"""
-    <div id="wallet-signer" phx-hook="WalletConnect" data-sui-chain={sui_chain()} class="hidden"></div>
+    <div id="wallet-signer" phx-hook="WalletConnect" data-sui-chain={sui_chain(@world)} class="hidden"></div>
     <section class="relative overflow-hidden px-4 py-12 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-6xl space-y-8">
         <div class="rounded-[2rem] border border-space-600/80 bg-space-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
@@ -98,7 +98,7 @@ defmodule SigilWeb.DiplomacyLive do
               governance_error={@governance_error}
               governance_expanded={@governance_expanded}
               is_member={@is_member}
-              viewer_address={localnet_signer_address() || @current_account.address}
+              viewer_address={localnet_signer_address(@world) || @current_account.address}
               tribe_members={@tribe_members}
             />
             <.tribe_standings_section

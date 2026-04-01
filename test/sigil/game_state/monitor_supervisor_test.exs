@@ -35,7 +35,9 @@ defmodule Sigil.GameState.MonitorSupervisorTest do
   test "start_monitor broadcasts lifecycle event", context do
     supervisor = start_monitor_supervisor!(context.registry)
     assembly_id = "0xassembly-lifecycle"
-    :ok = Phoenix.PubSub.subscribe(context.pubsub, "monitors:lifecycle")
+
+    :ok =
+      Phoenix.PubSub.subscribe(context.pubsub, Sigil.Worlds.topic("test", "monitors:lifecycle"))
 
     assert {:ok, _monitor} =
              MonitorSupervisor.start_monitor(supervisor, monitor_opts(context, assembly_id))
@@ -46,7 +48,9 @@ defmodule Sigil.GameState.MonitorSupervisorTest do
   test "start_monitor uses explicit pubsub for lifecycle event", context do
     supervisor = start_monitor_supervisor!(context.registry)
     assembly_id = "0xassembly-default-pubsub"
-    :ok = Phoenix.PubSub.subscribe(context.pubsub, "monitors:lifecycle")
+
+    :ok =
+      Phoenix.PubSub.subscribe(context.pubsub, Sigil.Worlds.topic("test", "monitors:lifecycle"))
 
     opts = context |> monitor_opts(assembly_id) |> Keyword.put(:pubsub, context.pubsub)
 

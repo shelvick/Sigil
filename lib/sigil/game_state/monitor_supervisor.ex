@@ -8,12 +8,16 @@ defmodule Sigil.GameState.MonitorSupervisor do
   require Logger
 
   alias Sigil.GameState.AssemblyMonitor
+  alias Sigil.Worlds
 
   @default_pubsub Sigil.PubSub
   @monitor_lifecycle_topic "monitors:lifecycle"
 
   @typedoc "Options accepted by the monitor supervisor."
-  @type option() :: {:registry, atom()}
+  @type option() ::
+          {:registry, atom()}
+          | {:pubsub, atom() | module()}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
 
@@ -105,7 +109,13 @@ defmodule Sigil.GameState.MonitorSupervisor do
   defp maybe_broadcast_monitor_started(opts) do
     with assembly_id when is_binary(assembly_id) <- Keyword.get(opts, :assembly_id) do
       pubsub = Keyword.get(opts, :pubsub, @default_pubsub)
-      Phoenix.PubSub.broadcast(pubsub, @monitor_lifecycle_topic, {:monitor_started, assembly_id})
+      world = Keyword.get(opts, :world, Worlds.default_world())
+
+      Phoenix.PubSub.broadcast(
+        pubsub,
+        Worlds.topic(world, @monitor_lifecycle_topic),
+        {:monitor_started, assembly_id}
+      )
     end
 
     :ok

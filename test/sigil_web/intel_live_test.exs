@@ -332,7 +332,11 @@ defmodule SigilWeb.IntelLiveTest do
     assert draft_html =~ "Draft label"
     assert draft_html =~ "Draft notes"
 
-    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_updated, replacement})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_updated, replacement}
+    )
 
     html = render(view)
     assert html =~ "Updated Forward Base"
@@ -550,7 +554,11 @@ defmodule SigilWeb.IntelLiveTest do
         "/tribe/#{@tribe_id}/intel"
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_deleted, report})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_deleted, report}
+    )
 
     html = render(view)
     refute html =~ report.label

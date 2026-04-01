@@ -40,6 +40,7 @@ defmodule Sigil.Sui.Client do
           | {:req_options, keyword()}
           | {:cursor, String.t()}
           | {:limit, pos_integer()}
+          | {:world, String.t()}
 
   @typedoc "Client request options."
   @type request_opts :: [request_opt()]

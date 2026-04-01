@@ -6,7 +6,7 @@ defmodule Sigil.Diplomacy.Discovery do
   alias Sigil.Cache
   alias Sigil.Diplomacy.ObjectCodec
   alias Sigil.Sui.Client
-
+  alias Sigil.Worlds
   @sui_client Application.compile_env!(:sigil, :sui_client)
 
   @doc "Discovers the custodian for a tribe and updates cache and PubSub."
@@ -17,7 +17,7 @@ defmodule Sigil.Diplomacy.Discovery do
     client = Keyword.get(opts, :client, @sui_client)
     req_options = Keyword.get(opts, :req_options, [])
 
-    with {:ok, %{data: objects}} <- client.get_objects([type: custodian_type()], req_options) do
+    with {:ok, %{data: objects}} <- client.get_objects([type: custodian_type(opts)], req_options) do
       custodian =
         objects
         |> Enum.find(&(ObjectCodec.parse_tribe_id(&1) == tribe_id))
@@ -29,7 +29,7 @@ defmodule Sigil.Diplomacy.Discovery do
 
       Phoenix.PubSub.broadcast(
         Keyword.get(opts, :pubsub, Sigil.PubSub),
-        "diplomacy",
+        Sigil.Diplomacy.legacy_topic(opts),
         {:custodian_discovered, custodian}
       )
 
@@ -87,7 +87,8 @@ defmodule Sigil.Diplomacy.Discovery do
         client = Keyword.get(opts, :client, @sui_client)
         req_options = Keyword.get(opts, :req_options, [])
 
-        with {:ok, %{data: objects}} <- client.get_objects([type: registry_type()], req_options),
+        with {:ok, %{data: objects}} <-
+               client.get_objects([type: registry_type(opts)], req_options),
              {:ok, registry_ref} <- ObjectCodec.build_registry_ref(objects) do
           Cache.put(table, {:registry_ref}, registry_ref)
           {:ok, registry_ref}
@@ -124,21 +125,25 @@ defmodule Sigil.Diplomacy.Discovery do
   @spec standings_table(Sigil.Diplomacy.options()) :: Cache.table_id()
   defp standings_table(opts), do: opts |> Keyword.fetch!(:tables) |> Map.fetch!(:standings)
 
-  @spec custodian_type() :: String.t()
-  defp custodian_type do
-    "#{sigil_package_id()}::tribe_custodian::Custodian"
+  @spec custodian_type(Sigil.Diplomacy.options()) :: String.t()
+  defp custodian_type(opts) when is_list(opts) do
+    "#{sigil_package_id(opts)}::tribe_custodian::Custodian"
   end
 
-  @spec registry_type() :: String.t()
-  defp registry_type do
-    "#{sigil_package_id()}::tribe_custodian::TribeCustodianRegistry"
+  @spec registry_type(Sigil.Diplomacy.options()) :: String.t()
+  defp registry_type(opts) when is_list(opts) do
+    "#{sigil_package_id(opts)}::tribe_custodian::TribeCustodianRegistry"
   end
 
-  @spec sigil_package_id() :: String.t()
-  defp sigil_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{sigil_package_id: id} = Map.fetch!(worlds, world)
-    id
+  @spec sigil_package_id(Sigil.Diplomacy.options()) :: String.t()
+  defp sigil_package_id(opts) when is_list(opts) do
+    opts
+    |> world()
+    |> Worlds.sigil_package_id()
+  end
+
+  @spec world(Sigil.Diplomacy.options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 end
