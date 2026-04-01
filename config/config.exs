@@ -31,7 +31,8 @@ config :sigil, :eve_worlds, %{
     sigil_package_id: stillness_sigil_package_id,
     graphql_url: "https://graphql.testnet.sui.io/graphql",
     rpc_url: "https://fullnode.testnet.sui.io:443",
-    world_api_url: "https://world-api-stillness.live.tech.evefrontier.com"
+    world_api_url: "https://world-api-stillness.live.tech.evefrontier.com",
+    reputation_registry_id: "0x02fa1b5e4bceaaa972fc09fc9982a10e00587c06e4686bfdcea4e255c2c01fb7"
   },
   "utopia" => %{
     package_id: "0xd12a70c74c1e759445d6f209b01d43d860e97fcf2ef72ccbbd00afd828043f75",
