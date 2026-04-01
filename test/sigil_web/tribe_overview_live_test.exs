@@ -467,7 +467,12 @@ defmodule SigilWeb.TribeOverviewLiveTest do
     updated_tribe = tribe_fixture(@tribe_id, [initial_member, new_member])
     Cache.put(cache_tables.tribes, @tribe_id, updated_tribe)
 
-    Phoenix.PubSub.broadcast(pubsub, "tribes", {:tribe_discovered, updated_tribe})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Worlds.topic("test", "tribes"),
+      {:tribe_discovered, updated_tribe}
+    )
+
     updated_html = render(view)
 
     assert updated_html =~ "Second Pilot"
@@ -511,7 +516,7 @@ defmodule SigilWeb.TribeOverviewLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      "diplomacy",
+      Sigil.Worlds.topic("test", "diplomacy"),
       {:standing_updated, %{tribe_id: 43, standing: :allied}}
     )
 
@@ -554,7 +559,12 @@ defmodule SigilWeb.TribeOverviewLiveTest do
       tribe_id: @tribe_id
     })
 
-    Phoenix.PubSub.broadcast(pubsub, "diplomacy", {:custodian_created, %{tribe_id: @tribe_id}})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Worlds.topic("test", "diplomacy"),
+      {:custodian_created, %{tribe_id: @tribe_id}}
+    )
+
     updated_html = render(view)
 
     assert updated_html =~ "Manage Standings"
@@ -736,7 +746,11 @@ defmodule SigilWeb.TribeOverviewLiveTest do
         reported_by_character_id: hd(account.characters).id
       })
 
-    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_updated, scouting})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_updated, scouting}
+    )
 
     scouting_html = render(view)
     assert scouting_html =~ "1 scouting reports"
@@ -749,13 +763,22 @@ defmodule SigilWeb.TribeOverviewLiveTest do
         reported_by_character_id: hd(account.characters).id
       })
 
-    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_updated, location})
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_updated, location}
+    )
 
     location_html = render(view)
     assert location_html =~ "1 assemblies with known locations"
 
     Repo.delete!(scouting)
-    Phoenix.PubSub.broadcast(pubsub, "intel:#{@tribe_id}", {:intel_deleted, scouting})
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Intel.topic(@tribe_id, world: "test"),
+      {:intel_deleted, scouting}
+    )
 
     deleted_html = render(view)
     assert deleted_html =~ "0 scouting reports"

@@ -796,7 +796,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      "diplomacy",
+      Sigil.Worlds.topic("test", "diplomacy"),
       {:standing_updated, %{tribe_id: 42, standing: :hostile}}
     )
 
@@ -850,7 +850,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.Diplomacy.topic(@tribe_id),
+      Sigil.Diplomacy.topic(@tribe_id, world: "test"),
       {:governance_updated, %{tribe_id: @tribe_id}}
     )
 
@@ -934,7 +934,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      Sigil.Diplomacy.topic(@tribe_id),
+      Sigil.Diplomacy.topic(@tribe_id, world: "test"),
       {:governance_updated, %{tribe_id: @tribe_id}}
     )
 
@@ -1361,8 +1361,12 @@ defmodule SigilWeb.DiplomacyLiveTest do
       short_name: "FT"
     })
 
-    expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn ^votes_table_id, [] ->
-      {:error, :timeout}
+    expect(Sigil.Sui.ClientMock, :get_dynamic_fields, fn ^votes_table_id, opts ->
+      if Keyword.get(opts, :world) == "test" and is_nil(Keyword.get(opts, :cursor)) do
+        {:error, :timeout}
+      else
+        {:error, :invalid_response}
+      end
     end)
 
     assert {:ok, _view, html} =
@@ -2148,7 +2152,7 @@ defmodule SigilWeb.DiplomacyLiveTest do
 
     Phoenix.PubSub.broadcast(
       pubsub,
-      "reputation",
+      Sigil.Worlds.topic("test", "reputation"),
       {:reputation_updated, %{tribe_id: @tribe_id, target_tribe_id: 91, score: 222}}
     )
 
@@ -2466,8 +2470,21 @@ defmodule SigilWeb.DiplomacyLiveTest do
     tallies = Keyword.get(opts, :tallies, [tally_entry(current_leader, 1)])
 
     stub(Sigil.Sui.ClientMock, :get_dynamic_fields, fn
-      ^votes_table_id, [] -> {:ok, %{data: votes, has_next_page: false, end_cursor: nil}}
-      ^vote_tallies_table_id, [] -> {:ok, %{data: tallies, has_next_page: false, end_cursor: nil}}
+      ^votes_table_id, dynamic_opts ->
+        if Keyword.get(dynamic_opts, :world) == "test" and
+             is_nil(Keyword.get(dynamic_opts, :cursor)) do
+          {:ok, %{data: votes, has_next_page: false, end_cursor: nil}}
+        else
+          {:error, :invalid_response}
+        end
+
+      ^vote_tallies_table_id, dynamic_opts ->
+        if Keyword.get(dynamic_opts, :world) == "test" and
+             is_nil(Keyword.get(dynamic_opts, :cursor)) do
+          {:ok, %{data: tallies, has_next_page: false, end_cursor: nil}}
+        else
+          {:error, :invalid_response}
+        end
     end)
   end
 
@@ -2483,27 +2500,37 @@ defmodule SigilWeb.DiplomacyLiveTest do
     tallies_calls = :counters.new(1, [])
 
     stub(Sigil.Sui.ClientMock, :get_dynamic_fields, fn
-      ^votes_table_id, [] ->
-        :ok = :counters.add(votes_calls, 1, 1)
+      ^votes_table_id, dynamic_opts ->
+        if Keyword.get(dynamic_opts, :world) == "test" and
+             is_nil(Keyword.get(dynamic_opts, :cursor)) do
+          :ok = :counters.add(votes_calls, 1, 1)
 
-        data =
-          case :counters.get(votes_calls, 1) do
-            1 -> initial_votes
-            _ -> updated_votes
-          end
+          data =
+            case :counters.get(votes_calls, 1) do
+              1 -> initial_votes
+              _ -> updated_votes
+            end
 
-        {:ok, %{data: data, has_next_page: false, end_cursor: nil}}
+          {:ok, %{data: data, has_next_page: false, end_cursor: nil}}
+        else
+          {:error, :invalid_response}
+        end
 
-      ^vote_tallies_table_id, [] ->
-        :ok = :counters.add(tallies_calls, 1, 1)
+      ^vote_tallies_table_id, dynamic_opts ->
+        if Keyword.get(dynamic_opts, :world) == "test" and
+             is_nil(Keyword.get(dynamic_opts, :cursor)) do
+          :ok = :counters.add(tallies_calls, 1, 1)
 
-        data =
-          case :counters.get(tallies_calls, 1) do
-            1 -> initial_tallies
-            _ -> updated_tallies
-          end
+          data =
+            case :counters.get(tallies_calls, 1) do
+              1 -> initial_tallies
+              _ -> updated_tallies
+            end
 
-        {:ok, %{data: data, has_next_page: false, end_cursor: nil}}
+          {:ok, %{data: data, has_next_page: false, end_cursor: nil}}
+        else
+          {:error, :invalid_response}
+        end
     end)
   end
 

@@ -23,7 +23,7 @@ defmodule Sigil.Reputation.EngineTest do
 
     pubsub = unique_pubsub_name()
     start_supervised!({Phoenix.PubSub, name: pubsub})
-    :ok = Phoenix.PubSub.subscribe(pubsub, "reputation")
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "reputation"))
 
     {:ok, tables: Cache.tables(cache_pid), pubsub: pubsub, sandbox_owner: sandbox_owner}
   end
@@ -39,7 +39,7 @@ defmodule Sigil.Reputation.EngineTest do
 
     _engine = start_engine!(tables: tables, pubsub: pubsub, sandbox_owner: sandbox_owner)
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -69,14 +69,14 @@ defmodule Sigil.Reputation.EngineTest do
         now_fun: fn -> @base_now end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :priority_list_updated,
       priority_list_raw("0xturret", "0xkiller"),
       102
     })
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -99,14 +99,14 @@ defmodule Sigil.Reputation.EngineTest do
 
     _engine = start_engine!(tables: tables, pubsub: pubsub, sandbox_owner: sandbox_owner)
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :jump,
       jump_raw("0xvictim", "0xgate-a", "0xgate-b"),
       104
     })
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -127,7 +127,7 @@ defmodule Sigil.Reputation.EngineTest do
 
     _engine = start_engine!(tables: tables, pubsub: pubsub, sandbox_owner: sandbox_owner)
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :jump,
       jump_raw("0xpilot", "0xgate-a", "0xgate-b"),
@@ -156,7 +156,7 @@ defmodule Sigil.Reputation.EngineTest do
         now_fun: fn -> @base_now end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :priority_list_updated,
       priority_list_raw("0xturret", "0xaggressor"),
@@ -200,7 +200,7 @@ defmodule Sigil.Reputation.EngineTest do
 
     Agent.update(clock, fn now -> DateTime.add(now, 31 * 60, :second) end)
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -223,14 +223,14 @@ defmodule Sigil.Reputation.EngineTest do
 
     _engine = start_engine!(tables: tables, pubsub: pubsub, sandbox_owner: sandbox_owner)
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :jump,
       jump_raw("0xvictim", "0xgate-a", "0xgate-b"),
       110
     })
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -283,7 +283,7 @@ defmodule Sigil.Reputation.EngineTest do
         end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -319,7 +319,7 @@ defmodule Sigil.Reputation.EngineTest do
         end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),
@@ -398,7 +398,7 @@ defmodule Sigil.Reputation.EngineTest do
 
     _engine = start_engine!(tables: tables, pubsub: pubsub, sandbox_owner: sandbox_owner)
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :jump,
       jump_raw("0xpilot", "0xgate-a", "0xgate-b"),
@@ -490,7 +490,7 @@ defmodule Sigil.Reputation.EngineTest do
         end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "chain_events", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "chain_events"), {
       :chain_event,
       :killmail_created,
       killmail_raw("0xkiller", "0xvictim"),

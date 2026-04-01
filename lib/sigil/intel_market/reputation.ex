@@ -6,6 +6,7 @@ defmodule Sigil.IntelMarket.Reputation do
   alias Sigil.IntelMarket
   alias Sigil.Intel.IntelListing
   alias Sigil.Sui.TxIntelReputation
+  alias Sigil.Worlds
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
 
@@ -83,7 +84,7 @@ defmodule Sigil.IntelMarket.Reputation do
              {:ok, registry_ref} <- resolve_reputation_registry_ref(opts),
              {:ok, listing_ref} <- IntelMarket.resolve_listing_ref(listing.id, opts),
              {:ok, tx_bytes} <-
-               build_feedback_bytes(action, registry_ref, listing_ref) do
+               build_feedback_bytes(action, registry_ref, listing_ref, opts) do
           {:ok, %{tx_bytes: tx_bytes}}
         else
           true -> {:error, :already_reviewed}
@@ -118,22 +119,23 @@ defmodule Sigil.IntelMarket.Reputation do
   @spec build_feedback_bytes(
           :confirm_quality | :report_bad_quality,
           TxIntelReputation.registry_ref(),
-          IntelMarket.listing_ref()
+          IntelMarket.listing_ref(),
+          IntelMarket.options()
         ) :: {:ok, String.t()}
-  defp build_feedback_bytes(:confirm_quality, registry_ref, listing_ref) do
+  defp build_feedback_bytes(:confirm_quality, registry_ref, listing_ref, opts) do
     tx_bytes =
       registry_ref
-      |> TxIntelReputation.build_confirm_quality(listing_ref, [])
+      |> TxIntelReputation.build_confirm_quality(listing_ref, tx_opts(opts))
       |> Sigil.Sui.TransactionBuilder.build_kind!()
       |> Base.encode64()
 
     {:ok, tx_bytes}
   end
 
-  defp build_feedback_bytes(:report_bad_quality, registry_ref, listing_ref) do
+  defp build_feedback_bytes(:report_bad_quality, registry_ref, listing_ref, opts) do
     tx_bytes =
       registry_ref
-      |> TxIntelReputation.build_report_bad_quality(listing_ref, [])
+      |> TxIntelReputation.build_report_bad_quality(listing_ref, tx_opts(opts))
       |> Sigil.Sui.TransactionBuilder.build_kind!()
       |> Base.encode64()
 
@@ -237,21 +239,24 @@ defmodule Sigil.IntelMarket.Reputation do
   @spec reputation_registry_id(IntelMarket.options()) ::
           {:ok, String.t()} | {:error, :reputation_unavailable}
   defp reputation_registry_id(opts) do
-    case Keyword.get_lazy(opts, :reputation_registry_id, &configured_reputation_registry_id/0) do
+    case Keyword.get_lazy(opts, :reputation_registry_id, fn ->
+           configured_reputation_registry_id(opts)
+         end) do
       registry_id when is_binary(registry_id) and registry_id != "" -> {:ok, registry_id}
       _other -> {:error, :reputation_unavailable}
     end
   end
 
-  @spec configured_reputation_registry_id() :: String.t() | nil
-  defp configured_reputation_registry_id do
-    world = Application.get_env(:sigil, :eve_world)
-    worlds = Application.get_env(:sigil, :eve_worlds, %{})
+  @spec configured_reputation_registry_id(IntelMarket.options()) :: String.t() | nil
+  defp configured_reputation_registry_id(opts) when is_list(opts) do
+    opts
+    |> world()
+    |> Worlds.reputation_registry_id()
+  end
 
-    case Map.get(worlds, world, %{}) do
-      %{reputation_registry_id: registry_id} when is_binary(registry_id) -> registry_id
-      _other -> nil
-    end
+  @spec world(IntelMarket.options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 
   @spec unwrap_struct(map()) :: map()
@@ -296,6 +301,11 @@ defmodule Sigil.IntelMarket.Reputation do
 
   @spec score_value(map(), String.t()) :: term()
   defp score_value(score, key), do: field_value(score, key)
+
+  @spec tx_opts(IntelMarket.options()) :: TxIntelReputation.tx_opts()
+  defp tx_opts(opts) when is_list(opts) do
+    [world: world(opts)]
+  end
 
   @spec parse_non_neg_integer(term()) :: non_neg_integer()
   defp parse_non_neg_integer(value) when is_integer(value) and value >= 0, do: value

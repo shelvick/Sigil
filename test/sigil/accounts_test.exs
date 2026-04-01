@@ -21,7 +21,7 @@ defmodule Sigil.AccountsTest do
     character_type = expected_character_type()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
-    :ok = Phoenix.PubSub.subscribe(pubsub, "accounts")
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "accounts"))
 
     {:ok, tables: Cache.tables(cache_pid), pubsub: pubsub, character_type: character_type}
   end
@@ -56,7 +56,8 @@ defmodule Sigil.AccountsTest do
         req_options: [plug: {Req.Test, :accounts_register_stub}]
       ]
 
-      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], ^req_options ->
+      expect(Sigil.Sui.ClientMock, :get_objects, fn [type: ^character_type], opts ->
+        assert opts == req_options
         {:ok, character_page([character_json(%{"character_address" => address})])}
       end)
 
@@ -254,6 +255,84 @@ defmodule Sigil.AccountsTest do
       assert {:ok, account} = Accounts.register_wallet(address, tables: tables, pubsub: pubsub)
       assert length(account.characters) == 2
       assert Enum.map(account.characters, & &1.id) == ["0xcharacter", "0xcharacter-2"]
+    end
+  end
+
+  describe "detect_world/2" do
+    test "detect_world/2 overrides stale req_options world" do
+      address = wallet_address()
+      stale_world = "stillness"
+      active_worlds = ["other", "test"]
+
+      stale_world_type =
+        "0x2222222222222222222222222222222222222222222222222222222222222222::character::Character"
+
+      test_world_type = expected_character_type()
+
+      expect(Sigil.Sui.ClientMock, :get_objects, 2, fn [type: type], opts ->
+        world = Keyword.get(opts, :world)
+        assert world in active_worlds
+
+        case {type, world} do
+          {^stale_world_type, "other"} ->
+            {:ok, character_page([])}
+
+          {^test_world_type, "test"} ->
+            {:ok, character_page([character_json(%{"character_address" => address})])}
+
+          _unexpected ->
+            flunk("unexpected probe: #{inspect({type, world, opts})}")
+        end
+      end)
+
+      assert Accounts.detect_world(address,
+               world: stale_world,
+               active_worlds: active_worlds,
+               req_options: [world: stale_world]
+             ) == "test"
+    end
+
+    test "detect_world/2 ignores unknown worlds and returns configured world" do
+      address = wallet_address()
+
+      expect(Sigil.Sui.ClientMock, :get_objects, 0, fn _filters, _opts ->
+        {:ok, character_page([])}
+      end)
+
+      assert Accounts.detect_world(address,
+               world: "test",
+               active_worlds: ["bogus", "test"],
+               req_options: []
+             ) == "test"
+    end
+
+    test "detect_world/2 falls back to default world when active worlds are unknown" do
+      address = wallet_address()
+
+      expect(Sigil.Sui.ClientMock, :get_objects, 0, fn _filters, _opts ->
+        {:ok, character_page([])}
+      end)
+
+      assert Accounts.detect_world(address,
+               world: "bogus",
+               active_worlds: ["bogus", "ghost"],
+               req_options: []
+             ) == "test"
+    end
+
+    test "detect_world/2 avoids chain lookups when only one active world is configured" do
+      address = wallet_address()
+
+      expect(Sigil.Sui.ClientMock, :get_objects, 0, fn _filters, _opts ->
+        {:ok, character_page([])}
+      end)
+
+      assert Accounts.detect_world(address,
+               world: "test",
+               active_worlds: ["test"],
+               req_options: []
+             ) ==
+               "test"
     end
   end
 

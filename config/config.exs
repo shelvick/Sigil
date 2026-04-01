@@ -69,6 +69,7 @@ config :sigil, :seal, %{
 }
 
 config :sigil, :eve_world, "stillness"
+config :sigil, :active_worlds, ["stillness"]
 
 config :sigil, :start_static_data, true
 config :sigil, :start_monitor_supervisor, true

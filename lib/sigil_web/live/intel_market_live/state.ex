@@ -134,7 +134,8 @@ defmodule SigilWeb.IntelMarketLive.State do
     [
       tables: socket.assigns.cache_tables,
       pubsub: socket.assigns.pubsub,
-      authorized_tribe_id: socket.assigns.tribe_id
+      authorized_tribe_id: socket.assigns.tribe_id,
+      world: socket.assigns.world
     ]
   end
 
@@ -180,11 +181,20 @@ defmodule SigilWeb.IntelMarketLive.State do
       tables: socket.assigns.cache_tables,
       pubsub: socket.assigns.pubsub,
       sender: socket.assigns.sender,
-      tribe_id: socket.assigns.tribe_id
+      tribe_id: socket.assigns.tribe_id,
+      world: socket.assigns.world
     ]
-    |> maybe_put_sigil_package_id(socket.assigns[:seal_package_id_override])
     |> maybe_put_walrus_client(socket.assigns[:walrus_client_override])
     |> maybe_put_reputation_registry_id(socket.assigns[:reputation_registry_id_override])
+  end
+
+  @doc """
+  Returns marketplace options for Seal hook config generation.
+  """
+  @spec seal_opts(Phoenix.LiveView.Socket.t()) :: IntelMarket.options()
+  def seal_opts(socket) do
+    market_opts(socket)
+    |> maybe_put_sigil_package_id(socket.assigns[:seal_package_id_override])
   end
 
   @doc """
@@ -209,7 +219,8 @@ defmodule SigilWeb.IntelMarketLive.State do
       tables: socket.assigns.cache_tables,
       sender: socket.assigns.sender,
       tribe_id: socket.assigns.tribe_id,
-      pubsub: socket.assigns.pubsub
+      pubsub: socket.assigns.pubsub,
+      world: socket.assigns.world
     ]
   end
 

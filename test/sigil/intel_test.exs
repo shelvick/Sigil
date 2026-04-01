@@ -563,5 +563,5 @@ defmodule Sigil.IntelTest do
     :"intel_pubsub_#{System.unique_integer([:positive])}"
   end
 
-  defp intel_topic(tribe_id), do: "intel:#{tribe_id}"
+  defp intel_topic(tribe_id), do: Sigil.Intel.topic(tribe_id, world: "test")
 end

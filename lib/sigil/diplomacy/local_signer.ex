@@ -12,6 +12,7 @@ defmodule Sigil.Diplomacy.LocalSigner do
   """
 
   alias Sigil.Sui.{BCS, Base58, Signer, TransactionBuilder.PTB}
+  alias Sigil.Worlds
 
   require Logger
 
@@ -24,14 +25,15 @@ defmodule Sigil.Diplomacy.LocalSigner do
   Takes base64-encoded TransactionKind bytes, wraps them with sender/gas data,
   signs with the localnet private key, and submits via JSON-RPC.
   """
-  @spec sign_and_submit(String.t()) :: submit_result()
-  def sign_and_submit(kind_bytes_b64) when is_binary(kind_bytes_b64) do
+  @spec sign_and_submit(String.t(), keyword()) :: submit_result()
+  def sign_and_submit(kind_bytes_b64, opts \\ [])
+      when is_binary(kind_bytes_b64) and is_list(opts) do
     with {:ok, signer_key} <- fetch_signer_key(),
          {:ok, {privkey, pubkey}} <- parse_signer_key(signer_key) do
       sender_bytes = Signer.address_from_public_key(pubkey)
       sender_hex = Signer.to_sui_address(sender_bytes)
 
-      with {:ok, gas_ref} <- fetch_gas_coin_ref(sender_hex) do
+      with {:ok, gas_ref} <- fetch_gas_coin_ref(sender_hex, opts) do
         kind_bytes = Base.decode64!(kind_bytes_b64)
 
         tx_bytes =
@@ -54,7 +56,7 @@ defmodule Sigil.Diplomacy.LocalSigner do
           |> Signer.encode_signature(pubkey)
           |> Base.encode64()
 
-        submit_via_rpc(tx_bytes_b64, signature)
+        submit_via_rpc(tx_bytes_b64, signature, opts)
       end
     end
   end
@@ -84,34 +86,31 @@ defmodule Sigil.Diplomacy.LocalSigner do
 
   Falls back to 1 if RPC is unavailable.
   """
-  @spec fetch_initial_shared_version(String.t()) :: non_neg_integer()
-  def fetch_initial_shared_version(object_id) do
-    case rpc_url() do
-      nil ->
+  @spec fetch_initial_shared_version(String.t(), keyword()) :: non_neg_integer()
+  def fetch_initial_shared_version(object_id, opts \\ [])
+      when is_binary(object_id) and is_list(opts) do
+    url = rpc_url(opts)
+
+    body = %{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => "sui_getObject",
+      "params" => [object_id, %{"showOwner" => true}]
+    }
+
+    case Req.post(url, json: body, receive_timeout: 5_000) do
+      {:ok,
+       %{
+         body: %{
+           "result" => %{
+             "data" => %{"owner" => %{"Shared" => %{"initial_shared_version" => v}}}
+           }
+         }
+       }} ->
+        v
+
+      _ ->
         1
-
-      url ->
-        body = %{
-          "jsonrpc" => "2.0",
-          "id" => 1,
-          "method" => "sui_getObject",
-          "params" => [object_id, %{"showOwner" => true}]
-        }
-
-        case Req.post(url, json: body, receive_timeout: 5_000) do
-          {:ok,
-           %{
-             body: %{
-               "result" => %{
-                 "data" => %{"owner" => %{"Shared" => %{"initial_shared_version" => v}}}
-               }
-             }
-           }} ->
-            v
-
-          _ ->
-            1
-        end
     end
   end
 
@@ -139,14 +138,10 @@ defmodule Sigil.Diplomacy.LocalSigner do
 
   defp parse_signer_key(_other), do: {:error, :invalid_key}
 
-  @spec fetch_gas_coin_ref(String.t()) ::
+  @spec fetch_gas_coin_ref(String.t(), keyword()) ::
           {:ok, Sigil.Sui.Client.object_ref()} | {:error, :no_gas_coins}
-  defp fetch_gas_coin_ref(sender) do
-    case rpc_url() do
-      nil -> {:error, :no_gas_coins}
-      url -> fetch_gas_coin_ref_via_rpc(url, sender)
-    end
-  end
+  defp fetch_gas_coin_ref(sender, opts) when is_binary(sender) and is_list(opts),
+    do: fetch_gas_coin_ref_via_rpc(rpc_url(opts), sender)
 
   @spec fetch_gas_coin_ref_via_rpc(String.t(), String.t()) ::
           {:ok, Sigil.Sui.Client.object_ref()} | {:error, :no_gas_coins}
@@ -174,8 +169,9 @@ defmodule Sigil.Diplomacy.LocalSigner do
     end
   end
 
-  @spec submit_via_rpc(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
-  defp submit_via_rpc(tx_bytes_b64, signature) do
+  @spec submit_via_rpc(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  defp submit_via_rpc(tx_bytes_b64, signature, opts)
+       when is_binary(tx_bytes_b64) and is_binary(signature) and is_list(opts) do
     body = %{
       "jsonrpc" => "2.0",
       "id" => 1,
@@ -188,7 +184,7 @@ defmodule Sigil.Diplomacy.LocalSigner do
       ]
     }
 
-    url = rpc_url() || "http://localhost:9000"
+    url = rpc_url(opts)
 
     case Req.post(url, json: body, receive_timeout: 10_000) do
       {:ok,
@@ -231,10 +227,10 @@ defmodule Sigil.Diplomacy.LocalSigner do
     end
   end
 
-  @spec rpc_url() :: String.t() | nil
-  defp rpc_url do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    Map.get(Map.fetch!(worlds, world), :rpc_url)
+  @spec rpc_url(keyword()) :: String.t()
+  defp rpc_url(opts) when is_list(opts) do
+    opts
+    |> Keyword.get(:world, Worlds.default_world())
+    |> Worlds.rpc_url()
   end
 end

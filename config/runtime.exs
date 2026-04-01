@@ -3,6 +3,7 @@ import Config
 if config_env() != :test do
   if eve_world = System.get_env("EVE_WORLD") do
     config :sigil, :eve_world, eve_world
+    config :sigil, :active_worlds, [eve_world]
   end
 
   worlds = Application.get_env(:sigil, :eve_worlds, %{})

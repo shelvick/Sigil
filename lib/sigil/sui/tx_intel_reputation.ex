@@ -5,6 +5,7 @@ defmodule Sigil.Sui.TxIntelReputation do
 
   alias Sigil.Sui.TransactionBuilder
   alias Sigil.Sui.TransactionBuilder.PTB
+  alias Sigil.Worlds
 
   @module_name "intel_reputation"
 
@@ -42,26 +43,30 @@ defmodule Sigil.Sui.TxIntelReputation do
 
   @spec build_opts(tx_opts(), [PTB.call_arg()], String.t()) :: builder_opts()
   defp build_opts(tx_opts, inputs, function) do
-    tx_opts ++ [inputs: inputs, commands: [move_call(function, input_arguments(inputs))]]
+    tx_opts ++ [inputs: inputs, commands: [move_call(function, input_arguments(inputs), tx_opts)]]
   end
 
-  @spec move_call(String.t(), [PTB.argument()]) :: PTB.command()
-  defp move_call(function, arguments) do
-    {:move_call, sigil_package_id_bytes(), @module_name, function, [], arguments}
+  @spec move_call(String.t(), [PTB.argument()], tx_opts()) :: PTB.command()
+  defp move_call(function, arguments, tx_opts) do
+    {:move_call, sigil_package_id_bytes(tx_opts), @module_name, function, [], arguments}
   end
 
-  @spec sigil_package_id_bytes() :: PTB.bytes32()
-  defp sigil_package_id_bytes do
-    "0x" <> hex = sigil_package_id()
+  @spec sigil_package_id_bytes(tx_opts()) :: PTB.bytes32()
+  defp sigil_package_id_bytes(tx_opts) when is_list(tx_opts) do
+    "0x" <> hex = sigil_package_id(tx_opts)
     Base.decode16!(hex, case: :mixed)
   end
 
-  @spec sigil_package_id() :: String.t()
-  defp sigil_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{sigil_package_id: id} = Map.fetch!(worlds, world)
-    id
+  @spec sigil_package_id(tx_opts()) :: String.t()
+  defp sigil_package_id(tx_opts) when is_list(tx_opts) do
+    tx_opts
+    |> world()
+    |> Worlds.sigil_package_id()
+  end
+
+  @spec world(tx_opts()) :: Worlds.world_name()
+  defp world(tx_opts) when is_list(tx_opts) do
+    Keyword.get(tx_opts, :world, Worlds.default_world())
   end
 
   @spec input_arguments([PTB.call_arg()]) :: [PTB.argument()]

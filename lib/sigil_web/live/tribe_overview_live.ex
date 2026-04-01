@@ -8,7 +8,7 @@ defmodule SigilWeb.TribeOverviewLive do
 
   import SigilWeb.TribeHelpers, only: [authorize_tribe: 2]
 
-  alias Sigil.{Diplomacy, Intel, Tribes}
+  alias Sigil.{Diplomacy, Intel, Tribes, Worlds}
   alias Sigil.Intel.IntelReport
   alias Sigil.Tribes.Tribe
 
@@ -197,7 +197,12 @@ defmodule SigilWeb.TribeOverviewLive do
   defp maybe_discover_tribe(socket, tribe_id, cache_tables) do
     if connected?(socket) do
       pubsub = socket.assigns[:pubsub]
-      Tribes.discover_members(tribe_id, tables: cache_tables, pubsub: pubsub)
+
+      Tribes.discover_members(tribe_id,
+        tables: cache_tables,
+        pubsub: pubsub,
+        world: socket.assigns.world
+      )
     end
 
     assign(socket, loading: true)
@@ -214,7 +219,8 @@ defmodule SigilWeb.TribeOverviewLive do
         tables: cache_tables,
         sender: sender,
         tribe_id: tribe_id,
-        pubsub: socket.assigns[:pubsub]
+        pubsub: socket.assigns[:pubsub],
+        world: socket.assigns.world
       ]
 
       active_custodian = Diplomacy.get_active_custodian(opts)
@@ -266,12 +272,15 @@ defmodule SigilWeb.TribeOverviewLive do
     pubsub = socket.assigns[:pubsub]
 
     if connected?(socket) and pubsub do
-      Phoenix.PubSub.subscribe(pubsub, "tribes")
-      Phoenix.PubSub.subscribe(pubsub, "diplomacy")
-      Phoenix.PubSub.subscribe(pubsub, "reputation")
+      world = socket.assigns.world
+      diplomacy_opts = [world: world]
+
+      Phoenix.PubSub.subscribe(pubsub, Worlds.topic(world, "tribes"))
+      Phoenix.PubSub.subscribe(pubsub, Diplomacy.legacy_topic(diplomacy_opts))
+      Phoenix.PubSub.subscribe(pubsub, Worlds.topic(world, "reputation"))
 
       if intel_enabled?(socket.assigns.cache_tables) do
-        Phoenix.PubSub.subscribe(pubsub, intel_topic(socket.assigns.tribe_id))
+        Phoenix.PubSub.subscribe(pubsub, intel_topic(socket.assigns.tribe_id, world))
       end
     end
 
@@ -311,7 +320,8 @@ defmodule SigilWeb.TribeOverviewLive do
     [
       authorized_tribe_id: socket.assigns.tribe_id,
       tables: socket.assigns.cache_tables,
-      pubsub: socket.assigns.pubsub
+      pubsub: socket.assigns.pubsub,
+      world: socket.assigns.world
     ]
   end
 
@@ -319,6 +329,6 @@ defmodule SigilWeb.TribeOverviewLive do
   defp intel_enabled?(cache_tables),
     do: is_map(cache_tables) and Map.has_key?(cache_tables, :intel)
 
-  @spec intel_topic(integer()) :: String.t()
-  defp intel_topic(tribe_id), do: Intel.topic(tribe_id)
+  @spec intel_topic(integer(), Worlds.world_name()) :: String.t()
+  defp intel_topic(tribe_id, world), do: Intel.topic(tribe_id, world: world)
 end

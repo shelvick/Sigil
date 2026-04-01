@@ -499,7 +499,7 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert socket.assigns.pubsub == pubsub
     end
 
-    test "on_mount assigns default pubsub when session omits it", %{
+    test "on_mount assigns default pubsub and world when session omits them", %{
       cache_tables: cache_tables
     } do
       assert {:cont, socket} =
@@ -513,6 +513,7 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert socket.assigns.current_account == nil
       assert socket.assigns.cache_tables == cache_tables
       assert socket.assigns.pubsub == Sigil.PubSub
+      assert socket.assigns.world == "test"
     end
 
     test "on_mount assigns active_character matching session character_id", %{
@@ -636,6 +637,7 @@ defmodule SigilWeb.RouterWalletSessionTest do
       assert conn.status == 302
       assert redirected_to(conn) == "/"
       assert get_session(conn, :wallet_address) == wallet_address
+      assert get_session(conn, :world) == "test"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == nil
       refute get_session(conn, :wallet_address) == nil
     end

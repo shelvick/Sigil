@@ -42,11 +42,21 @@ defmodule Sigil.StaticDataTestFixtures do
     start_grpc_stream = Keyword.get(opts, :start_grpc_stream, false)
     start_reputation_engine = Keyword.get(opts, :start_reputation_engine, false)
     monitor_registry = Keyword.get(opts, :monitor_registry, nil)
+    monitor_registries = Keyword.get(opts, :monitor_registries, %{})
+    active_worlds = Keyword.get(opts, :active_worlds, ["test"])
+    eve_world = Keyword.get(opts, :eve_world, List.first(active_worlds) || "test")
+    eve_worlds = Keyword.get(opts, :eve_worlds)
     grpc_endpoint = Keyword.get(opts, :grpc_endpoint, "127.0.0.1:1")
     grpc_connector = Keyword.get(opts, :grpc_connector, nil)
     static_data_dir = Keyword.fetch!(opts, :static_data_dir)
     world_client = Keyword.fetch!(opts, :world_client)
     config_path = Path.join(config_dir, "application_probe_config.exs")
+
+    eve_worlds_config =
+      case eve_worlds do
+        worlds when is_map(worlds) -> "config :sigil, :eve_worlds, #{inspect(worlds)}\n"
+        _other -> ""
+      end
 
     File.write!(
       config_path,
@@ -62,7 +72,10 @@ defmodule Sigil.StaticDataTestFixtures do
       config :sigil, :start_grpc_stream, #{inspect(start_grpc_stream)}
       config :sigil, :start_reputation_engine, #{inspect(start_reputation_engine)}
       config :sigil, :monitor_registry, #{inspect(monitor_registry)}
-      config :sigil, :grpc_endpoint, #{inspect(grpc_endpoint)}
+      config :sigil, :monitor_registries, #{inspect(monitor_registries)}
+      config :sigil, :eve_world, #{inspect(eve_world)}
+      config :sigil, :active_worlds, #{inspect(active_worlds)}
+      #{eve_worlds_config}config :sigil, :grpc_endpoint, #{inspect(grpc_endpoint)}
       config :sigil, :grpc_connector, #{inspect(grpc_connector)}
       config :sigil, :static_data_dir, #{inspect(static_data_dir)}
       config :sigil, :world_client, #{inspect(world_client)}

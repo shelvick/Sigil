@@ -58,7 +58,7 @@ defmodule SigilWeb.IntelMarketLive.Transactions.ListingFlow do
           "label" => intel_data.label
         },
         "seal_id" => seal_id,
-        "config" => IntelMarket.build_seal_config(State.market_opts(socket)),
+        "config" => IntelMarket.build_seal_config(State.seal_opts(socket)),
         "report_type" => intel_data.report_type,
         "solar_system_id" => intel_data.solar_system_id,
         "assembly_id" => intel_data.assembly_id,

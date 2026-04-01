@@ -24,7 +24,7 @@ defmodule Sigil.IntelMarket.Transactions do
 
       tx_bytes =
         builder_params
-        |> TxIntelMarket.build_create_listing([])
+        |> TxIntelMarket.build_create_listing(tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -57,7 +57,11 @@ defmodule Sigil.IntelMarket.Transactions do
       builder_params = build_listing_params(params, client_nonce)
 
       tx_bytes =
-        TxIntelMarket.build_create_restricted_listing(custodian_ref, builder_params, [])
+        TxIntelMarket.build_create_restricted_listing(
+          custodian_ref,
+          builder_params,
+          tx_opts(opts)
+        )
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -139,7 +143,7 @@ defmodule Sigil.IntelMarket.Transactions do
          {:ok, listing_ref} <- resolve_listing_ref(listing_id, opts) do
       tx_bytes =
         listing_ref
-        |> TxIntelMarket.build_cancel_listing([])
+        |> TxIntelMarket.build_cancel_listing(tx_opts(opts))
         |> TransactionBuilder.build_kind!()
         |> Base.encode64()
 
@@ -278,7 +282,6 @@ defmodule Sigil.IntelMarket.Transactions do
     end
   end
 
-  @spec build_listing_params(map(), non_neg_integer()) :: TxIntelMarket.listing_params()
   defp build_listing_params(params, client_nonce) do
     %{
       seal_id: decode_seal_id!(Map.fetch!(params, :seal_id)),
@@ -291,10 +294,6 @@ defmodule Sigil.IntelMarket.Transactions do
     }
   end
 
-  @spec build_pseudonym_listing_kind(map(), String.t(), IntelMarket.options()) ::
-          {:ok, TransactionBuilder.kind_opts(), IntelMarket.pending_create_listing(),
-           non_neg_integer()}
-          | {:error, :no_active_custodian | :missing_tribe_id | term()}
   defp build_pseudonym_listing_kind(params, pseudonym_address, opts) do
     client_nonce = System.unique_integer([:positive])
     builder_params = build_listing_params(params, client_nonce)
@@ -304,11 +303,15 @@ defmodule Sigil.IntelMarket.Transactions do
       case restricted_tribe_id do
         tribe_id when is_integer(tribe_id) and tribe_id >= 0 ->
           with {:ok, custodian_ref} <- require_custodian_ref(opts, tribe_id) do
-            TxIntelMarket.build_create_restricted_listing(custodian_ref, builder_params, [])
+            TxIntelMarket.build_create_restricted_listing(
+              custodian_ref,
+              builder_params,
+              tx_opts(opts)
+            )
           end
 
         _other ->
-          TxIntelMarket.build_create_listing(builder_params, [])
+          TxIntelMarket.build_create_listing(builder_params, tx_opts(opts))
       end
 
     case listing_kind_opts do
@@ -328,26 +331,13 @@ defmodule Sigil.IntelMarket.Transactions do
     end
   end
 
-  @spec build_pseudonym_cancel_sponsored(
-          IntelMarket.listing_ref(),
-          String.t(),
-          IntelMarket.options()
-        ) ::
-          {:ok, %{tx_bytes: String.t(), relay_signature: String.t()}}
-          | {:error, :relay_failed | term()}
   defp build_pseudonym_cancel_sponsored(listing_ref, pseudonym_address, opts) do
     listing_ref
-    |> TxIntelMarket.build_cancel_listing([])
+    |> TxIntelMarket.build_cancel_listing(tx_opts(opts))
     |> GasRelay.prepare_sponsored(pseudonym_address, opts)
     |> map_relay_prepare_result()
   end
 
-  @spec map_relay_prepare_result(
-          {:ok, %{tx_bytes: String.t(), relay_signature: String.t()}}
-          | {:error, term()}
-        ) ::
-          {:ok, %{tx_bytes: String.t(), relay_signature: String.t()}}
-          | {:error, :relay_failed | term()}
   defp map_relay_prepare_result({:ok, %{tx_bytes: tx_bytes, relay_signature: relay_signature}})
        when is_binary(tx_bytes) and is_binary(relay_signature) do
     {:ok, %{tx_bytes: tx_bytes, relay_signature: relay_signature}}
@@ -359,18 +349,12 @@ defmodule Sigil.IntelMarket.Transactions do
 
   defp map_relay_prepare_result({:error, reason}), do: {:error, reason}
 
-  @spec build_purchase_bytes(IntelListing.t(), IntelMarket.listing_ref(), IntelMarket.options()) ::
-          {:ok, String.t()}
-          | {:error,
-             :restricted_listing_requires_matching_tribe
-             | :missing_tribe_id
-             | :no_active_custodian}
   defp build_purchase_bytes(listing, listing_ref, opts) do
     tx_bytes =
       case listing.restricted_to_tribe_id do
         nil ->
           listing_ref
-          |> TxIntelMarket.build_purchase(listing.price_mist, [])
+          |> TxIntelMarket.build_purchase(listing.price_mist, tx_opts(opts))
           |> TransactionBuilder.build_kind!()
           |> Base.encode64()
 
@@ -379,7 +363,11 @@ defmodule Sigil.IntelMarket.Transactions do
                :ok <- ensure_matching_tribe(tribe_id, restricted_tribe_id),
                {:ok, custodian_ref} <- require_custodian_ref(opts, tribe_id) do
             listing_ref
-            |> TxIntelMarket.build_purchase_restricted(custodian_ref, listing.price_mist, [])
+            |> TxIntelMarket.build_purchase_restricted(
+              custodian_ref,
+              listing.price_mist,
+              tx_opts(opts)
+            )
             |> TransactionBuilder.build_kind!()
             |> Base.encode64()
           end
@@ -391,8 +379,6 @@ defmodule Sigil.IntelMarket.Transactions do
     end
   end
 
-  @spec require_custodian_ref(IntelMarket.options(), non_neg_integer()) ::
-          {:ok, TxIntelMarket.custodian_ref()} | {:error, :no_active_custodian | term()}
   defp require_custodian_ref(opts, tribe_id) do
     case Diplomacy.get_active_custodian(opts) do
       %{object_id_bytes: object_id_bytes, initial_shared_version: initial_shared_version} ->
@@ -413,7 +399,6 @@ defmodule Sigil.IntelMarket.Transactions do
     end
   end
 
-  @spec require_sender(IntelMarket.options()) :: {:ok, String.t()} | {:error, :missing_sender}
   defp require_sender(opts) do
     case Keyword.get(opts, :sender) do
       sender when is_binary(sender) -> {:ok, sender}
@@ -421,8 +406,6 @@ defmodule Sigil.IntelMarket.Transactions do
     end
   end
 
-  @spec require_tribe_id(IntelMarket.options()) ::
-          {:ok, non_neg_integer()} | {:error, :missing_tribe_id}
   defp require_tribe_id(opts) do
     case Keyword.get(opts, :tribe_id) do
       tribe_id when is_integer(tribe_id) and tribe_id >= 0 -> {:ok, tribe_id}
@@ -430,8 +413,6 @@ defmodule Sigil.IntelMarket.Transactions do
     end
   end
 
-  @spec require_pseudonym_address(IntelMarket.options()) ::
-          {:ok, String.t()} | {:error, :missing_pseudonym}
   defp require_pseudonym_address(opts) do
     case Keyword.get(opts, :pseudonym_address) do
       pseudonym_address when is_binary(pseudonym_address) -> {:ok, pseudonym_address}
@@ -478,6 +459,11 @@ defmodule Sigil.IntelMarket.Transactions do
   @spec clear_pending_tx(IntelMarket.options(), String.t(), String.t()) :: :ok
   defp clear_pending_tx(opts, sender, tx_bytes) do
     Cache.delete(Support.market_table(opts), {:pending_tx, sender, tx_bytes})
+  end
+
+  @spec tx_opts(IntelMarket.options()) :: TxIntelMarket.tx_opts()
+  defp tx_opts(opts) when is_list(opts) do
+    [world: Keyword.get(opts, :world, Sigil.Worlds.default_world())]
   end
 
   @spec decode_seal_id!(String.t() | binary()) :: binary()

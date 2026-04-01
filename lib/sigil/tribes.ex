@@ -8,6 +8,7 @@ defmodule Sigil.Tribes do
   alias Sigil.Cache
   alias Sigil.Sui.Client
   alias Sigil.Sui.Types.Character
+  alias Sigil.Worlds
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
   @tribes_topic "tribes"
@@ -69,6 +70,7 @@ defmodule Sigil.Tribes do
           {:tables, tables()}
           | {:pubsub, atom() | module()}
           | {:req_options, Client.request_opts()}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
 
@@ -79,7 +81,7 @@ defmodule Sigil.Tribes do
       when is_integer(tribe_id) and tribe_id >= 0 and is_list(opts) do
     req_options = Keyword.get(opts, :req_options, [])
 
-    with {:ok, characters} <- fetch_all_characters(req_options) do
+    with {:ok, characters} <- fetch_all_characters(req_options, opts) do
       connected_accounts = connected_accounts(tribe_id, opts)
 
       members =
@@ -90,7 +92,7 @@ defmodule Sigil.Tribes do
       tribe = %Tribe{tribe_id: tribe_id, members: members, discovered_at: DateTime.utc_now()}
 
       Cache.put(tribe_table(opts), tribe_id, tribe)
-      broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:tribe_discovered, tribe})
+      broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:tribe_discovered, tribe}, opts)
 
       {:ok, tribe}
     end
@@ -129,16 +131,16 @@ defmodule Sigil.Tribes do
     end
   end
 
-  @spec fetch_all_characters(Client.request_opts()) ::
+  @spec fetch_all_characters(Client.request_opts(), options()) ::
           {:ok, [Character.t()]} | {:error, Client.error_reason()}
-  defp fetch_all_characters(req_options) do
-    fetch_characters_acc(nil, req_options, [])
+  defp fetch_all_characters(req_options, opts) do
+    fetch_characters_acc(nil, req_options, opts, [])
   end
 
-  @spec fetch_characters_acc(String.t() | nil, Client.request_opts(), [Character.t()]) ::
+  @spec fetch_characters_acc(String.t() | nil, Client.request_opts(), options(), [Character.t()]) ::
           {:ok, [Character.t()]} | {:error, Client.error_reason()}
-  defp fetch_characters_acc(cursor, req_options, acc) do
-    filters = character_filters(cursor)
+  defp fetch_characters_acc(cursor, req_options, opts, acc) do
+    filters = character_filters(cursor, opts)
 
     with {:ok, %{data: characters_json, has_next_page: has_next_page, end_cursor: end_cursor}} <-
            @sui_client.get_objects(filters, req_options) do
@@ -146,7 +148,7 @@ defmodule Sigil.Tribes do
       acc = Enum.reverse(characters) ++ acc
 
       if has_next_page and is_binary(end_cursor) do
-        fetch_characters_acc(end_cursor, req_options, acc)
+        fetch_characters_acc(end_cursor, req_options, opts, acc)
       else
         {:ok, Enum.reverse(acc)}
       end
@@ -209,25 +211,29 @@ defmodule Sigil.Tribes do
     opts |> Keyword.fetch!(:tables) |> Map.fetch!(:assemblies)
   end
 
-  @spec broadcast(atom() | module(), term()) :: :ok | {:error, term()}
-  defp broadcast(pubsub, event) do
-    Phoenix.PubSub.broadcast(pubsub, @tribes_topic, event)
+  @spec broadcast(atom() | module(), term(), options()) :: :ok | {:error, term()}
+  defp broadcast(pubsub, event, opts) do
+    Phoenix.PubSub.broadcast(pubsub, Worlds.topic(world(opts), @tribes_topic), event)
   end
 
-  @spec character_filters(String.t() | nil) :: Client.object_filter()
-  defp character_filters(nil), do: [type: character_type_string()]
-  defp character_filters(cursor), do: [type: character_type_string(), cursor: cursor]
+  @spec character_filters(String.t() | nil, options()) :: Client.object_filter()
+  defp character_filters(nil, opts), do: [type: character_type_string(opts)]
+  defp character_filters(cursor, opts), do: [type: character_type_string(opts), cursor: cursor]
 
-  @spec character_type_string() :: String.t()
-  defp character_type_string do
-    "#{world_package_id()}::character::Character"
+  @spec character_type_string(options()) :: String.t()
+  defp character_type_string(opts) do
+    "#{world_package_id(opts)}::character::Character"
   end
 
-  @spec world_package_id() :: String.t()
-  defp world_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{package_id: package_id} = Map.fetch!(worlds, world)
-    package_id
+  @spec world_package_id(options()) :: String.t()
+  defp world_package_id(opts) do
+    opts
+    |> world()
+    |> Worlds.package_id()
+  end
+
+  @spec world(options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 end

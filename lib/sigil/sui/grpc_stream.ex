@@ -9,6 +9,7 @@ defmodule Sigil.Sui.GrpcStream do
 
   alias Sigil.Repo
   alias Sigil.Sui.GrpcStream.{Codec, Connector, CursorStore}
+  alias Sigil.Worlds
 
   @default_endpoint "fullnode.testnet.sui.io:443"
   @default_pubsub Sigil.PubSub
@@ -24,6 +25,7 @@ defmodule Sigil.Sui.GrpcStream do
           enabled?: boolean(),
           endpoint: String.t(),
           pubsub: atom() | module(),
+          world: Worlds.world_name(),
           topic: String.t(),
           stream_id: String.t(),
           repo_module: module(),
@@ -54,6 +56,7 @@ defmodule Sigil.Sui.GrpcStream do
           {:enabled?, boolean()}
           | {:endpoint, String.t()}
           | {:pubsub, atom() | module()}
+          | {:world, Worlds.world_name()}
           | {:topic, String.t()}
           | {:stream_id, String.t()}
           | {:repo_module, module()}
@@ -108,11 +111,14 @@ defmodule Sigil.Sui.GrpcStream do
           CursorStore.default_save_cursor(repo_module, stream_id, cursor)
         end)
 
+      world = Keyword.get(opts, :world, Worlds.default_world())
+
       state = %{
         enabled?: true,
         endpoint: Keyword.get(opts, :endpoint, grpc_endpoint()),
         pubsub: Keyword.get(opts, :pubsub, @default_pubsub),
-        topic: Keyword.get(opts, :topic, @default_topic),
+        world: world,
+        topic: Keyword.get(opts, :topic, Worlds.topic(world, @default_topic)),
         stream_id: stream_id,
         repo_module: repo_module,
         sandbox_owner: sandbox_owner,

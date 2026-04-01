@@ -6,6 +6,7 @@ defmodule Sigil.Accounts do
   alias Sigil.Cache
   alias Sigil.Sui.Client
   alias Sigil.Sui.Types.Character
+  alias Sigil.Worlds
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
   @accounts_topic "accounts"
@@ -35,6 +36,8 @@ defmodule Sigil.Accounts do
           {:tables, tables()}
           | {:pubsub, atom() | module()}
           | {:req_options, Client.request_opts()}
+          | {:world, Worlds.world_name()}
+          | {:active_worlds, [Worlds.world_name()]}
 
   @type options() :: [option()]
 
@@ -46,8 +49,30 @@ defmodule Sigil.Accounts do
          canonical = String.downcase(address),
          {:ok, account, characters} <- load_account(canonical, opts) do
       cache_account(opts, canonical, account, characters)
-      broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:account_registered, account})
+      broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:account_registered, account}, opts)
       {:ok, account}
+    end
+  end
+
+  @doc "Detects a wallet's world by probing active worlds for matching Characters."
+  @spec detect_world(String.t(), options()) :: Worlds.world_name()
+  def detect_world(address, opts) when is_binary(address) and is_list(opts) do
+    case configured_active_worlds(opts) do
+      [single_world] ->
+        single_world
+
+      active_worlds ->
+        canonical = String.downcase(address)
+        req_options = Keyword.get(opts, :req_options, [])
+
+        Enum.find(active_worlds, world(opts), fn world_name ->
+          request_opts = request_opts_for_world(req_options, world_name, active_worlds)
+
+          case fetch_all_characters(world_name, nil, request_opts, []) do
+            {:ok, characters} -> Enum.any?(characters, &(&1.character_address == canonical))
+            {:error, _reason} -> false
+          end
+        end)
     end
   end
 
@@ -83,7 +108,7 @@ defmodule Sigil.Accounts do
       {:ok, _account} ->
         with {:ok, account, characters} <- load_account(canonical, opts) do
           cache_account(opts, canonical, account, characters)
-          broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:account_updated, account})
+          broadcast(Keyword.get(opts, :pubsub, Sigil.PubSub), {:account_updated, account}, opts)
           {:ok, account}
         end
 
@@ -96,8 +121,10 @@ defmodule Sigil.Accounts do
           {:ok, Account.t(), [Character.t()]} | {:error, Client.error_reason()}
   defp load_account(address, opts) do
     req_options = Keyword.get(opts, :req_options, [])
+    selected_world = world(opts)
+    request_opts = request_opts_for_world(req_options, selected_world, [selected_world])
 
-    with {:ok, all_characters} <- fetch_all_characters(nil, req_options, []) do
+    with {:ok, all_characters} <- fetch_all_characters(selected_world, nil, request_opts, []) do
       characters =
         all_characters
         |> Enum.filter(&(&1.character_address == address))
@@ -107,13 +134,19 @@ defmodule Sigil.Accounts do
     end
   end
 
-  @spec fetch_all_characters(String.t() | nil, Client.request_opts(), [Character.t()]) ::
+  @spec fetch_all_characters(
+          Worlds.world_name(),
+          String.t() | nil,
+          Client.request_opts(),
+          [Character.t()]
+        ) ::
           {:ok, [Character.t()]} | {:error, Client.error_reason()}
-  defp fetch_all_characters(cursor, req_options, acc) do
+  defp fetch_all_characters(world_name, cursor, req_options, acc)
+       when is_binary(world_name) and is_list(req_options) and is_list(acc) do
     filters =
       case cursor do
-        nil -> [type: character_type_string()]
-        c -> [type: character_type_string(), cursor: c]
+        nil -> [type: character_type_string(world_name)]
+        c -> [type: character_type_string(world_name), cursor: c]
       end
 
     with {:ok, %{data: characters_json, has_next_page: has_next_page, end_cursor: end_cursor}} <-
@@ -122,7 +155,7 @@ defmodule Sigil.Accounts do
       acc = Enum.reverse(characters) ++ acc
 
       if has_next_page and is_binary(end_cursor) do
-        fetch_all_characters(end_cursor, req_options, acc)
+        fetch_all_characters(world_name, end_cursor, req_options, acc)
       else
         {:ok, Enum.reverse(acc)}
       end
@@ -145,22 +178,69 @@ defmodule Sigil.Accounts do
     opts |> Keyword.fetch!(:tables) |> Map.fetch!(:characters)
   end
 
-  @spec broadcast(atom() | module(), term()) :: :ok | {:error, term()}
-  defp broadcast(pubsub, event) do
-    Phoenix.PubSub.broadcast(pubsub, @accounts_topic, event)
+  @spec broadcast(atom() | module(), term(), options()) :: :ok | {:error, term()}
+  defp broadcast(pubsub, event, opts) do
+    Phoenix.PubSub.broadcast(pubsub, Worlds.topic(world(opts), @accounts_topic), event)
   end
 
-  @spec character_type_string() :: String.t()
-  defp character_type_string do
-    "#{world_package_id()}::character::Character"
+  @spec character_type_string(Worlds.world_name()) :: String.t()
+  defp character_type_string(world_name) when is_binary(world_name) do
+    "#{world_package_id(world_name)}::character::Character"
   end
 
-  @spec world_package_id() :: String.t()
-  defp world_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{package_id: package_id} = Map.fetch!(worlds, world)
-    package_id
+  @spec world_package_id(Worlds.world_name()) :: String.t()
+  defp world_package_id(world_name) when is_binary(world_name) do
+    Worlds.package_id(world_name)
+  end
+
+  @spec world(options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
+  end
+
+  @spec configured_active_worlds(options()) :: [Worlds.world_name()]
+  defp configured_active_worlds(opts) when is_list(opts) do
+    configured_worlds = Application.fetch_env!(:sigil, :eve_worlds)
+    known_worlds = Map.keys(configured_worlds)
+
+    worlds =
+      case Keyword.get(opts, :active_worlds, Worlds.active_worlds()) do
+        configured when is_list(configured) -> configured
+        _other -> [world(opts)]
+      end
+
+    filtered_worlds =
+      worlds
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+      |> Enum.filter(&(&1 in known_worlds))
+
+    case filtered_worlds do
+      [] ->
+        resolved_world = world(opts)
+
+        if resolved_world in known_worlds do
+          [resolved_world]
+        else
+          [Worlds.default_world()]
+        end
+
+      _non_empty ->
+        filtered_worlds
+    end
+  end
+
+  @spec request_opts_for_world(Client.request_opts(), Worlds.world_name(), [Worlds.world_name()]) ::
+          Client.request_opts()
+  defp request_opts_for_world(req_options, world_name, active_worlds)
+       when is_list(req_options) and is_binary(world_name) and is_list(active_worlds) do
+    # Only inject :world when probing multiple worlds; preserve legacy opts shape
+    # in single-world mode so existing Hammox request_opt contracts stay valid.
+    if length(active_worlds) > 1 do
+      Keyword.put(req_options, :world, world_name)
+    else
+      req_options
+    end
   end
 
   @spec tribe_id([Character.t()]) :: non_neg_integer() | nil

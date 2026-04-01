@@ -211,7 +211,10 @@ defmodule SigilWeb.IntelLive do
   @spec maybe_subscribe(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp maybe_subscribe(socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(socket.assigns.pubsub, intel_topic(socket.assigns.tribe_id))
+      Phoenix.PubSub.subscribe(
+        socket.assigns.pubsub,
+        intel_topic(socket.assigns.tribe_id, socket.assigns.world)
+      )
     end
 
     socket
@@ -349,7 +352,8 @@ defmodule SigilWeb.IntelLive do
     [
       tables: socket.assigns.cache_tables,
       pubsub: socket.assigns.pubsub,
-      authorized_tribe_id: socket.assigns.tribe_id
+      authorized_tribe_id: socket.assigns.tribe_id,
+      world: socket.assigns.world
     ]
   end
 
@@ -388,6 +392,6 @@ defmodule SigilWeb.IntelLive do
     end)
   end
 
-  @spec intel_topic(integer()) :: String.t()
-  defp intel_topic(tribe_id), do: Sigil.Intel.topic(tribe_id)
+  @spec intel_topic(integer(), String.t()) :: String.t()
+  defp intel_topic(tribe_id, world), do: Sigil.Intel.topic(tribe_id, world: world)
 end

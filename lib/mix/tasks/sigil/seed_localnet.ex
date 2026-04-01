@@ -287,7 +287,7 @@ defmodule Mix.Tasks.Sigil.SeedLocalnet do
     sigil_pkg = sigil_package_id()
     type = "#{sigil_pkg}::tribe_custodian::TribeCustodianRegistry"
     object_id = find_object_by_type!(type, env)
-    version = LocalSigner.fetch_initial_shared_version(object_id)
+    version = LocalSigner.fetch_initial_shared_version(object_id, world: "localnet")
 
     %{
       object_id: hex_to_bytes!(object_id),
@@ -369,7 +369,7 @@ defmodule Mix.Tasks.Sigil.SeedLocalnet do
   end
 
   defp resolve_shared_ref!(object_id, _env) do
-    version = LocalSigner.fetch_initial_shared_version(object_id)
+    version = LocalSigner.fetch_initial_shared_version(object_id, world: "localnet")
 
     %{
       object_id: hex_to_bytes!(object_id),

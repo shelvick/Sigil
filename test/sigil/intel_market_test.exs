@@ -14,7 +14,7 @@ defmodule Sigil.IntelMarketTest do
   alias Sigil.Intel.IntelReport
   alias Sigil.Sui.{Signer, TransactionBuilder, TxIntelMarket, TxIntelReputation}
 
-  @marketplace_topic "intel_market"
+  @marketplace_topic Sigil.Worlds.topic("test", "intel_market")
   @sigil_package_id "0x06ce9d6bed77615383575cc7eba4883d32769b30cd5df00561e38434a59611a1"
   @marketplace_type "#{@sigil_package_id}::intel_market::IntelMarketplace"
   @listing_type "#{@sigil_package_id}::intel_market::IntelListing"

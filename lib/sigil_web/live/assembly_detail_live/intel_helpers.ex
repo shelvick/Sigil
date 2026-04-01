@@ -33,9 +33,9 @@ defmodule SigilWeb.AssemblyDetailLive.IntelHelpers do
   @doc """
   Builds intel context options from LiveView assigns.
   """
-  @spec intel_opts(map(), atom() | module(), integer()) :: Intel.options()
-  def intel_opts(cache_tables, pubsub, tribe_id) do
-    [tables: cache_tables, pubsub: pubsub, authorized_tribe_id: tribe_id]
+  @spec intel_opts(map(), atom() | module(), integer(), String.t()) :: Intel.options()
+  def intel_opts(cache_tables, pubsub, tribe_id, world) when is_binary(world) do
+    [tables: cache_tables, pubsub: pubsub, authorized_tribe_id: tribe_id, world: world]
   end
 
   @doc """

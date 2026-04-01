@@ -10,7 +10,7 @@ defmodule Sigil.IntelMarket do
   alias Sigil.IntelMarket.{Listings, Reputation, Support, Transactions}
   alias Sigil.Repo
   alias Sigil.Sui.Client
-
+  alias Sigil.Worlds
   @sui_client Application.compile_env!(:sigil, :sui_client)
   @walrus_client Application.compile_env(:sigil, :walrus_client, Sigil.WalrusClient.HTTP)
 
@@ -44,6 +44,8 @@ defmodule Sigil.IntelMarket do
           | {:sigil_package_id, String.t()}
           | {:pseudonym_address, String.t()}
           | {:reputation_registry_id, String.t()}
+          | {:world, Worlds.world_name()}
+          | {:sui_rpc_url, String.t()}
 
   @type options() :: [option()]
 
@@ -61,23 +63,24 @@ defmodule Sigil.IntelMarket do
           restricted_to_tribe_id: non_neg_integer() | nil
         }
 
-  @doc "Returns the PubSub topic for marketplace events."
-  @spec topic() :: String.t()
-  def topic, do: @marketplace_topic
+  @doc "Returns the world-scoped PubSub topic for marketplace events."
+  @spec topic(options()) :: String.t()
+  def topic(opts \\ []) when is_list(opts) do
+    Worlds.topic(world(opts), @marketplace_topic)
+  end
 
   @doc "Builds the browser Seal/Walrus configuration payload for marketplace hooks."
   @spec build_seal_config(options()) :: %{
           required(String.t()) => String.t() | pos_integer() | [String.t()]
         }
   def build_seal_config(opts) when is_list(opts) do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
     seal_config = Keyword.get(opts, :seal_config, Application.fetch_env!(:sigil, :seal))
 
     sigil_package_id =
       Keyword.get_lazy(opts, :sigil_package_id, fn ->
-        %{sigil_package_id: id} = Map.fetch!(worlds, world)
-        id
+        opts
+        |> world()
+        |> Worlds.sigil_package_id()
       end)
 
     %{
@@ -87,7 +90,10 @@ defmodule Sigil.IntelMarket do
       "walrus_publisher_url" => Map.fetch!(seal_config, :walrus_publisher_url),
       "walrus_aggregator_url" => Map.fetch!(seal_config, :walrus_aggregator_url),
       "walrus_epochs" => Map.get(seal_config, :walrus_epochs, 15),
-      "sui_rpc_url" => Map.fetch!(seal_config, :sui_rpc_url)
+      "sui_rpc_url" =>
+        Keyword.get_lazy(opts, :sui_rpc_url, fn ->
+          Map.get(seal_config, :sui_rpc_url) || Worlds.rpc_url(world(opts)) || ""
+        end)
     }
   end
 
@@ -99,7 +105,7 @@ defmodule Sigil.IntelMarket do
     req_options = Keyword.get(opts, :req_options, [])
 
     with {:ok, objects} <-
-           Support.list_objects(client, [type: Support.marketplace_type()], req_options) do
+           Support.list_objects(client, [type: Support.marketplace_type(opts)], req_options) do
       marketplace =
         objects
         |> Enum.find_value(&Listings.marketplace_from_object/1)
@@ -117,7 +123,7 @@ defmodule Sigil.IntelMarket do
     req_options = Keyword.get(opts, :req_options, [])
 
     with {:ok, objects} <-
-           Support.list_objects(client, [type: Support.listing_type()], req_options) do
+           Support.list_objects(client, [type: Support.listing_type(opts)], req_options) do
       parsed_listings = Enum.map(objects, &Listings.parse_listing_object!/1)
       chain_listing_ids = Enum.map(parsed_listings, & &1.listing.id)
 
@@ -322,4 +328,9 @@ defmodule Sigil.IntelMarket do
   @doc "Resolves a listing shared-object reference from opts, cache, or chain."
   @spec resolve_listing_ref(String.t(), options()) :: {:ok, listing_ref()} | {:error, term()}
   defdelegate resolve_listing_ref(listing_id, opts), to: Transactions
+
+  @spec world(options()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
+  end
 end

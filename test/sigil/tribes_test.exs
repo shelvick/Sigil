@@ -20,7 +20,7 @@ defmodule Sigil.TribesTest do
     pubsub = unique_pubsub_name()
 
     start_supervised!({Phoenix.PubSub, name: pubsub})
-    :ok = Phoenix.PubSub.subscribe(pubsub, "tribes")
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "tribes"))
 
     {:ok,
      tables: Cache.tables(cache_pid),

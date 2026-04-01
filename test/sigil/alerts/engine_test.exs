@@ -141,8 +141,14 @@ defmodule Sigil.Alerts.EngineTest do
 
     Registry.register(registry, assembly.id, nil)
     assembly_id = assembly.id
-    :ok = Phoenix.PubSub.subscribe(pubsub, "monitors:lifecycle")
-    Phoenix.PubSub.broadcast(pubsub, "monitors:lifecycle", {:monitor_started, assembly_id})
+    :ok = Phoenix.PubSub.subscribe(pubsub, Sigil.Worlds.topic("test", "monitors:lifecycle"))
+
+    Phoenix.PubSub.broadcast(
+      pubsub,
+      Sigil.Worlds.topic("test", "monitors:lifecycle"),
+      {:monitor_started, assembly_id}
+    )
+
     assert_receive {:monitor_started, ^assembly_id}, 1_000
     _state = Sigil.Alerts.Engine.get_state(engine)
 
@@ -827,7 +833,7 @@ defmodule Sigil.Alerts.EngineTest do
         dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(account_address: account_address)
     })
@@ -859,7 +865,7 @@ defmodule Sigil.Alerts.EngineTest do
         dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(old_tier: :neutral, new_tier: :friendly)
     })
@@ -887,7 +893,7 @@ defmodule Sigil.Alerts.EngineTest do
         dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(old_tier: :friendly, new_tier: :neutral)
     })
@@ -915,7 +921,7 @@ defmodule Sigil.Alerts.EngineTest do
         dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(old_tier: :friendly, new_tier: :hostile)
     })
@@ -951,7 +957,7 @@ defmodule Sigil.Alerts.EngineTest do
         end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(tribe_id: tribe_id)
     })
@@ -987,7 +993,7 @@ defmodule Sigil.Alerts.EngineTest do
         dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(
         target_tribe_name: "Probe A",
@@ -997,7 +1003,7 @@ defmodule Sigil.Alerts.EngineTest do
       )
     })
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(
         target_tribe_name: "Probe B",
@@ -1007,7 +1013,7 @@ defmodule Sigil.Alerts.EngineTest do
       )
     })
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(
         target_tribe_name: "Probe C",
@@ -1047,7 +1053,7 @@ defmodule Sigil.Alerts.EngineTest do
         dispatch_fun: fn _alert, _config, _notifier, _opts -> :ok end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(target_tribe_name: "Wolf Pack", score: -145)
     })
@@ -1112,7 +1118,7 @@ defmodule Sigil.Alerts.EngineTest do
         end
       )
 
-    Phoenix.PubSub.broadcast(pubsub, "reputation", {
+    Phoenix.PubSub.broadcast(pubsub, Sigil.Worlds.topic("test", "reputation"), {
       :reputation_updated,
       reputation_payload(
         tribe_id: tribe_id,

@@ -8,6 +8,7 @@ defmodule Sigil.Alerts.Engine.Runtime do
   alias Ecto.Adapters.SQL.Sandbox
   alias Sigil.Cache
   alias Sigil.GameState.MonitorSupervisor
+  alias Sigil.Worlds
 
   @doc "Builds initial runtime state from start options and defaults."
   @spec build_base_state(keyword(), map(), atom() | module(), module(), (map(), keyword() ->
@@ -16,6 +17,7 @@ defmodule Sigil.Alerts.Engine.Runtime do
   def build_base_state(opts, defaults, default_pubsub, default_notifier, create_alert_fun) do
     %{
       pubsub: Keyword.get(opts, :pubsub, default_pubsub),
+      world: Keyword.get(opts, :world, Worlds.default_world()),
       registry: Keyword.get(opts, :registry),
       resolve_registry: Keyword.get(opts, :resolve_registry, defaults.default_resolve_registry),
       tables: Keyword.get(opts, :tables),
@@ -91,6 +93,7 @@ defmodule Sigil.Alerts.Engine.Runtime do
     end
   end
 
+  @doc false
   def maybe_resolve_registry(state) do
     case state.resolve_registry.() do
       registry when is_atom(registry) and not is_nil(registry) ->
@@ -111,6 +114,7 @@ defmodule Sigil.Alerts.Engine.Runtime do
     if tables_exist?(assemblies, accounts), do: state, else: %{state | tables: nil}
   end
 
+  @doc false
   def maybe_resolve_tables(state) do
     case state.resolve_tables.() do
       %{assemblies: assemblies, accounts: accounts} = tables ->
@@ -144,11 +148,13 @@ defmodule Sigil.Alerts.Engine.Runtime do
   end
 
   @doc "Discovers active monitor ids and syncs PubSub subscriptions accordingly."
-  @spec discover_monitors(map(), atom() | module()) :: map()
-  def discover_monitors(%{registry: nil} = state, _pubsub), do: state
-  def discover_monitors(%{tables: nil} = state, _pubsub), do: state
+  @spec discover_monitors(map(), atom() | module(), Worlds.world_name()) :: map()
+  def discover_monitors(%{registry: nil} = state, _pubsub, _world), do: state
+  @doc false
+  def discover_monitors(%{tables: nil} = state, _pubsub, _world), do: state
 
-  def discover_monitors(state, pubsub) do
+  @doc false
+  def discover_monitors(state, pubsub, _world) do
     current_ids =
       state.registry
       |> MonitorSupervisor.list_monitors()
@@ -177,6 +183,7 @@ defmodule Sigil.Alerts.Engine.Runtime do
   @spec maybe_allow_sandbox_owner(pid() | nil) :: :ok
   def maybe_allow_sandbox_owner(nil), do: :ok
 
+  @doc false
   def maybe_allow_sandbox_owner(owner) when is_pid(owner) do
     if Code.ensure_loaded?(Sandbox) and function_exported?(Sandbox, :allow, 3) do
       Sandbox.allow(Sigil.Repo, owner, self())

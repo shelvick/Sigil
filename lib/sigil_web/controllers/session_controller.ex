@@ -7,6 +7,7 @@ defmodule SigilWeb.SessionController do
 
   alias Sigil.Accounts
   alias Sigil.Sui.ZkLoginVerifier
+  alias Sigil.Worlds
   alias SigilWeb.CacheResolver
 
   @default_pubsub Sigil.PubSub
@@ -17,11 +18,15 @@ defmodule SigilWeb.SessionController do
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def create(conn, params) do
     with {:ok, auth_params} <- auth_params(params),
-         %{} = tables <- resolve_cache_tables(conn),
-         {:ok, verification} <- verify_wallet(auth_params, tables, conn),
-         {:ok, _account} <- register_wallet(conn, verification.address, tables) do
+         %{} = auth_tables <- resolve_cache_tables(conn),
+         {:ok, verification} <- verify_wallet(auth_params, auth_tables, conn),
+         detected_world = detect_world(conn, verification.address, auth_tables),
+         %{} = world_tables <- resolve_cache_tables(conn, detected_world),
+         {:ok, _account} <-
+           register_wallet(conn, verification.address, world_tables, detected_world) do
       conn
       |> put_session(:wallet_address, verification.address)
+      |> put_session(:world, detected_world)
       |> redirect(to: post_auth_path(verification))
     else
       {:error, :invalid_request} ->
@@ -101,17 +106,34 @@ defmodule SigilWeb.SessionController do
     )
   end
 
-  defp register_wallet(conn, wallet_address, tables) do
+  @spec register_wallet(Plug.Conn.t(), String.t(), map(), Worlds.world_name()) ::
+          {:ok, Accounts.Account.t()} | {:error, term()}
+  defp register_wallet(conn, wallet_address, tables, world) do
     Accounts.register_wallet(wallet_address,
       tables: tables,
       pubsub: session_pubsub(conn),
+      req_options: session_req_options(conn),
+      world: world
+    )
+  end
+
+  @spec detect_world(Plug.Conn.t(), String.t(), map()) :: Worlds.world_name()
+  defp detect_world(conn, wallet_address, tables) do
+    Accounts.detect_world(wallet_address,
+      tables: tables,
       req_options: session_req_options(conn)
     )
   end
 
   @spec resolve_cache_tables(Plug.Conn.t()) :: map() | nil
   defp resolve_cache_tables(conn) do
-    session_cache_tables(conn) || CacheResolver.application_cache_tables()
+    world = get_session(conn, :world) || get_session(conn, "world") || Worlds.default_world()
+    resolve_cache_tables(conn, world)
+  end
+
+  @spec resolve_cache_tables(Plug.Conn.t(), Worlds.world_name()) :: map() | nil
+  defp resolve_cache_tables(conn, world) when is_binary(world) do
+    session_cache_tables(conn) || CacheResolver.application_cache_tables(world)
   end
 
   @spec session_cache_tables(Plug.Conn.t()) :: map() | nil

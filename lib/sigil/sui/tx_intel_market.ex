@@ -6,6 +6,7 @@ defmodule Sigil.Sui.TxIntelMarket do
   alias Sigil.Sui.BCS
   alias Sigil.Sui.TransactionBuilder
   alias Sigil.Sui.TransactionBuilder.PTB
+  alias Sigil.Worlds
 
   @module_name "intel_market"
 
@@ -57,7 +58,7 @@ defmodule Sigil.Sui.TxIntelMarket do
       {:pure, encode_bytes_vector(Map.fetch!(params, :description))}
     ]
 
-    build_opts(tx_opts, inputs, [move_call("create_listing", input_arguments(inputs))])
+    build_opts(tx_opts, inputs, [move_call("create_listing", input_arguments(inputs), tx_opts)])
   end
 
   @doc "Builds transaction options for `intel_market::create_restricted_listing`."
@@ -78,7 +79,7 @@ defmodule Sigil.Sui.TxIntelMarket do
     build_opts(
       tx_opts,
       inputs,
-      [move_call("create_restricted_listing", input_arguments(inputs))]
+      [move_call("create_restricted_listing", input_arguments(inputs), tx_opts)]
     )
   end
 
@@ -90,7 +91,7 @@ defmodule Sigil.Sui.TxIntelMarket do
 
     commands = [
       {:split_coins, :gas_coin, [{:input, 1}]},
-      move_call("purchase", [{:input, 0}, {:nested_result, 0, 0}])
+      move_call("purchase", [{:input, 0}, {:nested_result, 0, 0}], tx_opts)
     ]
 
     build_opts(tx_opts, inputs, commands)
@@ -109,7 +110,11 @@ defmodule Sigil.Sui.TxIntelMarket do
 
     commands = [
       {:split_coins, :gas_coin, [{:input, 2}]},
-      move_call("purchase_restricted", [{:input, 0}, {:input, 1}, {:nested_result, 0, 0}])
+      move_call(
+        "purchase_restricted",
+        [{:input, 0}, {:input, 1}, {:nested_result, 0, 0}],
+        tx_opts
+      )
     ]
 
     build_opts(tx_opts, inputs, commands)
@@ -119,7 +124,7 @@ defmodule Sigil.Sui.TxIntelMarket do
   @spec build_cancel_listing(listing_ref(), tx_opts()) :: builder_opts()
   def build_cancel_listing(listing_ref, tx_opts) when is_list(tx_opts) do
     inputs = [shared_mut_input(listing_ref)]
-    build_opts(tx_opts, inputs, [move_call("cancel_listing", input_arguments(inputs))])
+    build_opts(tx_opts, inputs, [move_call("cancel_listing", input_arguments(inputs), tx_opts)])
   end
 
   @spec build_opts(tx_opts(), [PTB.call_arg()], [PTB.command()]) :: builder_opts()
@@ -127,23 +132,27 @@ defmodule Sigil.Sui.TxIntelMarket do
     tx_opts ++ [inputs: inputs, commands: commands]
   end
 
-  @spec move_call(String.t(), [PTB.argument()]) :: PTB.command()
-  defp move_call(function, arguments) do
-    {:move_call, sigil_package_id_bytes(), @module_name, function, [], arguments}
+  @spec move_call(String.t(), [PTB.argument()], tx_opts()) :: PTB.command()
+  defp move_call(function, arguments, tx_opts) do
+    {:move_call, sigil_package_id_bytes(tx_opts), @module_name, function, [], arguments}
   end
 
-  @spec sigil_package_id_bytes() :: PTB.bytes32()
-  defp sigil_package_id_bytes do
-    "0x" <> hex = sigil_package_id()
+  @spec sigil_package_id_bytes(tx_opts()) :: PTB.bytes32()
+  defp sigil_package_id_bytes(tx_opts) when is_list(tx_opts) do
+    "0x" <> hex = sigil_package_id(tx_opts)
     Base.decode16!(hex, case: :mixed)
   end
 
-  @spec sigil_package_id() :: String.t()
-  defp sigil_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{sigil_package_id: id} = Map.fetch!(worlds, world)
-    id
+  @spec sigil_package_id(tx_opts()) :: String.t()
+  defp sigil_package_id(tx_opts) when is_list(tx_opts) do
+    tx_opts
+    |> world()
+    |> Worlds.sigil_package_id()
+  end
+
+  @spec world(tx_opts()) :: Worlds.world_name()
+  defp world(tx_opts) when is_list(tx_opts) do
+    Keyword.get(tx_opts, :world, Worlds.default_world())
   end
 
   @spec input_arguments([PTB.call_arg()]) :: [PTB.argument()]

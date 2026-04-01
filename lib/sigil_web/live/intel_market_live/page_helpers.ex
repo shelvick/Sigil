@@ -13,7 +13,7 @@ defmodule SigilWeb.IntelMarketLive.PageHelpers do
     assign(
       socket,
       :seal_config_json,
-      Jason.encode!(IntelMarket.build_seal_config(State.market_opts(socket)))
+      Jason.encode!(IntelMarket.build_seal_config(State.seal_opts(socket)))
     )
   end
 
@@ -44,7 +44,10 @@ defmodule SigilWeb.IntelMarketLive.PageHelpers do
   def maybe_subscribe_marketplace(socket) do
     if Phoenix.LiveView.connected?(socket) and socket.assigns[:authenticated?] and
          socket.assigns[:pubsub] do
-      Phoenix.PubSub.subscribe(socket.assigns.pubsub, IntelMarket.topic())
+      Phoenix.PubSub.subscribe(
+        socket.assigns.pubsub,
+        IntelMarket.topic(world: socket.assigns.world)
+      )
     end
 
     socket

@@ -10,6 +10,7 @@ defmodule Sigil.GateIndexer do
   alias Sigil.Cache
   alias Sigil.Sui.Client
   alias Sigil.Sui.Types.Gate
+  alias Sigil.Worlds
 
   @sui_client Application.compile_env!(:sigil, :sui_client)
   @default_interval_ms 60_000
@@ -23,7 +24,8 @@ defmodule Sigil.GateIndexer do
           pubsub: atom() | module(),
           interval_ms: pos_integer(),
           req_options: Client.request_opts(),
-          resolve_tables: (-> %{atom() => Cache.table_id()} | nil)
+          resolve_tables: (-> %{atom() => Cache.table_id()} | nil),
+          world: Worlds.world_name()
         }
 
   @typedoc "Single start option for the gate indexer."
@@ -34,6 +36,7 @@ defmodule Sigil.GateIndexer do
           | {:req_options, Client.request_opts()}
           | {:mox_owner, pid()}
           | {:resolve_tables, (-> %{atom() => Cache.table_id()} | nil)}
+          | {:world, Worlds.world_name()}
 
   @type options() :: [option()]
   @type topology() :: %{String.t() => MapSet.t(String.t())}
@@ -138,7 +141,8 @@ defmodule Sigil.GateIndexer do
       pubsub: Keyword.get(opts, :pubsub, @default_pubsub),
       interval_ms: Keyword.get(opts, :interval_ms, @default_interval_ms),
       req_options: Keyword.get(opts, :req_options, []),
-      resolve_tables: Keyword.get(opts, :resolve_tables, &default_resolve_tables/0)
+      resolve_tables: Keyword.get(opts, :resolve_tables, &default_resolve_tables/0),
+      world: Keyword.get(opts, :world, Worlds.default_world())
     }
 
     send(self(), :resolve_and_scan)
@@ -173,7 +177,7 @@ defmodule Sigil.GateIndexer do
 
   defp scan(state) do
     next_state =
-      case fetch_all_gates(state.req_options) do
+      case fetch_all_gates(state.req_options, state.world) do
         {:ok, gates} ->
           persist_scan(gates, state)
 
@@ -186,16 +190,16 @@ defmodule Sigil.GateIndexer do
     next_state
   end
 
-  @spec fetch_all_gates(Client.request_opts()) ::
+  @spec fetch_all_gates(Client.request_opts(), Worlds.world_name()) ::
           {:ok, [Gate.t()]} | {:error, Client.error_reason()}
-  defp fetch_all_gates(req_options) do
-    fetch_gates_acc(nil, req_options, [])
+  defp fetch_all_gates(req_options, world) when is_binary(world) do
+    fetch_gates_acc(nil, req_options, world, [])
   end
 
-  @spec fetch_gates_acc(String.t() | nil, Client.request_opts(), [Gate.t()]) ::
+  @spec fetch_gates_acc(String.t() | nil, Client.request_opts(), Worlds.world_name(), [Gate.t()]) ::
           {:ok, [Gate.t()]} | {:error, Client.error_reason()}
-  defp fetch_gates_acc(cursor, req_options, acc) do
-    filters = gate_filters(cursor)
+  defp fetch_gates_acc(cursor, req_options, world, acc) when is_binary(world) do
+    filters = gate_filters(cursor, world)
 
     with {:ok, %{data: gates_json, has_next_page: has_next_page, end_cursor: end_cursor}} <-
            @sui_client.get_objects(filters, req_options) do
@@ -203,7 +207,7 @@ defmodule Sigil.GateIndexer do
       acc = Enum.reverse(gates) ++ acc
 
       if has_next_page and is_binary(end_cursor) do
-        fetch_gates_acc(end_cursor, req_options, acc)
+        fetch_gates_acc(end_cursor, req_options, world, acc)
       else
         {:ok, Enum.reverse(acc)}
       end
@@ -245,14 +249,18 @@ defmodule Sigil.GateIndexer do
     Cache.put(gate_table, :location_index, location_index)
 
     :ok =
-      Phoenix.PubSub.broadcast(state.pubsub, @gate_network_topic, {
-        :gates_updated,
-        %{
-          count: length(gates),
-          added: MapSet.size(added_gate_ids),
-          removed: MapSet.size(removed_gate_ids)
+      Phoenix.PubSub.broadcast(
+        state.pubsub,
+        Worlds.topic(state.world, @gate_network_topic),
+        {
+          :gates_updated,
+          %{
+            count: length(gates),
+            added: MapSet.size(added_gate_ids),
+            removed: MapSet.size(removed_gate_ids)
+          }
         }
-      })
+      )
 
     state
   end
@@ -307,21 +315,18 @@ defmodule Sigil.GateIndexer do
     end
   end
 
-  @spec gate_filters(String.t() | nil) :: Client.object_filter()
-  defp gate_filters(nil), do: [type: gate_type()]
-  defp gate_filters(cursor), do: [type: gate_type(), cursor: cursor]
+  @spec gate_filters(String.t() | nil, Worlds.world_name()) :: Client.object_filter()
+  defp gate_filters(nil, world), do: [type: gate_type(world)]
+  defp gate_filters(cursor, world), do: [type: gate_type(world), cursor: cursor]
 
-  @spec gate_type() :: String.t()
-  defp gate_type do
-    "#{world_package_id()}::gate::Gate"
+  @spec gate_type(Worlds.world_name()) :: String.t()
+  defp gate_type(world) when is_binary(world) do
+    "#{world_package_id(world)}::gate::Gate"
   end
 
-  @spec world_package_id() :: String.t()
-  defp world_package_id do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{package_id: package_id} = Map.fetch!(worlds, world)
-    package_id
+  @spec world_package_id(Worlds.world_name()) :: String.t()
+  defp world_package_id(world) when is_binary(world) do
+    Worlds.package_id(world)
   end
 
   @spec gate_table(keyword()) :: Cache.table_id() | nil

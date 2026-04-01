@@ -7,6 +7,7 @@ defmodule Sigil.Sui.Client.HTTP do
 
   alias Sigil.Sui.Client
   alias Sigil.Sui.Client.HTTP.{Codec, Paging, Request}
+  alias Sigil.Worlds
 
   @default_limit 50
   @default_retry_delay 1_000
@@ -179,7 +180,7 @@ defmodule Sigil.Sui.Client.HTTP do
       opts
       |> Keyword.get(:req_options, [])
       |> Keyword.merge(
-        url: rpc_url(),
+        url: rpc_url(opts),
         json: body,
         receive_timeout: 30_000,
         retry: &Request.retry?/2,
@@ -300,25 +301,28 @@ defmodule Sigil.Sui.Client.HTTP do
           {:ok, map()} | {:error, Client.error_reason()}
   defp graphql_request(query, variables, opts) do
     opts
-    |> Request.request_options(query, variables, graphql_url(), retry_delay(), max_retries())
+    |> Request.request_options(query, variables, graphql_url(opts), retry_delay(), max_retries())
     |> Req.post()
     |> Request.map_graphql_response()
   end
 
-  @spec graphql_url() :: String.t()
-  defp graphql_url do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{graphql_url: url} = Map.fetch!(worlds, world)
-    url
+  @spec graphql_url(keyword()) :: String.t()
+  defp graphql_url(opts) when is_list(opts) do
+    opts
+    |> world()
+    |> Worlds.graphql_url()
   end
 
-  @spec rpc_url() :: String.t()
-  defp rpc_url do
-    world = Application.fetch_env!(:sigil, :eve_world)
-    worlds = Application.fetch_env!(:sigil, :eve_worlds)
-    %{rpc_url: url} = Map.fetch!(worlds, world)
-    url
+  @spec rpc_url(keyword()) :: String.t()
+  defp rpc_url(opts) when is_list(opts) do
+    opts
+    |> world()
+    |> Worlds.rpc_url()
+  end
+
+  @spec world(keyword()) :: Worlds.world_name()
+  defp world(opts) when is_list(opts) do
+    Keyword.get(opts, :world, Worlds.default_world())
   end
 
   @spec retry_delay() :: non_neg_integer()

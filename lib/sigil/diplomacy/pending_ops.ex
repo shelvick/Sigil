@@ -6,8 +6,6 @@ defmodule Sigil.Diplomacy.PendingOps do
   alias Sigil.Cache
   alias Sigil.{Diplomacy, Diplomacy.ObjectCodec}
 
-  @diplomacy_topic "diplomacy"
-
   @doc "Applies the pending operation keyed by the transaction bytes, if present."
   @spec apply(Cache.table_id(), keyword(), String.t()) :: :ok
   def apply(table, opts, tx_bytes) when is_binary(tx_bytes) do
@@ -217,13 +215,13 @@ defmodule Sigil.Diplomacy.PendingOps do
   @spec broadcast(keyword(), term()) :: :ok | {:error, term()}
   defp broadcast(opts, event) do
     pubsub = Keyword.get(opts, :pubsub, Sigil.PubSub)
-    Phoenix.PubSub.broadcast(pubsub, @diplomacy_topic, event)
+    Phoenix.PubSub.broadcast(pubsub, Diplomacy.legacy_topic(opts), event)
   end
 
   @spec broadcast_governance_updated(keyword(), non_neg_integer()) :: :ok | {:error, term()}
   defp broadcast_governance_updated(opts, tribe_id) do
     pubsub = Keyword.get(opts, :pubsub, Sigil.PubSub)
     event = {:governance_updated, %{tribe_id: tribe_id}}
-    Phoenix.PubSub.broadcast(pubsub, Diplomacy.topic(tribe_id), event)
+    Phoenix.PubSub.broadcast(pubsub, Diplomacy.topic(tribe_id, opts), event)
   end
 end

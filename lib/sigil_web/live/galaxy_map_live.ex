@@ -282,14 +282,20 @@ defmodule SigilWeb.GalaxyMapLive do
   end
 
   @spec load_tribe_overlays(map()) :: {[map()], [map()]}
-  defp load_tribe_overlays(%{tribe_id: tribe_id, cache_tables: cache_tables, pubsub: pubsub})
+  defp load_tribe_overlays(%{
+         tribe_id: tribe_id,
+         cache_tables: cache_tables,
+         pubsub: pubsub,
+         world: world
+       })
        when is_integer(tribe_id) and tribe_id > 0 and is_map(cache_tables) and
-              is_map_key(cache_tables, :intel) do
+              is_map_key(cache_tables, :intel) and is_binary(world) do
     reports =
       Intel.list_intel(tribe_id,
         authorized_tribe_id: tribe_id,
         tables: cache_tables,
-        pubsub: pubsub
+        pubsub: pubsub,
+        world: world
       )
 
     reports
@@ -349,7 +355,7 @@ defmodule SigilWeb.GalaxyMapLive do
 
   @spec marketplace_opts(map()) :: keyword()
   defp marketplace_opts(assigns),
-    do: [tables: assigns[:cache_tables], pubsub: assigns[:pubsub]]
+    do: [tables: assigns[:cache_tables], pubsub: assigns[:pubsub], world: assigns[:world]]
 
   @spec overlay_payload(map()) :: map()
   defp overlay_payload(assigns) do
@@ -378,11 +384,16 @@ defmodule SigilWeb.GalaxyMapLive do
   @spec subscribe_overlay_topics(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   defp subscribe_overlay_topics(socket) do
     if is_atom(socket.assigns[:pubsub]) do
+      world = socket.assigns.world
+
       if is_integer(socket.assigns.tribe_id) do
-        Phoenix.PubSub.subscribe(socket.assigns.pubsub, Intel.topic(socket.assigns.tribe_id))
+        Phoenix.PubSub.subscribe(
+          socket.assigns.pubsub,
+          Intel.topic(socket.assigns.tribe_id, world: world)
+        )
       end
 
-      Phoenix.PubSub.subscribe(socket.assigns.pubsub, IntelMarket.topic())
+      Phoenix.PubSub.subscribe(socket.assigns.pubsub, IntelMarket.topic(world: world))
     end
 
     socket

@@ -7,6 +7,7 @@ defmodule Sigil.Diplomacy.ReputationOps do
   alias Sigil.Repo
   alias Sigil.Diplomacy.ObjectCodec
   alias Sigil.Reputation.ReputationScore
+  alias Sigil.Worlds
 
   @reputation_topic "reputation"
 
@@ -45,7 +46,7 @@ defmodule Sigil.Diplomacy.ReputationOps do
 
       Phoenix.PubSub.broadcast(
         Keyword.get(opts, :pubsub, Sigil.PubSub),
-        @reputation_topic,
+        reputation_topic(opts),
         {:reputation_pinned, %{tribe_id: source_tribe, target_tribe_id: target_tribe_id}}
       )
 
@@ -82,7 +83,7 @@ defmodule Sigil.Diplomacy.ReputationOps do
 
       Phoenix.PubSub.broadcast(
         Keyword.get(opts, :pubsub, Sigil.PubSub),
-        @reputation_topic,
+        reputation_topic(opts),
         {:reputation_unpinned, %{tribe_id: source_tribe, target_tribe_id: target_tribe_id}}
       )
 
@@ -261,5 +262,10 @@ defmodule Sigil.Diplomacy.ReputationOps do
   @spec ensure_leader(options()) :: :ok | {:error, :not_leader}
   defp ensure_leader(opts) do
     if Sigil.Diplomacy.leader?(opts), do: :ok, else: {:error, :not_leader}
+  end
+
+  @spec reputation_topic(options()) :: String.t()
+  defp reputation_topic(opts) do
+    Worlds.topic(Keyword.get(opts, :world, Worlds.default_world()), @reputation_topic)
   end
 end
